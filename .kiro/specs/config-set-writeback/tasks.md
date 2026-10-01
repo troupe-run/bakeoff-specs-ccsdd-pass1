@@ -208,7 +208,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.1, 4.5_
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 16.1, 16.4_
 
-- [ ] 5.2 (P) Validate where the change is written, including new includes
+- [x] 5.2 (P) Validate where the change is written, including new includes
   - Root `'model: gpt\nagents:\n  coder: file:agents/coder.yaml\n'` with `.troupe/agents/coder.yaml` `'model: small\ntemperature: 0.2\n'`: `agents.coder.model, 'large'` changes only coder.yaml to `'model: large\ntemperature: 0.2\n'`; `agents.coder.top_p, '0.9'` gives coder.yaml `'model: small\ntemperature: 0.2\ntop_p: 0.9\n'`; `agents.coder, '{model: x}'` and `agents.coder, 'file:agents/other.yaml'` exit 3 naming coder.yaml
   - Text include `'prompt: file:prompt.txt\n'`, prompt.txt `b'old\r\nline\r\n'`: `prompt, '"new\\ntext\\n"'` → prompt.txt `b'new\r\ntext\r\n'`; with prompt.txt `b'old\n'` the same set gives `b'new\ntext\n'`; `prompt, '5'` exits 3 naming prompt.txt
   - New keys: `a.y, '2': 'a:\n  x: 1\nb: 2\n'` → `'a:\n  x: 1\n  y: 2\nb: 2\n'`; `a.p.q, '1'` on the same → `'a:\n  x: 1\n  p:\n    q: 1\nb: 2\n'`; `a, '1': '# config\n'` → `'# config\na: 1\n'`; `a, '1': ''` → `'a: 1\n'`
@@ -317,3 +317,4 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 - 3.5: Merges pass the top-level PATH to nested `change_slot` refusals; 3.6 must name the nested path for YAML include roots (5.8). Deleting a compact first key on a `-` line is refused (req 5.7). OPEN: after the old last entry is deleted, new keys copy that deleted entry's style (7.1 is ambiguous here); revisit in validation.
 - 4.4: The use case is `set_value(theatre, path, value) -> SetOutcome`, with the CLI writing nothing on success. `write_patches(patches, path)` takes PATH. Some test docstrings cite requirement IDs loosely (e.g. `test_old_values_come_from_the_files_on_disk_not_the_history` proves 15.1/15.2/15.5); fix them in 5.11.
 - 4.5: On `set`, any single-dash token other than `-h` is positional (`-1e3`, `-.inf`, `-x`, `-hello`), implemented by overriding argparse's private `_parse_optional` (it only ever returns None early, so it works with every 3.12–3.14 return shape). A VALUE spelled like a long option (`--theatre`) must come after `--`. This broadens design.md's "VALUE starting with `-` needs `--` unless numeric" note. `test_cli_usage.py` registration assertion now includes `add_set_subparser`.
+- 5.x tests: assert refusals structurally: stderr starts with f"{theatre / file}: {path}: ". A plain substring check on PATH can pass vacuously.
