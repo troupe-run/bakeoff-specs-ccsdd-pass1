@@ -98,7 +98,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 2.2, 2.3, 2.5_
   - _Requirements: 9.4, 9.5, 10.1, 10.2, 10.3, 10.4, 10.6, 10.7_
 
-- [ ] 2.7 Render new collections and new entries in block and flow style
+- [x] 2.7 Render new collections and new entries in block and flow style
   - Render block mapping entries and list items at a column with nested mappings one step deeper, nested lists at the dash offset, list-item collections compact, multi-line strings as literal blocks, empty collections as `{}`/`[]`
   - Render flow entries and flow collections with `, ` and `: `, multi-line strings double-quoted
   - Apply sibling styles only to the first-level new key and value; everything nested uses the minimal style
@@ -310,3 +310,4 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 - 2.4: Multi-line strings come out of `render_scalar` double-quoted; block-context callers must use a literal block (BlockScalar). A `<<` key is never plain (the loader refuses plain `<<` as a merge key). Lone surrogates make the renderer raise `WriteRefusedError` naming PATH. U+FFFE/U+FFFF are escaped. Keys are compared as text, so verification must catch typed-duplicate clashes such as a new plain `true` beside `True`.
 - 2.5: `render_literal` raises `ValueError` when `literal_fits` is false, so callers must check first and fall back to double-quoted. A first line starting with a space is refused (no indentation indicator, per design). A lone `"\n"` renders as `|+` (`required_chomping` is KEEP). `wrap_paragraph` never breaks at a space next to a TAB or another space.
 - 2.6: KNOWN DEVIATION TO REVISIT: following req 10.7, any change to a folded value whose OLD text has more-indented lines is refused (exit 3). The contract only refuses a change that would PUT a more-indented line in. `rewrite_block` raises `ValueError` for a value no block can hold; 3.2/3.4 must check `literal_fits` first and fall back to double quotes. layout `_block_scalar_end` now honours `|N` indicators.
+- 2.7: `render_block_value` has extra keyword-only args: `compact` (default True; pass False for a list-item collection whose `-` line has an end-of-line comment) and `preferred` (the first-level sibling quote style). Compact list-item collections put further entries at dash+2 (req 8.4). Content inside new collections uses minimal quoting (7.4).
