@@ -293,7 +293,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.1, 4.5_
   - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7_
 
-- [ ] 5.11 Run the full quality gate and check traceability
+- [x] 5.11 Run the full quality gate and check traceability
   - Run `uv run pytest`, `uv run mypy --strict .`, `uv run ruff check .` and `uv run ruff format --check .` and show the output
   - Check that every requirement ID of this spec is named by at least one test (docstring or marker) and every set test maps to a requirement
   - Done when all four commands pass and the traceability check lists no missing requirement

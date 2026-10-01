@@ -94,7 +94,7 @@ def _fail_inserts(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 def test_successful_single_file_set_writes_one_file_and_records_the_diff(
     make_theatre: MakeTheatre,
 ) -> None:
-    """Req 13.4, 15.4: `a, 2` on `'a: 1\\nb: x\\n'` writes only troupe.yml and records one set
+    """Req 13.4, 15.1: `a, 2` on `'a: 1\\nb: x\\n'` writes only troupe.yml and records one set
     event with old 1 and new 2; the directory listing is unchanged."""
     directory = make_theatre("a: 1\nb: x\n", files={"other.txt": "keep\n"})
     config_dir = directory / ".troupe"
@@ -117,8 +117,8 @@ def test_successful_single_file_set_writes_one_file_and_records_the_diff(
 def test_two_file_set_writes_both_files_and_records_both_leaves(
     make_theatre: MakeTheatre,
 ) -> None:
-    """Req 13.6, 15.4: the two-file set of 3.6 writes troupe.yml and t.txt byte-exactly, in order,
-    and records `set p.t` and `set p.n` in one batch with consecutive seq."""
+    """Req 13.6, 15.1, 15.5: the two-file set of 3.6 writes troupe.yml and t.txt byte-exactly, in
+    order, and records `set p.t` and `set p.n` in one batch with consecutive seq."""
     directory = _two_file_theatre(make_theatre)
     config_dir = directory / ".troupe"
     with _opened(directory) as theatre:
@@ -142,8 +142,8 @@ def test_two_file_set_writes_both_files_and_records_both_leaves(
 def test_old_values_come_from_the_files_on_disk_not_the_history(
     make_theatre: MakeTheatre,
 ) -> None:
-    """Req 15.4 (decision A): after a hand edit since the import, the recorded old value is the
-    hand-edited value; removed leaves are recorded after set leaves."""
+    """Req 15.1, 15.2, 15.5 (decision A): after a hand edit since the import, the recorded old value
+    is the hand-edited value, not the history's; the removed leaf is recorded after the set leaf."""
     directory = make_theatre("a: 1\n")
     config = directory / ".troupe" / "troupe.yml"
     with _opened(directory):

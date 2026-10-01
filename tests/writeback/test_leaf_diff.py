@@ -70,20 +70,21 @@ def _typed(changes: tuple[LeafChange, ...]) -> list[tuple[object, ...]]:
 
 
 def test_changed_leaf_gives_one_set_with_old_and_new(tmp_path: Path) -> None:
-    """15.1: a changed leaf is one set event with its on-disk old value; others are silent."""
+    """Req 15.1: a changed leaf is one set event with its on-disk old value; others are silent."""
     changes = _diff(tmp_path, "a: 1\nb: x\n", "a: 2\nb: x\n")
     assert changes == (_set("a", 1, 2),)
 
 
 def test_created_leaf_has_old_null(tmp_path: Path) -> None:
-    """15.1: a created leaf is a set event with old null, including leaves of new intermediates."""
+    """Req 15.1: a created leaf is a set event with old null, including leaves of new
+    intermediates."""
     changes = _diff(tmp_path, "a: 1\n", "a: 1\nb:\n  c: x\n  d: null\nl: [p]\n")
     assert changes == (_set("b.c", None, "x"), _set("b.d", None, None), _set("l.0", None, "p"))
     assert _typed(changes)[1] == ("set", "b.d", type(None), None, type(None), None)
 
 
 def test_removed_leaves_give_remove_events_with_old(tmp_path: Path) -> None:
-    """15.2, 15.5: leaves that no longer exist are remove events (new null) in before order."""
+    """Req 15.2, 15.5: leaves that no longer exist are remove events (new null) in before order."""
     changes = _diff(
         tmp_path,
         "db:\n  host: a\n  port: 5432\n  user: x\nl: [a, b, c]\n",
@@ -93,7 +94,7 @@ def test_removed_leaves_give_remove_events_with_old(tmp_path: Path) -> None:
 
 
 def test_sets_in_new_order_then_removes_in_old_order(tmp_path: Path) -> None:
-    """15.5: set events in the new document order first, then remove events in the old order."""
+    """Req 15.5: set events in the new document order first, then remove events in the old order."""
     changes = _diff(
         tmp_path,
         "z: 1\ndb:\n  host: a\n  port: 5432\n  user: x\n  name: n\n",
@@ -109,7 +110,7 @@ def test_sets_in_new_order_then_removes_in_old_order(tmp_path: Path) -> None:
 
 
 def test_type_change_counts_as_changed(tmp_path: Path) -> None:
-    """15.3: `1` -> `"1"`, `1` -> `1.0`, `1` -> `true` and `0.0` -> `-0.0` are changes."""
+    """Req 15.3: `1` -> `"1"`, `1` -> `1.0`, `1` -> `true` and `0.0` -> `-0.0` are changes."""
     changes = _diff(
         tmp_path,
         "a: 1\nb: 1\nc: 1\nd: 0.0\n",
@@ -125,7 +126,7 @@ def test_type_change_counts_as_changed(tmp_path: Path) -> None:
 
 
 def test_typed_equal_leaves_give_no_event(tmp_path: Path) -> None:
-    """15.3, 15.4: same typed values (incl. nan, differently spelled) produce no event."""
+    """Req 15.3, 15.4: same typed values (incl. nan, differently spelled) produce no event."""
     changes = _diff(
         tmp_path,
         "a: .nan\nb: 0x1F\nc: true\nd: '1'\ne: ~\n",
@@ -135,18 +136,19 @@ def test_typed_equal_leaves_give_no_event(tmp_path: Path) -> None:
 
 
 def test_no_changes_between_empty_mapping_and_empty_list(tmp_path: Path) -> None:
-    """15.4: `{}` -> `[]` changes no leaf, so nothing is recorded."""
+    """Req 15.4: `{}` -> `[]` changes no leaf, so nothing is recorded."""
     assert _diff(tmp_path, "a: {}\nb: 1\n", "a: []\nb: 1\n") == ()
 
 
 def test_identical_documents_give_no_event(tmp_path: Path) -> None:
-    """15.4: a no-op produces no event."""
+    """Req 15.4: a no-op produces no event."""
     config = "a: 1\nl:\n  - x\n  - {k: v}\n"
     assert _diff(tmp_path, config, config) == ()
 
 
 def test_scalar_replaced_by_collection_and_back(tmp_path: Path) -> None:
-    """15.1, 15.2, 15.5: a scalar becoming a mapping creates its leaves and removes the scalar."""
+    """Req 15.1, 15.2, 15.5: a scalar becoming a mapping creates its leaves and removes the
+    scalar."""
     assert _diff(tmp_path, "a: 5\n", "a:\n  x: 1\n") == (_set("a.x", None, 1), _remove("a", 5))
     assert _diff(tmp_path / "back", "a:\n  x: 1\n", "a: 5\n") == (
         _set("a", None, 5),
@@ -155,7 +157,7 @@ def test_scalar_replaced_by_collection_and_back(tmp_path: Path) -> None:
 
 
 def test_new_yaml_include_leaves_are_set_events(tmp_path: Path) -> None:
-    """15.7: the leaves of a newly embedded YAML include are created or changed leaves."""
+    """Req 15.7: the leaves of a newly embedded YAML include are created or changed leaves."""
     changes = _diff(
         tmp_path,
         "a:\n  x: 0\n  old: o\n",
@@ -166,7 +168,7 @@ def test_new_yaml_include_leaves_are_set_events(tmp_path: Path) -> None:
 
 
 def test_new_text_include_is_one_string_leaf(tmp_path: Path) -> None:
-    """15.7: a newly written text include is one string leaf holding the target's text."""
+    """Req 15.7: a newly written text include is one string leaf holding the target's text."""
     changes = _diff(
         tmp_path,
         "p: x\n",
@@ -177,12 +179,13 @@ def test_new_text_include_is_one_string_leaf(tmp_path: Path) -> None:
 
 
 def test_scalar_replaced_by_text_include_is_one_set(tmp_path: Path) -> None:
-    """15.1, 15.7: a plain string replaced by a text include changes one leaf."""
+    """Req 15.1, 15.7: a plain string replaced by a text include changes one leaf."""
     changes = _diff(tmp_path, "p: old\n", "p: file:t.txt\n", after_files={"t.txt": "new\n"})
     assert changes == (_set("p", "old", "new\n"),)
 
 
 def test_old_values_come_from_the_before_document(tmp_path: Path) -> None:
-    """15.1, 15.2: old values are those of the before document (as on disk, incl. hand edits)."""
+    """Req 15.1, 15.2: old values are those of the before document (as on disk, incl. hand
+    edits)."""
     changes = _diff(tmp_path, "a: hand-edited\nb: gone\n", "a: new\n")
     assert changes == (_set("a", "hand-edited", "new"), _remove("b", "gone"))

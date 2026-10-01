@@ -169,7 +169,7 @@ REPRESENTABILITY: list[tuple[str, Context, bool, bool]] = [
 
 @pytest.mark.parametrize(("text", "context", "plain", "single"), REPRESENTABILITY)
 def test_representability_table(text: str, context: Context, plain: bool, single: bool) -> None:
-    """6.4, 6.5: plain only for one-line, unpadded, control-free text that reads back unchanged
+    """Req 6.4, 6.5: plain only for one-line, unpadded, control-free text that reads back unchanged
     as a string in its position (no ``,[]{}`` in flow); single-quoted for one-line text without
     control characters other than TAB; double-quoted always."""
     assert can_represent(PLAIN, text, context) is plain
@@ -185,7 +185,7 @@ def test_representability_table(text: str, context: Context, plain: bool, single
 def test_every_representable_style_reads_back(
     tmp_path: Path, text: str, context: Context, plain: bool, single: bool
 ) -> None:
-    """6.1, 6.4-6.6, 7.1: every style judged representable renders text that the loader reads
+    """Req 6.1, 6.4-6.6, 7.1: every style judged representable renders text that the loader reads
     back as exactly the same string (keys: the same key text) in its context."""
     styles = [style for style in QUOTE_STYLES if can_represent(style, text, context)]
     assert DOUBLE in styles
@@ -234,13 +234,13 @@ def test_every_representable_style_reads_back(
 def test_choose_style_keeps_preferred_or_falls_back(
     text: str, preferred: QuoteStyle | None, expected: QuoteStyle
 ) -> None:
-    """6.1, 6.2, 7.1-7.3: keep the given style if it can represent the text; otherwise plain,
+    """Req 6.1, 6.2, 7.1-7.3: keep the given style if it can represent the text; otherwise plain,
     then single-quoted, then double-quoted."""
     assert choose_style(text, Context.BLOCK_VALUE, preferred) is expected
 
 
 def test_choose_style_respects_flow_context() -> None:
-    """6.4: ``x,y`` is plain in a block value but single-quoted inside a flow collection."""
+    """Req 6.4: ``x,y`` is plain in a block value but single-quoted inside a flow collection."""
     assert choose_style("x,y", Context.BLOCK_VALUE, PLAIN) is PLAIN
     assert choose_style("x,y", Context.FLOW_VALUE, PLAIN) is SINGLE
     assert choose_style("x,y", Context.FLOW_KEY, None) is SINGLE
@@ -270,18 +270,19 @@ def test_choose_style_respects_flow_context() -> None:
     ],
 )
 def test_render_scalar(value: NewScalar, preferred: QuoteStyle | None, expected: str) -> None:
-    """2.7, 6.1-6.3, 6.5, 6.6: strings in the chosen style (``file:`` strings like any other),
+    """Req 2.7, 6.1-6.3, 6.5, 6.6: strings in the chosen style (``file:`` strings like any other),
     non-strings plain with their VALUE spelling (an empty spelling stays empty)."""
     assert render_scalar(value, Context.BLOCK_VALUE, preferred, PATH) == expected
 
 
 def test_render_scalar_flow_value_quotes_flow_indicators() -> None:
-    """6.4, 7.1: ``x,y`` set as a flow list item is single-quoted although plain is preferred."""
+    """Req 6.4, 7.2: ``x,y`` set as a flow list item is single-quoted although plain is
+    preferred."""
     assert render_scalar(NewScalar("x,y", None), Context.FLOW_VALUE, PLAIN, PATH) == "'x,y'"
 
 
 def test_non_strings_read_back_with_their_type(tmp_path: Path) -> None:
-    """6.3: plain spellings of non-strings read back as the same typed value."""
+    """Req 6.3: plain spellings of non-strings read back as the same typed value."""
     cases: list[tuple[NewScalar, ScalarValue]] = [
         (NewScalar(31, "0x1F"), 31),
         (NewScalar(0.2, "0.2"), 0.2),
@@ -297,7 +298,7 @@ def test_non_strings_read_back_with_their_type(tmp_path: Path) -> None:
 
 
 def test_non_string_without_spelling_is_a_programming_error() -> None:
-    """6.3: a non-string must carry its VALUE spelling; none is invented."""
+    """Req 6.3: a non-string must carry its VALUE spelling; none is invented."""
     with pytest.raises(ValueError, match="spelling"):
         render_scalar(NewScalar(5, None), Context.BLOCK_VALUE, None, PATH)
 
@@ -321,7 +322,7 @@ CONTROL_CODES = [*range(0x00, 0x20), *range(0x7F, 0xA0)]
 
 @pytest.mark.parametrize("code", CONTROL_CODES, ids=lambda code: f"U+{code:04X}")
 def test_double_quoted_escape_table(tmp_path: Path, code: int) -> None:
-    """6.6: each control character is escaped by its named escape where one exists and as an
+    """Req 6.6: each control character is escaped by its named escape where one exists and as an
     upper-case ``\\xHH`` otherwise, and reads back as the same character."""
     text = f"a{chr(code)}b"
     expected_escape = NAMED_ESCAPES.get(code, f"\\x{code:02X}")
@@ -352,8 +353,8 @@ def test_double_quoted_escape_table(tmp_path: Path, code: int) -> None:
 def test_double_quoted_writes_other_characters_literally(
     tmp_path: Path, text: str, expected: str
 ) -> None:
-    """6.6: only ``\\``, ``"`` and characters YAML cannot hold literally are escaped; every other
-    character, non-ASCII included, is written literally and reads back unchanged."""
+    """Req 6.6: only ``\\``, ``"`` and characters YAML cannot hold literally are escaped; every
+    other character, non-ASCII included, is written literally and reads back unchanged."""
     rendered = _string(text, Context.BLOCK_VALUE, DOUBLE)
     assert rendered == expected
     assert _reloaded_values(tmp_path, rendered, Context.BLOCK_VALUE) == [text] * 3
@@ -365,7 +366,7 @@ def test_double_quoted_writes_other_characters_literally(
     [("it's", "'it''s'"), ("''", "''''''"), ("a\tb", "'a\tb'"), ("", "''"), ("é", "'é'")],
 )
 def test_single_quoted_doubles_quotes(tmp_path: Path, text: str, expected: str) -> None:
-    """6.5: single-quoted text writes each ``'`` as ``''`` and keeps TAB literally."""
+    """Req 6.5: single-quoted text writes each ``'`` as ``''`` and keeps TAB literally."""
     rendered = _string(text, Context.BLOCK_VALUE, SINGLE)
     assert rendered == expected
     assert _reloaded_values(tmp_path, rendered, Context.BLOCK_VALUE) == [text] * 3
@@ -373,8 +374,8 @@ def test_single_quoted_doubles_quotes(tmp_path: Path, text: str, expected: str) 
 
 @pytest.mark.parametrize("text", ["\ud800", "a\udfffb"])
 def test_lone_surrogate_is_refused_naming_path(text: str) -> None:
-    """6.6: a lone surrogate (from a ``\\ud800`` escape in VALUE) cannot be written as UTF-8; the
-    write is refused naming PATH instead of producing an unreadable file."""
+    """Req 6.6: a lone surrogate (from a ``\\ud800`` escape in VALUE) cannot be written as UTF-8;
+    the write is refused naming PATH instead of producing an unreadable file."""
     with pytest.raises(WriteRefusedError) as caught:
         _string(text, Context.BLOCK_VALUE, DOUBLE)
     assert caught.value.exit_code is ExitCode.WRITE_REFUSED
@@ -383,7 +384,7 @@ def test_lone_surrogate_is_refused_naming_path(text: str) -> None:
 
 
 def test_lone_surrogate_key_is_refused_naming_path() -> None:
-    """6.6, 7.1: a key holding a lone surrogate is refused like a value."""
+    """Req 6.6, 7.1: a key holding a lone surrogate is refused like a value."""
     with pytest.raises(WriteRefusedError) as caught:
         render_key("k\ud800", Context.BLOCK_KEY, None, path=PATH)
     assert caught.value.path == "agents.coder.model"
@@ -418,7 +419,7 @@ def test_lone_surrogate_key_is_refused_naming_path() -> None:
 def test_render_key(
     tmp_path: Path, key: str, context: Context, preferred: QuoteStyle | None, expected: str
 ) -> None:
-    """7.1, 7.3, 7.4: a new key copies the preceding key's style when it can represent it,
+    """Req 7.1, 7.3, 7.4: a new key copies the preceding key's style when it can represent it,
     otherwise the minimal style; the result reads back as the same key text."""
     rendered = render_key(key, context, preferred)
     assert rendered == expected
@@ -440,13 +441,13 @@ def test_render_key(
     ],
 )
 def test_quote_style_of(style: ScalarStyle | None, expected: QuoteStyle | None) -> None:
-    """6.1, 7.2, 7.3: plain/single/double styles are preferred styles; literal, folded and no
+    """Req 6.1, 7.2, 7.3: plain/single/double styles are preferred styles; literal, folded and no
     style (a text-include sibling) give no preferred quote style."""
     assert quote_style_of(style) is expected
 
 
 def test_styles_taken_from_the_loaded_model(tmp_path: Path) -> None:
-    """6.1, 7.1, 7.2: key and value styles read by the loader feed the style choice directly."""
+    """Req 6.1, 7.1, 7.2: key and value styles read by the loader feed the style choice directly."""
     root = _load_root(tmp_path, "\"a\": 'x'\nb: |\n  text\n")
     first, second = root.entries
     assert isinstance(first.value, ConfigScalar)
@@ -462,7 +463,7 @@ def test_styles_taken_from_the_loaded_model(tmp_path: Path) -> None:
 
 
 def test_sequence_item_style_feeds_choice(tmp_path: Path) -> None:
-    """7.2: the preceding list item's style is kept for a new item."""
+    """Req 7.2: the preceding list item's style is kept for a new item."""
     root = _load_root(tmp_path, "l:\n  - 'a'\n")
     sequence = root.entries[0].value
     assert isinstance(sequence, ConfigSequence)
