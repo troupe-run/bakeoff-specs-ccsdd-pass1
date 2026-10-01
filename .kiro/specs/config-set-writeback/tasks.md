@@ -245,7 +245,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.1, 4.5_
   - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7_
 
-- [ ] 5.6 (P) Validate end-of-line comment columns
+- [x] 5.6 (P) Validate end-of-line comment columns
   - `a, '100': 'a: 1    # c\nb: 2\n'` → `'a: 100  # c\nb: 2\n'`; `a, '1234567'` on the same → `'a: 1234567 # c\nb: 2\n'`; `a, '1': 'a: 1000 # c\n'` → `'a: 1    # c\n'`; `name, 'ééé': 'name: é   # c\n'` → `'name: ééé # c\n'`; `a, 'z': 'a: "x # y"  # c\n'` → `'a: "z"      # c\n'`; `a, '22': 'a: 1   # x\nb: 2   # y\n'` → `'a: 22  # x\nb: 2   # y\n'`
   - Done when every case passes byte-exactly
   - _Boundary: tests for set comments_
