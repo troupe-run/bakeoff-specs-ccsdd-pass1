@@ -271,7 +271,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.1, 4.5_
   - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5_
 
-- [ ] 5.9 (P) Validate write safety, no-ops and refusals
+- [x] 5.9 (P) Validate write safety, no-ops and refusals
   - No-ops (exit 0, files and history unchanged): `a, '1.00': 'a: 1.0\n'`; `agents.coder, 'file:agents/coder.yaml'` on root `'agents:\n  coder: file:agents/coder.yaml\n'` with `.troupe/agents/coder.yaml` `'model: small\n'`; `p, '{t: "old\\n"}'` on `'p:\n  t: file:t.txt\n'` with t.txt `'old\n'`
   - Refusals (files and history unchanged; confirmed by the product owner, decision C): `x.k, '2'` on `'x: file:shared.yaml\ny: file:shared.yaml\n'` with shared.yaml `'k: 1\n'` exits 3 naming shared.yaml; `b, 'file:missing.yaml'` exits 3 naming the target
   - Write failure: an include target in a read-only directory exits 3 naming it, unchanged, with no temporary file left (skipped when running as root)
