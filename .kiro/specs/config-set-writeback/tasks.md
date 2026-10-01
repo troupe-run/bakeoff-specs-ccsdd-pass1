@@ -170,7 +170,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.3_
   - _Requirements: 15.1, 15.2, 15.3, 15.5, 15.7_
 
-- [ ] 4.3 (P) Write user files atomically
+- [x] 4.3 (P) Write user files atomically
   - Write through symlinks to the real file, via an exclusively created hidden temporary file in the same directory with the target's permission bits, flushed and synced, then renamed over the target; remove the temporary file on any failure and raise a write-refused error naming the file
   - Provide restore of a file's original text through the same path
   - Done when tests in a temporary directory prove the new bytes (with a BOM kept), the kept permission bits, the kept symlink, a directory listing identical to before apart from the target's content after success, a directory listing identical to before (no leftover temporary file) after a failing rename injected at the OS boundary and after an unwritable directory (product-owner decision E), and an unchanged target after each failure
