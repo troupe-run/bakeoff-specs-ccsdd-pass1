@@ -27,7 +27,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Boundary: writeback package skeleton, tests/set_support.py_
   - _Requirements: 13.1, 16.1_
 
-- [ ] 1.2 Parse VALUE into a typed value tree
+- [x] 1.2 Parse VALUE into a typed value tree
   - Parse VALUE as one YAML 1.2 core-schema flow node: plain scalars typed by the shared core-schema function with their written spelling kept for non-strings, quoted scalars as strings, flow mappings and flow lists recursively
   - Refuse with a usage error naming PATH: invalid YAML, empty or comment-only VALUE, several documents, any block node, tags, anchors, aliases, text that cannot be encoded as UTF-8; for duplicate, empty or non-scalar keys the error also names the offending key
   - Done when unit tests prove `'0.2'`→0.2, `'true'`→True, `'null'`→None, `'abc'`→"abc", `'"0.2"'`→"0.2", `'{a: 1}'`, `'[a, b]'`, `'"line one\\nline two\\n"'`→"line one\nline two\n", `'0x1F'` keeps spelling `0x1F`, each refusal raises the usage error naming PATH, and `'{a: 1, a: 2}'`, `'{"": 1}'` and `'{[x]: 1}'` name the offending key
@@ -304,3 +304,4 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 - (from config-foundation validation) In `src/troupe/cli/set_command.py`, quote the `argparse._SubParsersAction[TroupeArgumentParser]` annotation (or use `from __future__ import annotations`): unquoted, it raises `TypeError` at import on Python 3.12 and would break the whole CLI (see `src/troupe/cli/main.py` for the quoted form).
 - (from config-foundation 5.3) argparse treats PATH/VALUE arguments starting with `-` such as `-1e3`, `-.inf`, `-x` as options (exit 2); `-1`/`-0.5` pass. `set` must accept such VALUEs (e.g. register PATH/VALUE so leading-dash values are taken as positionals) and test them through the CLI. `--theatre` is accepted only after the subcommand.
 - (from config-foundation) Test helpers: `tests/support.py` (`make_theatre`, `run_cli` fixtures in `tests/conftest.py`); run tests via `uv run pytest`. Never restore files with `git checkout` during mutation testing; re-write the original text.
+- 1.2: `parse_value` keeps the source spelling of non-string plain scalars (`0x1F`); an empty value (`{a: }`) is `NewScalar(None, "")`, so renderers must handle an empty spelling. A double-quoted `"\ud800"` escape yields a lone-surrogate str; the renderer (2.4) must escape it or refuse it, because it cannot be written as UTF-8.
