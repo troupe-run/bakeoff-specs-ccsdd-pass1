@@ -34,7 +34,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Boundary: ValueParser_
   - _Requirements: 1.2, 1.3, 1.4_
 
-- [ ] 1.3 (P) Provide plain configuration trees, include directives, typed equality and splicing
+- [x] 1.3 (P) Provide plain configuration trees, include directives, typed equality and splicing
   - Convert loaded nodes into ordered plain trees with include roots as include directives carrying their `file:` text and expanded content; convert parsed values with `file:` strings as directives without content
   - Compare scalars by type and value (floats by `repr`), directives by text and (when both known) content, mappings with or without key order
   - Splice a value at a path: replace, create missing intermediate mappings, append at index equal to length; when a mapping replaces a mapping (at the path or at any depth below it) keep the remaining existing keys in their existing order and append new keys in VALUE order
@@ -305,3 +305,4 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 - (from config-foundation 5.3) argparse treats PATH/VALUE arguments starting with `-` such as `-1e3`, `-.inf`, `-x` as options (exit 2); `-1`/`-0.5` pass. `set` must accept such VALUEs (e.g. register PATH/VALUE so leading-dash values are taken as positionals) and test them through the CLI. `--theatre` is accepted only after the subcommand.
 - (from config-foundation) Test helpers: `tests/support.py` (`make_theatre`, `run_cli` fixtures in `tests/conftest.py`); run tests via `uv run pytest`. Never restore files with `git checkout` during mutation testing; re-write the original text.
 - 1.2: `parse_value` keeps the source spelling of non-string plain scalars (`0x1F`); an empty value (`{a: }`) is `NewScalar(None, "")`, so renderers must handle an empty spelling. A double-quoted `"\ud800"` escape yields a lone-surrogate str; the renderer (2.4) must escape it or refuse it, because it cannot be written as UTF-8.
+- 1.3: `IncludeDirective` has an extra `kind: IncludeKind | None` field (`compare=False`; `None` when the directive comes from VALUE), used to tell a text include from a YAML include with string content. `splice` raises `ValueError` for paths that target resolution refuses, so 3.1 must make sure exit-5 paths never reach it. Mapping over mapping = merge (keys absent from VALUE are removed; existing order kept; new keys appended).
