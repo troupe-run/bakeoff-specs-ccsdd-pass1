@@ -16,7 +16,13 @@ decision":
 * an existing plain, quoted or empty scalar changed to a scalar is replaced in its slot in the
   chosen quote style (6.1-6.3); a multi-line string becomes a literal block in a block collection
   (9.1, 9.2) and a double-quoted scalar in a flow collection or where a literal block cannot hold
-  it (9.3, 9.7).
+  it (9.3, 9.7);
+* every other change of kind or block form (a scalar over a collection, a collection over a scalar
+  or a collection of another kind, an empty collection, a non-string or a string no block holds
+  over a block scalar) replaces the whole value in its slot: a flow rendering inside a flow parent
+  (8.5), otherwise the new inline part on the key's (or ``-``'s) line and the new block lines in
+  place of the old ones (5.5, 5.6, 9.6, 9.7, 11.4, 11.5). Non-empty collections over collections
+  of the same kind are left to the entry-wise merge.
 
 A new key (with any missing intermediate mappings nested under it) or an appended list item goes
 through :meth:`_Planner.add_entries` into the file holding the collection (3.1, 3.2, 4.1): in a
@@ -58,6 +64,7 @@ from troupe.config.writeback.collection_render import (
     render_block_entry,
     render_block_value,
     render_flow_entry,
+    render_flow_value,
 )
 from troupe.config.writeback.compare import new_to_plain, node_to_plain, plain_equal
 from troupe.config.writeback.edits import EditKind, TextEdit, apply_edits
@@ -75,13 +82,14 @@ from troupe.config.writeback.target import (
     SetRequest,
     text_include_value,
 )
-from troupe.config.writeback.value import NewMapping, NewScalar, NewValue
+from troupe.config.writeback.value import NewMapping, NewScalar, NewSequence, NewValue
 
 _QUOTED_OR_PLAIN: Final = frozenset(
     {ScalarStyle.PLAIN, ScalarStyle.SINGLE_QUOTED, ScalarStyle.DOUBLE_QUOTED}
 )
 _BLOCK_STYLES: Final = frozenset({ScalarStyle.LITERAL, ScalarStyle.FOLDED})
 _LF: Final = "\n"
+_INLINE_SPACE: Final = " \t"
 
 _T = TypeVar("_T")
 
@@ -318,16 +326,20 @@ class _Planner:
         Layout lookups raise ``ValueError`` for layouts outside the contract (``? key``); the
         caller turns that into a refusal (14.9).
         """
-        if not (isinstance(node, ConfigScalar) and isinstance(value, NewScalar)):
+        preferred: QuoteStyle | None = None
+        if isinstance(node, ConfigScalar) and isinstance(value, NewScalar):
+            if node.style in _QUOTED_OR_PLAIN:
+                self._replace_scalar(layout, slot, node, value, path)
+                return True
+            if isinstance(value.value, str):
+                if self._rewrite_block(layout, slot, node, value.value, path):
+                    return True
+                # A string no block can hold is double-quoted instead (9.7).
+                preferred = ScalarStyle.DOUBLE_QUOTED
+        elif _merges(node, value):
             return False
-        if node.style in _BLOCK_STYLES:
-            return isinstance(value.value, str) and self._rewrite_block(
-                layout, slot, node, value.value, path
-            )
-        if node.style in _QUOTED_OR_PLAIN:
-            self._replace_scalar(layout, slot, node, value, path)
-            return True
-        return False  # pragma: no cover - only text includes have no style
+        self._replace_value(layout, slot, value, path, preferred)
+        return True
 
     def _change_include(self, node: ConfigNode, value: NewValue, path: ConfigPath) -> None:
         """An include root that changes: rewrite a text include's target, refuse anything else."""
@@ -389,6 +401,88 @@ class _Planner:
             return False
         self._add(layout, edits)
         return True
+
+    # --- kind and block form changes ------------------------------------------------------------
+
+    def _replace_value(
+        self,
+        layout: FileLayout,
+        slot: ValueSlot,
+        value: NewValue,
+        path: ConfigPath,
+        preferred: QuoteStyle | None,
+    ) -> None:
+        """Replace the slot's whole value, whatever its kind, by ``value`` (5.5, 5.6, 9.6, 9.7).
+
+        In a flow parent the old text is replaced by the flow rendering (8.5). In a block parent
+        the value's inline extent gets the new inline part, its body lines are removed through the
+        last content line (5.5) and the new following lines take their place, or follow the line
+        holding the inline extent when there were none (11.4). An inline part that disappears keeps
+        an end-of-line comment at its column, and takes the spaces after the ``:`` or ``-`` with it
+        when no comment follows (11.5). A list item gets a compact collection unless its line has
+        an end-of-line comment (8.4).
+        """
+        extent = layout.inline_extent(slot)
+        empty = extent.start == extent.end
+        if slot.parent_style is CollectionStyle.FLOW:
+            ctx = self._context(layout, extent.start, path)
+            text = self._render(lambda: render_flow_value(value, ctx), layout, path)
+            text = " " + text if empty else text
+            self._add(layout, [TextEdit(extent.start, extent.end, text, EditKind.INLINE)])
+            return
+        line = layout.line_of(extent.end)
+        comment = layout.comment_start(line)
+        body = layout.body_lines(slot)
+        following_at = body.start if body is not None else self._following_start(layout, extent.end)
+        ctx = self._context(layout, following_at, path)
+        inline, following = self._render(
+            lambda: render_block_value(
+                value,
+                slot.owner_column,
+                slot.in_sequence,
+                ctx,
+                compact=comment is None,
+                preferred=preferred,
+            ),
+            layout,
+            path,
+        )
+        edits: list[TextEdit] = []
+        if inline:
+            text = " " + inline if empty else inline
+            edits.append(TextEdit(extent.start, extent.end, text, EditKind.INLINE))
+        elif not empty:
+            end = extent.end
+            line_end = layout.line_span(line).end
+            if comment is None and not layout.file.text[end:line_end].strip(_INLINE_SPACE):
+                end = line_end
+            start = extent.start if comment is not None else slot.indicator_end
+            edits.append(TextEdit(start, end, "", EditKind.INLINE))
+        strip = not _needs_final_break(value)
+        if body is None:
+            if following:
+                edits.append(
+                    self._following_edit(layout, extent.end, following, ctx.line_break, strip=strip)
+                )
+        elif layout.line_break(layout.line_of(body.end - 1)) == "":
+            # The body ends the file without a final break; so does the new text (13.2).
+            start = layout.line_span(line).end
+            text = layout.line_break(line) + following if following else ""
+            if strip:
+                text = text.removesuffix(layout.line_break(line))
+            edits.append(TextEdit(start, body.end, text, EditKind.LINES))
+        else:
+            edits.append(TextEdit(body.start, body.end, following, EditKind.LINES))
+        self._add(layout, edits)
+
+    @staticmethod
+    def _context(layout: FileLayout, index: int, path: ConfigPath) -> RenderContext:
+        return RenderContext(
+            step=layout.indent_step(),
+            dash_offset=layout.dash_offset(),
+            line_break=layout.line_break_at(index),
+            path=path,
+        )
 
     # --- plain, quoted and empty scalars ---------------------------------------------------------
 
@@ -574,6 +668,15 @@ def _needs_final_break(value: NewValue) -> bool:
         and literal_fits(text)
         and required_chomping(text) is not Chomping.STRIP
     )
+
+
+def _merges(node: ConfigNode, value: NewValue) -> bool:
+    """Whether ``value`` is merged into ``node`` entry-wise: same collection kind, not empty."""
+    if isinstance(node, ConfigMapping) and isinstance(value, NewMapping):
+        return bool(value.entries)
+    if isinstance(node, ConfigSequence) and isinstance(value, NewSequence):
+        return bool(value.items)
+    return False
 
 
 def _kind(value: ConfigNode | NewValue) -> str:

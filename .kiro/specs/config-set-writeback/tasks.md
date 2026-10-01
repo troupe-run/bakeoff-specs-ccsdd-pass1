@@ -132,7 +132,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Boundary: PatchPlanner_
   - _Requirements: 3.1, 3.2, 3.3, 4.1, 7.1, 7.2, 11.1, 11.3, 11.6_
 
-- [ ] 3.4 Plan replacements that change the kind or block form of a value
+- [x] 3.4 Plan replacements that change the kind or block form of a value
   - Replace a slot's inline extent and body lines: scalars or empty collections over block collections, block collections over scalars or other collections, literal blocks over plain or quoted scalars, plain non-strings over block scalars, double-quoted strings over block scalars that cannot hold them, flow renderings inside flow parents
   - Keep the key line through its end-of-line comment when a scalar becomes a block collection, removing the spaces after `:` when no comment follows; write list-item collections compactly unless the item line has a comment
   - Done when planner tests produce the exact texts for `a, '{x: 1}': 'a: 5  # note\nb: 1\n'` → `'a:    # note\n  x: 1\nb: 1\n'`; `a, '{x: 1}': 'a: 5\nb: 1\n'` → `'a:\n  x: 1\nb: 1\n'`; `a, '"one\\ntwo\\n"': 'a: x  # c\n'` → `'a: |  # c\n  one\n  two\n'`; `a, '5': 'a: |\n  t\nb: 1\n'` → `'a: 5\nb: 1\n'`; `a, '"  x\\ny\\n"': 'a: |\n  t\nb: 1\n'` → `'a: "  x\\ny\\n"\nb: 1\n'`; a block mapping replaced by `5` and by `{}`; a list replaced by a mapping
