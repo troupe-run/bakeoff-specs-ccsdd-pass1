@@ -90,7 +90,7 @@
   - _Depends: 2.2_
   - _Requirements: 7.1, 7.3, 7.5, 9.1, 9.2_
 
-- [ ] 4.3 Persist the history under the theatre's `.troupe/` directory and import once
+- [x] 4.3 Persist the history under the theatre's `.troupe/` directory and import once
   - Open an eventsourcing application backed by SQLite at `<theatre>/.troupe/history.sqlite`, configured only through explicit settings so the ambient environment cannot redirect or transform it
   - Import when no history exists: history start plus one leaf-imported event per leaf in order, saved in a single transaction; an empty configuration still counts as imported; an existing history records nothing (no reconciliation)
   - Project the stored events into history records, oldest first, by applying the event-to-record mapping from 4.2
@@ -181,3 +181,4 @@
 - 3.2: A `---`-only or `~` root is refused as a non-mapping root (exit 4); only empty/comment-only/whitespace-only/BOM-only files are the empty mapping. ruamel rejects `a:\tb` (tab after colon) → exit 4. Duplicate keys compare key text and typed plain values. Folded U+0007 stripping applies to folded style only.
 - 3.3: Includes: any string scalar value style (not keys) starting with `file:`; suffix check case-sensitive; files cached by real_path (diamond OK). Edge: a YAML include whose whole content is another `file:` string keeps only the OUTER IncludeRef (node origin is in the innermost file) — the writer should treat such nodes as whole-include (exit 3 on replace).
 - 4.2: `to_history_record` takes `DomainEventProtocol[UUID]` (not `ConfigHistory.Event`) so store events pass without casts. 4.3 should add a persisted round-trip test with bool/int/float(inf,nan,-0.0)/None/unicode values (reviewer verified the JSONTranscoder preserves exact types).
+- 4.3: `HistoryStore.close()` uses `sys.exception()` to avoid masking an in-flight error; inside `__exit__` no exception is active, so `Theatre.__exit__` (5.1) must check `exc_type` and not let a close error replace the body's error. Store settings come only from an explicit dict (`construct_env` override ignores os.environ). Import is one `app.save()` (atomic).
