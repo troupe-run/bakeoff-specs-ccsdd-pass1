@@ -21,8 +21,12 @@ decision":
   or a collection of another kind, an empty collection, a non-string or a string no block holds
   over a block scalar) replaces the whole value in its slot: a flow rendering inside a flow parent
   (8.5), otherwise the new inline part on the key's (or ``-``'s) line and the new block lines in
-  place of the old ones (5.5, 5.6, 9.6, 9.7, 11.4, 11.5). Non-empty collections over collections
-  of the same kind are left to the entry-wise merge.
+  place of the old ones (5.5, 5.6, 9.6, 9.7, 11.4, 11.5);
+* a non-empty mapping over a mapping or list over a list is merged entry-wise (5.1, 5.2): kept
+  entries go through the slot change, absent ones are deleted (block: whole lines through the last
+  content line, refused when the entry shares its first line with remaining content, 5.3, 5.7;
+  flow: the entry with one adjoining separator on one line, 5.4) and new ones are added in one
+  insertion; a flow mapping none of whose entries stays is rendered anew.
 
 A new key (with any missing intermediate mappings nested under it) or an appended list item goes
 through :meth:`_Planner.add_entries` into the file holding the collection (3.1, 3.2, 4.1): in a
@@ -36,6 +40,7 @@ End-of-line comments on the changed lines are moved back to their columns by the
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Final, NoReturn, TypeVar
 
@@ -90,6 +95,7 @@ _QUOTED_OR_PLAIN: Final = frozenset(
 _BLOCK_STYLES: Final = frozenset({ScalarStyle.LITERAL, ScalarStyle.FOLDED})
 _LF: Final = "\n"
 _INLINE_SPACE: Final = " \t"
+_WHITESPACE: Final = " \t\r\n"
 
 _T = TypeVar("_T")
 
@@ -337,7 +343,8 @@ class _Planner:
                 # A string no block can hold is double-quoted instead (9.7).
                 preferred = ScalarStyle.DOUBLE_QUOTED
         elif _merges(node, value):
-            return False
+            self._merge(layout, node, slot, value, path)
+            return True
         self._replace_value(layout, slot, value, path, preferred)
         return True
 
@@ -375,6 +382,213 @@ class _Planner:
             _refuse(path, target, f"the string {value.value!r} cannot be written as UTF-8")
         if content != target.text:
             self._replace_file(target, content, path)
+
+    # --- entry-wise merges and deletions --------------------------------------------------------
+
+    def _merge(
+        self,
+        layout: FileLayout,
+        node: ConfigNode,
+        slot: ValueSlot,
+        value: NewValue,
+        path: ConfigPath,
+    ) -> None:
+        """Merge a non-empty mapping or list into an existing one of the same kind (5.1, 5.2).
+
+        Kept entries go through the slot change (unchanged ones need no edit), absent entries are
+        deleted and new entries are added in one insertion after the old last entry. A flow
+        mapping none of whose entries stays is rendered anew as a whole (8.5).
+        """
+        if isinstance(node, ConfigMapping) and isinstance(value, NewMapping):
+            self._merge_mapping(layout, node, slot, value, path)
+        elif isinstance(node, ConfigSequence) and isinstance(value, NewSequence):
+            self._merge_sequence(layout, node, value, path)
+        else:  # pragma: no cover - only called when ``_merges`` holds
+            raise ValueError("only collections of the same kind are merged")
+
+    def _merge_mapping(
+        self,
+        layout: FileLayout,
+        node: ConfigMapping,
+        slot: ValueSlot,
+        value: NewMapping,
+        path: ConfigPath,
+    ) -> None:
+        new = dict(value.entries)
+        deleted = [index for index, entry in enumerate(node.entries) if entry.key not in new]
+        if node.style is CollectionStyle.FLOW and len(deleted) == len(node.entries):
+            self._render_flow_anew(layout, slot, value, path)
+            return
+        for entry in node.entries:
+            if entry.key in new:
+                self.change_slot(
+                    layout,
+                    entry.value,
+                    partial(layout.entry_slot, node, entry, path),
+                    new[entry.key],
+                    path,
+                )
+        self._delete_entries(layout, node, deleted, path)
+        existing = {entry.key for entry in node.entries}
+        added = [(key, item) for key, item in value.entries if key not in existing]
+        if added:
+            self.add_entries(node, added, path)
+
+    def _merge_sequence(
+        self,
+        layout: FileLayout,
+        node: ConfigSequence,
+        value: NewSequence,
+        path: ConfigPath,
+    ) -> None:
+        for index, (item, new_item) in enumerate(zip(node.items, value.items, strict=False)):
+            self.change_slot(
+                layout, item, partial(layout.item_slot, node, index, path), new_item, path
+            )
+        self._delete_entries(layout, node, range(len(value.items), len(node.items)), path)
+        surplus = value.items[len(node.items) :]
+        if surplus:
+            self.add_entries(node, [(None, item) for item in surplus], path)
+
+    def _render_flow_anew(
+        self, layout: FileLayout, slot: ValueSlot, value: NewValue, path: ConfigPath
+    ) -> None:
+        """Replace a one-line flow collection by the flow rendering of ``value``."""
+        extent = self._guard(layout.file, path, lambda: layout.inline_extent(slot))
+        if layout.line_of(extent.start) != layout.line_of(extent.end):
+            _refuse(
+                path,
+                layout.file,
+                "this change cannot be written: the flow collection spans several lines",
+            )
+        ctx = self._context(layout, extent.start, path)
+        text = self._render(lambda: render_flow_value(value, ctx), layout, path)
+        self._add(layout, [TextEdit(extent.start, extent.end, text, EditKind.INLINE)])
+
+    def _delete_entries(
+        self,
+        layout: FileLayout,
+        collection: ConfigMapping | ConfigSequence,
+        indexes: Sequence[int],
+        path: ConfigPath,
+    ) -> None:
+        """Delete the entries (or items) at ``indexes`` of ``collection`` (5.3, 5.4, 5.7)."""
+        if not indexes:
+            return
+        if collection.style is CollectionStyle.FLOW:
+            edits = self._guard(
+                layout.file,
+                path,
+                lambda: self._flow_deletions(layout, collection, indexes, path),
+            )
+        else:
+            edits = self._guard(
+                layout.file,
+                path,
+                lambda: self._block_deletions(layout, collection, indexes, path),
+            )
+        self._add(layout, edits)
+
+    def _entry_bounds(
+        self,
+        layout: FileLayout,
+        collection: ConfigMapping | ConfigSequence,
+        index: int,
+        path: ConfigPath,
+    ) -> tuple[int, int]:
+        """Start (key or ``-``; flow item start) and content end of entry ``index``."""
+        if isinstance(collection, ConfigMapping):
+            entry = collection.entries[index]
+            slot = layout.entry_slot(collection, entry, path)
+            start = entry.key_origin.span.start
+        else:
+            slot = layout.item_slot(collection, index, path)
+            flow = collection.style is CollectionStyle.FLOW
+            # A flow item starts at its slot's indicator end; a block item at its ``-``.
+            start = slot.indicator_end if flow else slot.indicator_end - 1
+        return start, layout.content_end(slot.node, slot)
+
+    def _block_deletions(
+        self,
+        layout: FileLayout,
+        collection: ConfigMapping | ConfigSequence,
+        indexes: Sequence[int],
+        path: ConfigPath,
+    ) -> list[TextEdit]:
+        """Whole lines from each entry's first line through the break of its last content line.
+
+        An entry that does not start its line (a compact first key on a ``-`` line) is refused
+        (5.7). Adjacent ranges are joined; a range that ends a file without a final line break
+        takes the break before it instead, so the file keeps ending without one (13.2).
+        """
+        ranges: list[tuple[int, int]] = []
+        for index in indexes:
+            start, end = self._entry_bounds(layout, collection, index, path)
+            if not layout.starts_line(start):
+                _refuse(
+                    path,
+                    layout.file,
+                    "this change cannot be written: an entry to remove shares its first line "
+                    "with content that remains",
+                )
+            first = layout.line_of(start)
+            last = layout.line_of(end)
+            line_end = layout.line_span(last).end + len(layout.line_break(last))
+            if ranges and ranges[-1][1] == layout.line_start(first):
+                ranges[-1] = (ranges[-1][0], line_end)
+            else:
+                ranges.append((layout.line_start(first), line_end))
+        edits: list[TextEdit] = []
+        text = layout.file.text
+        for start, end in ranges:
+            if end == len(text) and not text.endswith(("\n", "\r")):
+                first = layout.line_of(start)
+                if first > 0:
+                    start = layout.line_span(first - 1).end
+            edits.append(TextEdit(start, end, "", EditKind.LINES))
+        return edits
+
+    def _flow_deletions(
+        self,
+        layout: FileLayout,
+        collection: ConfigMapping | ConfigSequence,
+        indexes: Sequence[int],
+        path: ConfigPath,
+    ) -> list[TextEdit]:
+        """Each entry with one adjoining separator, within one line (5.4).
+
+        An entry after a kept one takes the ``,`` (and spaces) before it; an entry before the first
+        kept one takes the ``,`` and the spaces after it. A range spanning lines is refused.
+        """
+        text = layout.file.text
+        deleted = set(indexes)
+        edits: list[TextEdit] = []
+        for index in sorted(deleted):
+            start, end = self._entry_bounds(layout, collection, index, path)
+            if any(other not in deleted for other in range(index)):
+                comma = start
+                while comma > 0 and text[comma - 1] in _WHITESPACE:
+                    comma -= 1
+                if not text.startswith(",", comma - 1):
+                    raise ValueError(f"no ',' before the entry at index {start}")
+                start = comma - 1
+            else:
+                after = end
+                while after < len(text) and text[after] in _WHITESPACE:
+                    after += 1
+                if not text.startswith(",", after):
+                    raise ValueError(f"no ',' after the entry at index {start}")
+                end = after + 1
+                while end < len(text) and text[end] in _INLINE_SPACE:
+                    end += 1
+            if layout.line_of(start) != layout.line_of(end):
+                _refuse(
+                    path,
+                    layout.file,
+                    "this change cannot be written: a flow entry to remove spans several lines",
+                )
+            edits.append(TextEdit(start, end, "", EditKind.INLINE))
+        return edits
 
     # --- block scalars ---------------------------------------------------------------------------
 
