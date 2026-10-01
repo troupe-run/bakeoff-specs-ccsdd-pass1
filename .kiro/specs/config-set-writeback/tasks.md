@@ -262,7 +262,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.1, 4.5_
   - _Requirements: 2.2, 2.3, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 13.6, 14.9, 15.1, 15.5, 16.2_
 
-- [ ] 5.8 (P) Validate byte preservation, line endings, encoding and file identity
+- [x] 5.8 (P) Validate byte preservation, line endings, encoding and file identity
   - `b.d, '"x\\ny\\n"': b'a: 1\r\nb:\r\n  c: 2\r\n'` → `b'a: 1\r\nb:\r\n  c: 2\r\n  d: |\r\n    x\r\n    y\r\n'`; `c, '3': b'a: 1\r\nb: 2\n'` → `b'a: 1\r\nb: 2\nc: 3\n'`; `c, '3': 'a: 1\nb: 2'` → `'a: 1\nb: 2\nc: 3'`; `a, '2': b'\xef\xbb\xbfa: 1\n'` → `b'\xef\xbb\xbfa: 2\n'`
   - Rich fixture `'# Theatre\n\nname: "Main stage"   # display\nagents:\n  coder:\n    model: \'gpt\'\n    tools: [read, write]\n  # reviewer next\n  reviewer: {model: x}\nzeta: café\n'`: `agents.coder.model, 'claude'` yields exactly the fixture with `'gpt'` replaced by `'claude'`; the same set on a `troupe.yaml` theatre gives the same bytes
   - A symlinked `troupe.yml` stays a symlink with the change in its target; permission bits `0o640` are kept; untouched include files keep their bytes
