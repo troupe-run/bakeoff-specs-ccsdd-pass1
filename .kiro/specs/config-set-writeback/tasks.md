@@ -15,7 +15,7 @@ loader task 3.2; U2 `MappingEntry.key_style`; U3 the CLI shell module `troupe.cl
 `troupe.cli.main`; U4 pytest `pythonpath = ["tests"]`; U5 `LeafChange`, `INCLUDE_PREFIX`, `TroupeArgumentParser`
 in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Task 2.6 keeps a guard test for U1.
 
-- [ ] 1. Foundation: package skeleton, test support and value primitives
+- [x] 1. Foundation: package skeleton, test support and value primitives
 - [x] 1.1 Create the writeback package skeleton, the shared value types and the set-test support
   - Create the writeback package and its modules as typed placeholders following the design's File Structure Plan and import direction
   - Define the parsed-value types (scalar with spelling, mapping, list) in the value module so tasks 1.2 and 1.3 share them
@@ -45,7 +45,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.1_
   - _Requirements: 2.8, 14.6, 15.3_
 
-- [ ] 2. Text analysis and rendering primitives
+- [x] 2. Text analysis and rendering primitives
 - [x] 2.1 Analyse file text: lines, columns, line breaks, indentation step and list dash offset
   - Index lines and compute code-point columns, line content ends, blank and comment lines with their indentation
   - Choose the line break for an insertion: CRLF files CRLF, LF or break-less files LF, mixed files the break of the preceding line (LF if none)
@@ -107,7 +107,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 2.4, 2.5_
   - _Requirements: 7.4, 8.1, 8.4, 8.5, 8.6, 9.1, 9.2, 9.3_
 
-- [ ] 3. Target resolution and patch planning
+- [x] 3. Target resolution and patch planning
 - [x] 3.1 Resolve write targets, path errors and the intended configuration
   - Map the path walk to replace, add-key and append targets; raise path-not-found errors naming PATH and the deepest node's file for missing paths below scalars and nulls, non-index segments on lists, indexes beyond the length, segments after an appended index, and digit-only keys to be created
   - Own the text-include content rule: VALUE exactly, with every line feed not already preceded by a carriage return written as CRLF when the target file uses CRLF; supply it to the splice from 1.3 so it applies at PATH and at any depth inside a replaced collection
@@ -153,7 +153,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Boundary: PatchPlanner_
   - _Requirements: 2.2, 2.3, 5.8, 5.9, 13.6_
 
-- [ ] 4. Verification, effects and wiring
+- [x] 4. Verification, effects and wiring
 - [x] 4.1 (P) Verify a patch by re-loading the configuration in memory
   - Re-load with every current file overridden (original texts plus the patched texts of all patches at once); targets of newly written includes are read by the loader from disk
   - Compare the read-back with the intended configuration including key order and include directives; map load errors (including a missing target or cycle of a newly written include) and mismatches to write-refused errors naming the (first) patched file, PATH and, for load errors, the loader's message naming the target (refusal confirmed by the product owner, decision C)
@@ -197,7 +197,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Boundary: CliSet (src/troupe/cli/set_command.py, one SUBCOMMAND_REGISTRARS entry in src/troupe/cli/main.py)_
   - _Requirements: 1.1, 1.5, 1.6, 16.1, 16.2, 16.4_
 
-- [ ] 5. End-to-end byte-exact validation through the real CLI
+- [x] 5. End-to-end byte-exact validation through the real CLI
   - Each task writes only its own test module and uses only the shared set-test support (subprocess runner, or the in-process runner where a boundary failure must be injected); every test names its requirement IDs in its docstring; every success case asserts exit 0, empty stdout, the exact bytes of the changed file and that all other files are unchanged; every failure asserts the exit code, empty stdout, the stderr naming PATH and/or file, and that the theatre is unchanged
 - [x] 5.1 (P) Validate invocation, VALUE parsing, import and error reporting
   - Contract examples on `'a: x\n'`: `a, '0.2'` → `'a: 0.2\n'`; `a, 'true'` → `'a: true\n'`; `a, 'null'` → `'a: null\n'`; `a, 'abc'` → `'a: abc\n'`; `a, '"0.2"'` → `"a: '0.2'\n"`; `a, '{a: 1}'` → `'a:\n  a: 1\n'`; `a, '[a, b]'` → `'a:\n  - a\n  - b\n'`; `a, '"line one\\nline two\\n"'` → `'a: |\n  line one\n  line two\n'`
