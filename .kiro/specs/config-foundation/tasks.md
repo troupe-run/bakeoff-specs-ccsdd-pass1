@@ -117,7 +117,7 @@
   - _Boundary: Theatre (src/troupe/config/theatre.py)_
   - _Requirements: 6.7, 6.9, 7.4, 7.9, 8.3, 8.4, 8.5_
 
-- [ ] 5.2 (P) Implement output rendering for show and history
+- [x] 5.2 (P) Implement output rendering for show and history
   - Render all output as UTF-8 bytes. Format scalars for show: strings exactly with a newline appended only when missing, `true`/`false`, `null`, decimal integers, floats via `repr()`; booleans checked before integers
   - Format one JSON line per history record with members seq, op, path, old, new in that order, booleans as JSON booleans, and infinite or NaN values as the strings `".inf"`, `"-.inf"`, `".nan"`, encoding so that invalid JSON can never be emitted
   - Done when unit tests pass for every scalar type, strings with and without a trailing newline, a CRLF-terminated string, and JSON lines whose parsed values equal the record (including `true` not `1`, and `".inf"`, `"-.inf"`, `".nan"` for non-finite floats, each line accepted by a strict JSON parser)
