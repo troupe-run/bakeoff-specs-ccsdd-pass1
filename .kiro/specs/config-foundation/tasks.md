@@ -150,7 +150,7 @@
   - _Boundary: tests for includes_
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 6.6, 10.4_
 
-- [ ] 6.3 (P) Validate show output and path errors end to end
+- [x] 6.3 (P) Validate show output and path errors end to end
   - Through the console script, show strings (plain, quoted, literal, folded, already ending in a newline), booleans, null, integers (including octal and hex), floats (including `1e3` and `.inf`), list items by index, and core-schema strings such as `yes`
   - Cover a mapping or list target, a missing key, an out-of-range index, a non-digit segment on a list, a segment below a scalar and malformed PATH syntax (in the show test module, complementing the usage tests owned by 5.3)
   - Show a folded (`>`) value and assert stdout is the folded text with no `\x07` byte
