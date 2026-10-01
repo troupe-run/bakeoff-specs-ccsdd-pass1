@@ -62,7 +62,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Boundary: FileLayout_
   - _Requirements: 11.1, 11.2, 11.6, 12.1_
 
-- [ ] 2.3 Apply edits to file text and keep end-of-line comments at their columns
+- [x] 2.3 Apply edits to file text and keep end-of-line comments at their columns
   - Apply inline and whole-line edits in position order, refusing overlapping edits with a write-refused error
   - After inline edits, restore each affected end-of-line comment to its original column, with exactly one space when the new value reaches it, touching no other line
   - Done when unit tests prove `'a: 1    # c\n'` → `'a: 100  # c\n'`, `'a: 1000 # c\n'` → `'a: 1    # c\n'`, a value reaching the column gets one space, multibyte columns are counted in code points, line insertions never move comments, and overlapping edits are refused
