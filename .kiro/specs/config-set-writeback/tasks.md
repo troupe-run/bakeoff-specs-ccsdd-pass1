@@ -54,7 +54,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Boundary: FileLayout_
   - _Requirements: 8.2, 8.3, 12.3, 13.2_
 
-- [ ] 2.2 Analyse values in text: comments, value slots, content ends, extents and insertion points
+- [x] 2.2 Analyse values in text: comments, value slots, content ends, extents and insertion points
   - Find each line's end-of-line comment after the line's last token (keys, scalars incl. quoted text containing `#`, flow collections, block headers, indicators)
   - Locate value slots from the key's `:` or the item's `-` (never from an empty scalar's span), content ends (block scalars by chomping, collections by their last entry), inline extents and body lines
   - Compute the insertion point for new entries of a block collection: below trailing comment lines indented at least as far as the entries, above less-indented comments, above blank lines not followed by such a comment, end of file for an empty root, with a leading-break flag at a file end without a final break
@@ -306,3 +306,4 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 - (from config-foundation) Test helpers: `tests/support.py` (`make_theatre`, `run_cli` fixtures in `tests/conftest.py`); run tests via `uv run pytest`. Never restore files with `git checkout` during mutation testing; re-write the original text.
 - 1.2: `parse_value` keeps the source spelling of non-string plain scalars (`0x1F`); an empty value (`{a: }`) is `NewScalar(None, "")`, so renderers must handle an empty spelling. A double-quoted `"\ud800"` escape yields a lone-surrogate str; the renderer (2.4) must escape it or refuse it, because it cannot be written as UTF-8.
 - 1.3: `IncludeDirective` has an extra `kind: IncludeKind | None` field (`compare=False`; `None` when the directive comes from VALUE), used to tell a text include from a YAML include with string content. `splice` raises `ValueError` for paths that target resolution refuses, so 3.1 must make sure exit-5 paths never reach it. Mapping over mapping = merge (keys absent from VALUE are removed; existing order kept; new keys appended).
+- 2.2: `_block_scalar_end` takes the content indentation from the smallest non-blank line and ignores an explicit indentation indicator (`|2`). A whitespace-only line that is content under `|2` can be left out of `body_lines`; fix this in 2.6 if it matters there. Explicit `? k` keys make `entry_slot` raise `ValueError`, which the planner must turn into exit 3.
