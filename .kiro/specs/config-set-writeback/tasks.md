@@ -116,7 +116,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Boundary: TargetResolver_
   - _Requirements: 2.1, 2.2, 2.3, 2.6, 2.8, 3.1, 3.2, 3.4, 3.5, 3.6, 4.1, 4.2, 4.3, 16.3_
 
-- [ ] 3.2 Plan in-place changes of existing values
+- [x] 3.2 Plan in-place changes of existing values
   - Replace existing plain/quoted/empty scalars in their slot with a single-line value in the chosen style (multi-line strings double-quoted inside flow parents), and rewrite existing literal/folded blocks with string values that still fit them
   - Replace a text-include target's whole content with the text produced by the content rule of 3.1 (CRLF-converted for CRLF targets), wherever the slot change reaches it; refuse YAML include roots that would change (including to a different `file:` string) and non-string values for text includes
   - Collect edits per file and apply them into one file patch per changed file (multi-file plans are completed and tested in 3.6)
@@ -312,3 +312,4 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 - 2.6: KNOWN DEVIATION TO REVISIT: following req 10.7, any change to a folded value whose OLD text has more-indented lines is refused (exit 3). The contract only refuses a change that would PUT a more-indented line in. `rewrite_block` raises `ValueError` for a value no block can hold; 3.2/3.4 must check `literal_fits` first and fall back to double quotes. layout `_block_scalar_end` now honours `|N` indicators.
 - 2.7: `render_block_value` has extra keyword-only args: `compact` (default True; pass False for a list-item collection whose `-` line has an end-of-line comment) and `preferred` (the first-level sibling quote style). Compact list-item collections put further entries at dash+2 (req 8.4). Content inside new collections uses minimal quoting (7.4).
 - 3.1: `resolve_target` returns Replace/AddKey/Append targets. Include roots and non-string-over-text-include are NOT refused there; the planner (3.2) must refuse them (exit 3). A different `file:` string set over a text include replaces the directive in the intended tree, and 3.2 decides whether to refuse it. Text-include targets are looked up by `id()` of the directive objects that `splice` passes through.
+- 3.2: The planner already writes a multi-line string over a plain/quoted scalar as a literal block, so 3.4 must reuse that rather than reimplement it. Still refused (exit 3) until 3.4: a block scalar set to a string it cannot hold (req 9.7 needs a double-quoted fallback), non-strings over block scalars, and kind changes. A different `file:` string over a text include is refused (exit 3, conservative). `plan_patch` refuses an empty plan, so SetCommand must detect no-ops (`plain_equal`) BEFORE planning (14.6).
