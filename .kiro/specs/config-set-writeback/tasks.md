@@ -282,7 +282,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.1, 4.5_
   - _Requirements: 2.8, 13.6, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7, 14.8, 16.2_
 
-- [ ] 5.10 (P) Validate the history of sets
+- [x] 5.10 (P) Validate the history of sets
   - First set on a fresh theatre: `history` lists the import events, then the set event; a new key records `old` null; the mapping merge fixture of 3.5 records `set db.host`, `set db.pool`, then `remove db.user` with consecutive `seq`
   - Typed changes `a, '"1"'` then `a, '1.0'` on `'a: 1\n'` each record a set event with JSON-typed values; `x, '[]': 'x: {}\n'` changes the file and records nothing; a no-op and a refused set record nothing
   - New includes: `b, 'file:inc.yaml'` on `'b: x\n'` with inc.yaml `'k: 1\nl: [p]\n'` records `set b.k` (old null, new 1), `set b.l.0` (new "p"), then `remove b` (old "x"); `c, 'file:notes.txt'` with notes.txt `'hi\n'` records one `set c` with new `"hi\n"`
