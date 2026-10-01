@@ -20,7 +20,7 @@
   - _Requirements: 10.1, 10.3, 10.4, 10.5_
 
 - [ ] 2. Core value and path primitives
-- [ ] 2.1 (P) Implement YAML 1.2 core-schema typing of plain scalars
+- [x] 2.1 (P) Implement YAML 1.2 core-schema typing of plain scalars
   - Classify written plain scalar text as null, boolean, integer (decimal, `0o` octal, `0x` hex), float (including infinities and NaN forms) or string, exactly per the core schema, returning plain built-in values
   - Done when a table-driven test passes for at least `yes`, `on`, `True`, `FALSE`, `~`, empty, `null`, `0o17`, `0x1F`, `1_0`, `2001-12-14`, `1e3`, `.inf`, `-.inf`, `.NaN`, `-.nan`, `012`, `+1`, and fails if any entry is typed differently
   - _Boundary: Scalars_
