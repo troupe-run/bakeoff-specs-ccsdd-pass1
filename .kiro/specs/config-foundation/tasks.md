@@ -138,7 +138,7 @@
 
 - [ ] 6. End-to-end validation through the real CLI
   - Tasks 6.1–6.4 each write only their own test module (locate/loader, includes, show, history) and only use the shared helpers from 1.1; any new helper stays in that task's own module, never in the shared conftest
-- [ ] 6.1 (P) Validate locating and loading errors end to end
+- [x] 6.1 (P) Validate locating and loading errors end to end
   - Through the console script, cover `.yml` and `.yaml` theatres, neither, both, a missing theatre directory, invalid YAML, a file with non-UTF-8 bytes, duplicate keys, explicit tags, an anchor (`a: &x 1`), an alias (`a: &x 1\nb: *x`), a merge key (`<<: {a: 1}`), a non-mapping root and an empty root file
   - Done when each case asserts the exit code, empty stdout on failure and a stderr message naming the file (and key path where relevant)
   - _Boundary: tests for locate and loader_
