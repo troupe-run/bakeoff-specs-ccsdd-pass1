@@ -11,7 +11,7 @@
   - _Boundary: Scaffold (pyproject.toml, src/troupe/__init__.py, tests/conftest.py)_
   - _Requirements: 1.1_
 
-- [ ] 1.2 Define single-place constants, error types and the exit-code mapping
+- [x] 1.2 Define single-place constants, error types and the exit-code mapping
   - Record the `.troupe` directory name, both config file names, the `file:` include prefix, the YAML include suffixes, the history store file name and the path separator in one constants module
   - Provide the exit-code enumeration (0, 2, 3, 4, 5), the base error carrying file, key path and problem, one error class per non-zero code (usage, write refused, load, path) and the two path-error kinds (not found, wrong node kind)
   - Provide the single message formatter producing `<file>: <path>: <problem>` and its file-only, path-only and problem-only forms
@@ -175,3 +175,6 @@
   - Runs last because it includes the full quality gate over all tests, so it is not parallel with 6.1–6.4
   - _Boundary: tests for read-only safety_
   - _Requirements: 3.6, 7.4, 7.6, 7.8, 7.9, 10.2_
+
+## Implementation Notes
+- 1.1: Test helpers live in `tests/support.py` (typed `make_theatre`/`run_cli` fixtures in `tests/conftest.py`); the subprocess runner uses the console script next to `sys.executable`, so run tests via `uv run pytest`. Ruff excludes `.kiro`/`.claude` (otherwise `ruff format` rewrites code blocks in spec markdown).
