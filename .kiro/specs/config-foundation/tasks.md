@@ -81,7 +81,7 @@
   - _Depends: 3.3_
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 6.8, 7.2_
 
-- [ ] 4.2 (P) Implement the event-sourced history aggregate and its event types
+- [x] 4.2 (P) Implement the event-sourced history aggregate and its event types
   - Define the single history aggregate with a fixed identity and the past-tense events for history start, leaf imported, leaf value set and leaf removed
   - Define the writer-facing change records for set and remove and the history record (seq, op, path, old, new)
   - Provide the single pure mapping from a stored history event to a history record (seq = event version minus one, op name, old/new with nulls for import and remove); the store in 4.3 reuses it and does not re-implement it
@@ -180,3 +180,4 @@
 - 1.1: Test helpers live in `tests/support.py` (typed `make_theatre`/`run_cli` fixtures in `tests/conftest.py`); the subprocess runner uses the console script next to `sys.executable`, so run tests via `uv run pytest`. Ruff excludes `.kiro`/`.claude` (otherwise `ruff format` rewrites code blocks in spec markdown).
 - 3.2: A `---`-only or `~` root is refused as a non-mapping root (exit 4); only empty/comment-only/whitespace-only/BOM-only files are the empty mapping. ruamel rejects `a:\tb` (tab after colon) → exit 4. Duplicate keys compare key text and typed plain values. Folded U+0007 stripping applies to folded style only.
 - 3.3: Includes: any string scalar value style (not keys) starting with `file:`; suffix check case-sensitive; files cached by real_path (diamond OK). Edge: a YAML include whose whole content is another `file:` string keeps only the OUTER IncludeRef (node origin is in the innermost file) — the writer should treat such nodes as whole-include (exit 3 on replace).
+- 4.2: `to_history_record` takes `DomainEventProtocol[UUID]` (not `ConfigHistory.Event`) so store events pass without casts. 4.3 should add a persisted round-trip test with bool/int/float(inf,nan,-0.0)/None/unicode values (reviewer verified the JSONTranscoder preserves exact types).
