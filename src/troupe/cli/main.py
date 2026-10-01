@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from typing import BinaryIO, Final, NoReturn, TextIO
 
 from troupe.cli.render import format_history_line, format_show_output
+from troupe.cli.set_command import add_set_subparser
 from troupe.cli.shell import SubcommandRegistrar, TroupeArgumentParser, theatre_option_parent
 from troupe.config.errors import TroupeError
 from troupe.config.paths import ConfigPath
@@ -72,6 +73,7 @@ def add_history_subparser(
 SUBCOMMAND_REGISTRARS: Final[tuple[SubcommandRegistrar, ...]] = (
     add_show_subparser,
     add_history_subparser,
+    add_set_subparser,
 )
 
 
