@@ -79,7 +79,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.1_
   - _Requirements: 2.7, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 7.1, 7.2, 7.3_
 
-- [ ] 2.5 (P) Render literal blocks, chomping and greedy word wrapping
+- [x] 2.5 (P) Render literal blocks, chomping and greedy word wrapping
   - Decide whether a string fits a literal block, the required chomping (strip, clip, keep) and whether an existing chomping still fits
   - Render literal content at a given indentation and line break, empty lines as bare breaks, extra trailing breaks for keep
   - Wrap a paragraph greedily by word at a width, breaking only at single spaces, a longer word on its own line, no wrapping without a width
@@ -308,3 +308,4 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 - 1.3: `IncludeDirective` has an extra `kind: IncludeKind | None` field (`compare=False`; `None` when the directive comes from VALUE), used to tell a text include from a YAML include with string content. `splice` raises `ValueError` for paths that target resolution refuses, so 3.1 must make sure exit-5 paths never reach it. Mapping over mapping = merge (keys absent from VALUE are removed; existing order kept; new keys appended).
 - 2.2: `_block_scalar_end` takes the content indentation from the smallest non-blank line and ignores an explicit indentation indicator (`|2`). A whitespace-only line that is content under `|2` can be left out of `body_lines`; fix this in 2.6 if it matters there. Explicit `? k` keys make `entry_slot` raise `ValueError`, which the planner must turn into exit 3.
 - 2.4: Multi-line strings come out of `render_scalar` double-quoted; block-context callers must use a literal block (BlockScalar). A `<<` key is never plain (the loader refuses plain `<<` as a merge key). Lone surrogates make the renderer raise `WriteRefusedError` naming PATH. U+FFFE/U+FFFF are escaped. Keys are compared as text, so verification must catch typed-duplicate clashes such as a new plain `true` beside `True`.
+- 2.5: `render_literal` raises `ValueError` when `literal_fits` is false, so callers must check first and fall back to double-quoted. A first line starting with a space is refused (no indentation indicator, per design). A lone `"\n"` renders as `|+` (`required_chomping` is KEEP). `wrap_paragraph` never breaks at a space next to a TAB or another space.
