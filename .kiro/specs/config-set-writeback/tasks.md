@@ -227,7 +227,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.1, 4.5_
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 7.1, 7.2, 7.3, 7.4_
 
-- [ ] 5.4 (P) Validate new collections, indentation and placement
+- [x] 5.4 (P) Validate new collections, indentation and placement
   - Indentation: `c, '{d: 1, e: [p, q]}': 'a:\n    x: 1\nb: 2\n'` → `'a:\n    x: 1\nb: 2\nc:\n    d: 1\n    e:\n        - p\n        - q\n'`; `n, '[x, y]': 'l:\n- a\nm: 1\n'` → `'l:\n- a\nm: 1\nn:\n- x\n- y\n'`; `b, '{c: 1}': 'a: 1\n'` → `'a: 1\nb:\n  c: 1\n'`; `l.1, '{n: 1, m: 2}': 'l:\n  - a\n'` → `'l:\n  - a\n  - n: 1\n    m: 2\n'`
   - Placement: `a.y, '2': 'a:\n  x: 1\n  # end of a\n\n# about b\nb: 2\n'` → `'a:\n  x: 1\n  # end of a\n  y: 2\n\n# about b\nb: 2\n'`; `a.y, '2': 'a:\n  x: 1\n# about b\nb: 2\n'` → `'a:\n  x: 1\n  y: 2\n# about b\nb: 2\n'`; `b, '2': 'a: 1\n# tail\n'` → `'a: 1\n# tail\nb: 2\n'`
   - Flow: `a.y, '[1, 2]': 'a: {x: 1}  # c\n'` → `'a: {x: 1, y: [1, 2]} # c\n'`; `l.2, 'c': 'l: [a, b,]\n'` → `'l: [a, b, c,]\n'`; `m.k, 'v': 'm: {}\n'` → `'m: {k: v}\n'`; `m.b, '"l1\\nl2\\n"': 'm: {a: 1}\n'` → `'m: {a: 1, b: "l1\\nl2\\n"}\n'`
