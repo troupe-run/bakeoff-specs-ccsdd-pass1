@@ -8,9 +8,10 @@ A replaced value goes through :meth:`_Planner.change_slot`, which follows the de
 decision":
 
 * an unchanged value (typed plain equality) needs no edit;
-* a YAML include root that would change is refused (2.5); a text include gets its target file's
-  whole content replaced by the text-include content rule (2.2, 2.3), or is refused when VALUE is
-  not a string (2.4);
+* a YAML include root that would change is refused naming its own path, which inside a merged
+  collection is the nested path, and the included file (2.5, 5.8); a text include gets its target
+  file's whole content replaced by the text-include content rule (2.2, 2.3), or is refused when
+  VALUE is not a string (2.4);
 * an existing literal or folded block changed to a string it can still hold is rewritten in place
   (9.4, 9.5, 10.x);
 * an existing plain, quoted or empty scalar changed to a scalar is replaced in its slot in the
@@ -154,7 +155,7 @@ class _Planner:
                 return layout.entry_slot(parent, entry, self._path)
             return layout.item_slot(parent, int(target.key), self._path)
 
-        self.change_slot(layout, target.node, slot, value, self._path)
+        self.change_slot(layout, target.node, slot, value, self._path, self._path)
 
     def add_key(self, target: AddKeyTarget, value: NewValue) -> None:
         """Plan a new key in ``target.mapping``, with the missing intermediate mappings (3.1, 3.2).
@@ -302,15 +303,20 @@ class _Planner:
         slot: Callable[[], ValueSlot],
         value: NewValue,
         path: ConfigPath,
+        at: ConfigPath,
     ) -> None:
-        """Plan the change of ``node`` (whose slot ``slot`` locates in ``layout``) to ``value``."""
+        """Plan the change of ``node`` (whose slot ``slot`` locates in ``layout``) to ``value``.
+
+        ``path`` is PATH; ``at`` is the path of ``node`` itself (PATH, or a path below it inside a
+        merged collection), named when a YAML include root there would change (5.8).
+        """
         if plain_equal(node_to_plain(node), new_to_plain(value), ordered=False):
             return
         if node.include is not None:
-            self._change_include(node, value, path)
+            self._change_include(node, value, path, at)
             return
         if not self._guard(
-            layout.file, path, lambda: self._change_value(layout, node, slot(), value, path)
+            layout.file, path, lambda: self._change_value(layout, node, slot(), value, path, at)
         ):
             _refuse(
                 path,
@@ -326,6 +332,7 @@ class _Planner:
         slot: ValueSlot,
         value: NewValue,
         path: ConfigPath,
+        at: ConfigPath,
     ) -> bool:
         """Plan an in-place change of a value that is not an include root; ``False`` if none fits.
 
@@ -343,13 +350,19 @@ class _Planner:
                 # A string no block can hold is double-quoted instead (9.7).
                 preferred = ScalarStyle.DOUBLE_QUOTED
         elif _merges(node, value):
-            self._merge(layout, node, slot, value, path)
+            self._merge(layout, node, slot, value, path, at)
             return True
         self._replace_value(layout, slot, value, path, preferred)
         return True
 
-    def _change_include(self, node: ConfigNode, value: NewValue, path: ConfigPath) -> None:
-        """An include root that changes: rewrite a text include's target, refuse anything else."""
+    def _change_include(
+        self, node: ConfigNode, value: NewValue, path: ConfigPath, at: ConfigPath
+    ) -> None:
+        """An include root that changes: rewrite a text include's target, refuse anything else.
+
+        A YAML include root is refused naming its own path ``at`` and the included file (2.5,
+        5.8); the text-include refusals name PATH and the target (2.4).
+        """
         include = node.include
         if include is None:  # pragma: no cover - only called for include roots
             raise ValueError("not an include root")
@@ -357,7 +370,7 @@ class _Planner:
         directive = f"file:{include.spec}"
         if include.kind is not IncludeKind.TEXT:
             _refuse(
-                path,
+                at,
                 target,
                 f"the whole value comes from the include {directive}; "
                 "change the included file instead",
@@ -392,6 +405,7 @@ class _Planner:
         slot: ValueSlot,
         value: NewValue,
         path: ConfigPath,
+        at: ConfigPath,
     ) -> None:
         """Merge a non-empty mapping or list into an existing one of the same kind (5.1, 5.2).
 
@@ -400,9 +414,9 @@ class _Planner:
         mapping none of whose entries stays is rendered anew as a whole (8.5).
         """
         if isinstance(node, ConfigMapping) and isinstance(value, NewMapping):
-            self._merge_mapping(layout, node, slot, value, path)
+            self._merge_mapping(layout, node, slot, value, path, at)
         elif isinstance(node, ConfigSequence) and isinstance(value, NewSequence):
-            self._merge_sequence(layout, node, value, path)
+            self._merge_sequence(layout, node, value, path, at)
         else:  # pragma: no cover - only called when ``_merges`` holds
             raise ValueError("only collections of the same kind are merged")
 
@@ -413,6 +427,7 @@ class _Planner:
         slot: ValueSlot,
         value: NewMapping,
         path: ConfigPath,
+        at: ConfigPath,
     ) -> None:
         new = dict(value.entries)
         deleted = [index for index, entry in enumerate(node.entries) if entry.key not in new]
@@ -427,6 +442,7 @@ class _Planner:
                     partial(layout.entry_slot, node, entry, path),
                     new[entry.key],
                     path,
+                    at.child(entry.key),
                 )
         self._delete_entries(layout, node, deleted, path)
         existing = {entry.key for entry in node.entries}
@@ -440,10 +456,16 @@ class _Planner:
         node: ConfigSequence,
         value: NewSequence,
         path: ConfigPath,
+        at: ConfigPath,
     ) -> None:
         for index, (item, new_item) in enumerate(zip(node.items, value.items, strict=False)):
             self.change_slot(
-                layout, item, partial(layout.item_slot, node, index, path), new_item, path
+                layout,
+                item,
+                partial(layout.item_slot, node, index, path),
+                new_item,
+                path,
+                at.child(index),
             )
         self._delete_entries(layout, node, range(len(value.items), len(node.items)), path)
         surplus = value.items[len(node.items) :]
@@ -789,7 +811,14 @@ class _Planner:
         self._edits.setdefault(key, []).extend(edits)
 
     def _replace_file(self, file: SourceFile, text: str, path: ConfigPath) -> None:
+        """Replace a text-include target's whole content; one file never gets two patches (13.6).
+
+        A target included at several places may be given the same new content at each of them;
+        different contents, or a whole replacement besides edits, are refused.
+        """
         key = file.real_path
+        if key in self._whole and self._whole[key][1] == text:
+            return
         if key in self._whole or self._edits.get(key):
             _refuse(path, file, "the file would be changed in two ways")
         self._whole[key] = (file, text)

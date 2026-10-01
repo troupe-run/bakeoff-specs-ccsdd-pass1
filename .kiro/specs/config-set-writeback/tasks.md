@@ -146,7 +146,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Boundary: PatchPlanner_
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.7, 14.9_
 
-- [ ] 3.6 Plan includes inside replaced collections and multi-file patches
+- [x] 3.6 Plan includes inside replaced collections and multi-file patches
   - Inside a merged collection: refuse when a YAML include root would change, naming the path of that value (the nested path, not PATH) and the included file; remove only the directive entry when an included value is dropped; change a nested text include's content through the slot change of 3.2
   - Return one file patch per changed file, in the order the files appear in the loaded document (root file first), never two patches for the same file (product-owner decision B: a set that must change several files is carried out, not refused)
   - Done when planner tests prove `agents, '{coder: {model: z}, lead: x}'` on `'agents:\n  coder: file:coder.yaml\n  lead: x\n'` (coder.yaml `'model: y\n'`) is refused naming `agents.coder` and coder.yaml, `agents, '{lead: y}'` changes only the root file to `'agents:\n  lead: y\n'`, `p, '{t: "new\\n", n: 1}'` on `'p:\n  t: file:t.txt\n  n: 1\n'` with t.txt `b'old\r\n'` patches only t.txt to `b'new\r\n'`, and the two-file plan `p, '{t: new, n: 2}'` on the same root with t.txt `'old\n'` yields exactly two patches, in this order, with byte-exact new texts: troupe.yml `'p:\n  t: file:t.txt\n  n: 2\n'` and t.txt `'new'`
