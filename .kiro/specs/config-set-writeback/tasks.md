@@ -299,3 +299,8 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - Done when all four commands pass and the traceability check lists no missing requirement
   - _Boundary: whole spec (verification only; fixes go back to the owning task)_
   - _Requirements: 13.1, 14.7, 16.2_
+
+## Implementation Notes
+- (from config-foundation validation) In `src/troupe/cli/set_command.py`, quote the `argparse._SubParsersAction[TroupeArgumentParser]` annotation (or use `from __future__ import annotations`): unquoted, it raises `TypeError` at import on Python 3.12 and would break the whole CLI (see `src/troupe/cli/main.py` for the quoted form).
+- (from config-foundation 5.3) argparse treats PATH/VALUE arguments starting with `-` such as `-1e3`, `-.inf`, `-x` as options (exit 2); `-1`/`-0.5` pass. `set` must accept such VALUEs (e.g. register PATH/VALUE so leading-dash values are taken as positionals) and test them through the CLI. `--theatre` is accepted only after the subcommand.
+- (from config-foundation) Test helpers: `tests/support.py` (`make_theatre`, `run_cli` fixtures in `tests/conftest.py`); run tests via `uv run pytest`. Never restore files with `git checkout` during mutation testing; re-write the original text.
