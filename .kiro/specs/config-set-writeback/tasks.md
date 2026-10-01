@@ -237,7 +237,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.1, 4.5_
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 11.1, 11.2, 11.3, 11.4, 11.5_
 
-- [ ] 5.5 (P) Validate literal and folded block scalars
+- [x] 5.5 (P) Validate literal and folded block scalars
   - Literal: `a, '"one\\ntwo\\n"': 'a: x\n'` → `'a: |\n  one\n  two\n'`; `a, '"one\\ntwo"'` on the same fixture → `'a: |-\n  one\n  two\n'`; `a, '"one\\n\\n"'` on the same fixture → `'a: |+\n  one\n\n'`; `b, '"l1\\nl2"': 'a: 1\n'` → `'a: 1\nb: |-\n  l1\n  l2\n'`; `a, '"new\\nlines\\n"': 'a: |  # hdr\n  old\nb: 1\n'` → `'a: |  # hdr\n  new\n  lines\nb: 1\n'`; `a, '"new"': 'a: |\n  old\n'` → `'a: |-\n  new\n'`; `a, '"x\\ny"': 'a: |-\n    deep\n'` → `'a: |-\n    x\n    y\n'`; `a, '5': 'a: |\n  t\nb: 1\n'` → `'a: 5\nb: 1\n'`; `a, '"  indented\\nx\\n"': 'a: x\n'` → `'a: "  indented\\nx\\n"\n'`; `a, '"  x\\ny\\n"': 'a: |\n  t\nb: 1\n'` → `'a: "  x\\ny\\n"\nb: 1\n'`
   - Folded fixture F = `'text: >\n  The quick brown fox\n  jumps over.\n\n  Second para here.\nnext: 1\n'`: `text, '"The quick brown fox jumps over.\\nSecond para changed now and longer.\\n"'` → `'text: >\n  The quick brown fox\n  jumps over.\n\n  Second para\n  changed now and\n  longer.\nnext: 1\n'`; `text, '"The quick brown fox jumps over.\\nSecond para here.\\nExtra paragraph text that wraps.\\n"'` → `'text: >\n  The quick brown fox\n  jumps over.\n\n  Second para here.\n\n  Extra paragraph\n  text that wraps.\nnext: 1\n'`; `text, '"The quick brown fox jumps over.\\n  indented\\n"'` exits 3; `t, '"x\\n"'` on `'t: >\n  a\n    more\n  b\n'` exits 3
   - Done when every case passes byte-exactly
