@@ -51,7 +51,7 @@
   - _Boundary: Locate_
   - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-- [ ] 3.2 Load a single YAML file into the source-mapped model
+- [x] 3.2 Load a single YAML file into the source-mapped model
   - Read bytes read-only, decode UTF-8 strictly without newline translation, detect the line ending, compose one document and build nodes with exact spans, scalar styles, block/flow styles and core-schema typing for plain scalars
   - Treat an empty or comment-only root file as an empty mapping with block style and span (0, 0)
   - Record each mapping entry's key style from the key node's style
@@ -178,3 +178,4 @@
 
 ## Implementation Notes
 - 1.1: Test helpers live in `tests/support.py` (typed `make_theatre`/`run_cli` fixtures in `tests/conftest.py`); the subprocess runner uses the console script next to `sys.executable`, so run tests via `uv run pytest`. Ruff excludes `.kiro`/`.claude` (otherwise `ruff format` rewrites code blocks in spec markdown).
+- 3.2: A `---`-only or `~` root is refused as a non-mapping root (exit 4); only empty/comment-only/whitespace-only/BOM-only files are the empty mapping. ruamel rejects `a:\tb` (tab after colon) → exit 4. Duplicate keys compare key text and typed plain values. Folded U+0007 stripping applies to folded style only.
