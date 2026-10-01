@@ -144,7 +144,7 @@
   - _Boundary: tests for locate and loader_
   - _Requirements: 1.2, 2.1, 2.2, 2.3, 2.4, 3.2, 3.3, 3.4, 3.5, 3.7, 3.9, 10.2, 10.3_
 
-- [ ] 6.2 (P) Validate includes end to end
+- [x] 6.2 (P) Validate includes end to end
   - Through the console script, show values from YAML includes, nested includes in other directories and text includes (byte-exact, including CRLF and a missing final newline), and trigger missing-target and cycle errors
   - Done when outputs match byte for byte, errors exit 4 naming the target, including file or cycle files, and path errors inside included files name the included file
   - _Boundary: tests for includes_
