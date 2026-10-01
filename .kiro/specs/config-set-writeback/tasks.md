@@ -199,7 +199,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 
 - [ ] 5. End-to-end byte-exact validation through the real CLI
   - Each task writes only its own test module and uses only the shared set-test support (subprocess runner, or the in-process runner where a boundary failure must be injected); every test names its requirement IDs in its docstring; every success case asserts exit 0, empty stdout, the exact bytes of the changed file and that all other files are unchanged; every failure asserts the exit code, empty stdout, the stderr naming PATH and/or file, and that the theatre is unchanged
-- [ ] 5.1 (P) Validate invocation, VALUE parsing, import and error reporting
+- [x] 5.1 (P) Validate invocation, VALUE parsing, import and error reporting
   - Contract examples on `'a: x\n'`: `a, '0.2'` → `'a: 0.2\n'`; `a, 'true'` → `'a: true\n'`; `a, 'null'` → `'a: null\n'`; `a, 'abc'` → `'a: abc\n'`; `a, '"0.2"'` → `"a: '0.2'\n"`; `a, '{a: 1}'` → `'a:\n  a: 1\n'`; `a, '[a, b]'` → `'a:\n  - a\n  - b\n'`; `a, '"line one\\nline two\\n"'` → `'a: |\n  line one\n  line two\n'`
   - Usage errors (exit 2, no history state created): VALUE `''`, `'# c'`, `'a: 1'`, `'- a'`, `'!!str 5'`, `'&x 1'`, `'{a: 1, a: 2}'` (stderr names key `a`), missing VALUE, a surplus argument, the unknown option `--bogus`, PATH `'a..b'`; a broken YAML file exits 4 naming it
   - Fresh-theatre import: a successful set, an exit 3 set (`agents.coder, '{model: x}'` on an include root) and an exit 5 set (`l.5, 'x'` on `'l: [a]\n'`) each leave `history` listing the import events, with no set event for the refused ones
