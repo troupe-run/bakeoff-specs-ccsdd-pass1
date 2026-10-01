@@ -154,7 +154,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Requirements: 2.2, 2.3, 5.8, 5.9, 13.6_
 
 - [ ] 4. Verification, effects and wiring
-- [ ] 4.1 (P) Verify a patch by re-loading the configuration in memory
+- [x] 4.1 (P) Verify a patch by re-loading the configuration in memory
   - Re-load with every current file overridden (original texts plus the patched texts of all patches at once); targets of newly written includes are read by the loader from disk
   - Compare the read-back with the intended configuration including key order and include directives; map load errors (including a missing target or cycle of a newly written include) and mismatches to write-refused errors naming the (first) patched file, PATH and, for load errors, the loader's message naming the target (refusal confirmed by the product owner, decision C)
   - Done when unit tests prove a correct patch returns the re-loaded document, two patches (troupe.yml and t.txt of the 3.6 two-file plan) verify together, a newly written include with an existing target verifies, and an unparsable patch, a value mismatch (a file included at two places), a missing include target and an include cycle each raise the write-refused error with PATH and (where applicable) the target in the message
