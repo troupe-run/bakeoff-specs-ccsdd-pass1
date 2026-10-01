@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Foundation: project scaffold and shared conventions
-- [ ] 1.1 Set up the uv project, console script and quality tooling
+- [x] 1.1 Set up the uv project, console script and quality tooling
   - Create the src-layout package with the CLI and config sub-packages, typed-package marker and a minimal `config` command group entry point so the console script exists
   - Declare runtime dependencies (ruamel.yaml pinned below 0.20, eventsourcing 9.5.5 or later below 10) and a dev group with pytest, mypy and ruff; configure mypy strict mode, ruff lint and format rules and pytest test paths, and set `[tool.pytest.ini_options] pythonpath = ["tests"]` so helper modules in `tests/` are importable from test subdirectories (e.g. `tests/writeback/`)
   - Add test helpers: a fixture that writes real files into a temporary theatre (`.troupe/troupe.yml` or `.yaml`, plus arbitrary include files) and a helper that runs the real `troupe` console script as a subprocess and returns exit code, stdout bytes and stderr text
