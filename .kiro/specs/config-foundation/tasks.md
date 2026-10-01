@@ -159,7 +159,7 @@
   - _Boundary: tests for show_
   - _Requirements: 1.5, 3.1, 3.8, 5.1, 5.2, 5.3, 5.4, 5.5, 6.1, 6.2, 6.3, 6.4, 6.5, 6.7, 6.8, 6.9, 7.3_
 
-- [ ] 6.4 (P) Validate history and import behaviour end to end
+- [x] 6.4 (P) Validate history and import behaviour end to end
   - Through the console script, prove the first `show` imports and a later `history` lists one import line per leaf with seq from 1 and `old` null; the first `history` on a fresh theatre imports; a second command imports nothing; a hand edit adds no events while `show` reflects it; prefix filtering includes `PATH` and `PATH.` descendants only; a non-matching PATH prints nothing with exit 0
   - Append set and remove changes through the recording API and prove `history` shows them with consecutive seq numbers
   - Prove the import event for a folded (`>`) leaf has `new` equal to the folded text with no `\x07`, and that `.inf`, `-.inf` and `.nan` leaves appear as `".inf"`, `"-.inf"`, `".nan"`
