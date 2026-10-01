@@ -18,11 +18,17 @@ decision":
   (9.1, 9.2) and a double-quoted scalar in a flow collection or where a literal block cannot hold
   it (9.3, 9.7).
 
+A new key (with any missing intermediate mappings nested under it) or an appended list item goes
+through :meth:`_Planner.add_entries` into the file holding the collection (3.1, 3.2, 4.1): in a
+block collection as whole lines at its insertion point and entries column with the last entry's
+quote styles (7.1-7.3, 11.1, 11.2, 11.6), in a flow collection right after its last entry on that
+entry's line (11.3).
+
 End-of-line comments on the changed lines are moved back to their columns by the EditApplier
 (12.x). Every refusal is a :class:`WriteRefusedError` naming the file and the path (14.9).
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, NoReturn, TypeVar
@@ -46,12 +52,29 @@ from troupe.config.writeback.block_scalar import (
     required_chomping,
     rewrite_block,
 )
-from troupe.config.writeback.collection_render import RenderContext, render_block_value
+from troupe.config.writeback.collection_render import (
+    RenderContext,
+    SiblingStyles,
+    render_block_entry,
+    render_block_value,
+    render_flow_entry,
+)
 from troupe.config.writeback.compare import new_to_plain, node_to_plain, plain_equal
 from troupe.config.writeback.edits import EditKind, TextEdit, apply_edits
 from troupe.config.writeback.layout import FileLayout, ValueSlot
-from troupe.config.writeback.scalar_render import Context, quote_style_of, render_scalar
-from troupe.config.writeback.target import ReplaceTarget, SetRequest, text_include_value
+from troupe.config.writeback.scalar_render import (
+    Context,
+    QuoteStyle,
+    quote_style_of,
+    render_scalar,
+)
+from troupe.config.writeback.target import (
+    AddKeyTarget,
+    AppendTarget,
+    ReplaceTarget,
+    SetRequest,
+    text_include_value,
+)
 from troupe.config.writeback.value import NewMapping, NewScalar, NewValue
 
 _QUOTED_OR_PLAIN: Final = frozenset(
@@ -81,13 +104,12 @@ def plan_patch(document: ConfigDocument, request: SetRequest) -> tuple[FilePatch
     """
     planner = _Planner(document, request.path)
     target = request.target
-    if not isinstance(target, ReplaceTarget):
-        _refuse(
-            request.path,
-            document.root_file,
-            "this change cannot be written: new keys and list items are not supported yet",
-        )
-    planner.replace(target, request.value)
+    if isinstance(target, ReplaceTarget):
+        planner.replace(target, request.value)
+    elif isinstance(target, AddKeyTarget):
+        planner.add_key(target, request.value)
+    else:
+        planner.append(target, request.value)
     return planner.patches()
 
 
@@ -119,6 +141,143 @@ class _Planner:
             return layout.item_slot(parent, int(target.key), self._path)
 
         self.change_slot(layout, target.node, slot, value, self._path)
+
+    def add_key(self, target: AddKeyTarget, value: NewValue) -> None:
+        """Plan a new key in ``target.mapping``, with the missing intermediate mappings (3.1, 3.2).
+
+        The first missing key is the new entry; the keys after it become nested new mappings with
+        VALUE at the last one, rendered as one new collection value (7.4).
+        """
+        first, *intermediates = target.missing
+        for key in reversed(intermediates):
+            value = NewMapping(entries=((key, value),))
+        self.add_entries(target.mapping, ((first, value),), self._path)
+
+    def append(self, target: AppendTarget, value: NewValue) -> None:
+        """Plan VALUE as a new last item of ``target.sequence`` (4.1)."""
+        self.add_entries(target.sequence, ((None, value),), self._path)
+
+    # --- new entries -----------------------------------------------------------------------------
+
+    def add_entries(
+        self,
+        collection: ConfigMapping | ConfigSequence,
+        entries: Sequence[tuple[str | None, NewValue]],
+        path: ConfigPath,
+    ) -> None:
+        """Plan new entries (``key`` ``None``: list items) after the last entry of ``collection``.
+
+        They go into the file the collection is written in, styled after its last existing entry
+        (7.1-7.3). A block collection gets one line insertion at its insertion point (11.1, 11.2,
+        11.6); a flow collection one insertion on its last entry's line (11.3).
+        """
+        file = collection.origin.file
+        layout = self._guard(file, path, lambda: self._layout(file))
+        siblings = _sibling_styles(collection)
+        if collection.style is CollectionStyle.FLOW:
+            edit = self._guard(
+                file,
+                path,
+                lambda: self._flow_insertion(layout, collection, entries, siblings, path),
+            )
+        else:
+            edit = self._guard(
+                file,
+                path,
+                lambda: self._block_insertion(layout, collection, entries, siblings, path),
+            )
+        self._add(layout, [edit])
+
+    def _block_insertion(
+        self,
+        layout: FileLayout,
+        collection: ConfigMapping | ConfigSequence,
+        entries: Sequence[tuple[str | None, NewValue]],
+        siblings: SiblingStyles,
+        path: ConfigPath,
+    ) -> TextEdit:
+        """New block entries at the entries column, inserted at the insertion point.
+
+        At a file end without a final line break the text starts with a break and ends without
+        one (11.6), unless its last line is content of a literal block that needs its break.
+        """
+        point = layout.insertion_point(collection)
+        column = layout.entries_column(collection)
+        ctx = RenderContext(
+            step=layout.indent_step(),
+            dash_offset=layout.dash_offset(),
+            line_break=layout.line_break_at(point.index),
+            path=path,
+        )
+        text = self._render(
+            lambda: "".join(
+                render_block_entry(key, value, column, siblings, ctx) for key, value in entries
+            ),
+            layout,
+            path,
+        )
+        if point.needs_leading_break:
+            text = ctx.line_break + text
+            if not _needs_final_break(entries[-1][1]):
+                text = text.removesuffix(ctx.line_break)
+        return TextEdit(point.index, point.index, text, EditKind.LINES)
+
+    def _flow_insertion(
+        self,
+        layout: FileLayout,
+        collection: ConfigMapping | ConfigSequence,
+        entries: Sequence[tuple[str | None, NewValue]],
+        siblings: SiblingStyles,
+        path: ConfigPath,
+    ) -> TextEdit:
+        """New flow entries right after the last entry (after the opening bracket when empty).
+
+        Whatever follows the last entry (a trailing comma, the closing bracket, a comment) stays
+        after the new entries (11.3).
+        """
+        separator = ", "
+        if isinstance(collection, ConfigMapping):
+            if collection.entries:
+                last = collection.entries[-1]
+                slot = layout.entry_slot(collection, last, path)
+                at = layout.content_end(last.value, slot)
+                extent = layout.inline_extent(slot)
+                if extent.start == extent.end:
+                    # An empty last value ends at its ':'; `b:,` would read as the key `b:`.
+                    separator = " , "
+            else:
+                at = self._after_opening_bracket(layout, collection)
+        elif collection.items:
+            index = len(collection.items) - 1
+            slot = layout.item_slot(collection, index, path)
+            at = layout.content_end(collection.items[index], slot)
+        else:
+            at = self._after_opening_bracket(layout, collection)
+        ctx = RenderContext(
+            step=layout.indent_step(),
+            dash_offset=layout.dash_offset(),
+            line_break=layout.line_break_at(at),
+            path=path,
+        )
+        text = self._render(
+            lambda: ", ".join(
+                render_flow_entry(key, value, siblings, ctx) for key, value in entries
+            ),
+            layout,
+            path,
+        )
+        empty = at == collection.origin.span.start + 1
+        return TextEdit(at, at, text if empty else separator + text, EditKind.INLINE)
+
+    @staticmethod
+    def _after_opening_bracket(
+        layout: FileLayout, collection: ConfigMapping | ConfigSequence
+    ) -> int:
+        start = collection.origin.span.start
+        bracket = "{" if isinstance(collection, ConfigMapping) else "["
+        if not layout.file.text.startswith(bracket, start):
+            raise ValueError(f"expected {bracket!r} at index {start} of {layout.file.path}")
+        return start + 1
 
     # --- slot change decision --------------------------------------------------------------------
 
@@ -372,6 +531,49 @@ def _with_context(
 
 def _refuse(path: ConfigPath, file: SourceFile, problem: str) -> NoReturn:
     raise WriteRefusedError(problem, file=file.path, path=str(path))
+
+
+def _sibling_styles(collection: ConfigMapping | ConfigSequence) -> SiblingStyles:
+    """Quote styles of the last existing entry's key and scalar value (7.1-7.3).
+
+    A value that is a collection, a block scalar or a text include gives no preferred style.
+    """
+    if isinstance(collection, ConfigMapping):
+        if not collection.entries:
+            return SiblingStyles(key=None, value=None)
+        last = collection.entries[-1]
+        return SiblingStyles(key=quote_style_of(last.key_style), value=_value_style(last.value))
+    if not collection.items:
+        return SiblingStyles(key=None, value=None)
+    return SiblingStyles(key=None, value=_value_style(collection.items[-1]))
+
+
+def _value_style(node: ConfigNode) -> QuoteStyle | None:
+    return quote_style_of(node.style) if isinstance(node, ConfigScalar) else None
+
+
+def _needs_final_break(value: NewValue) -> bool:
+    """Whether the last line of ``value`` rendered in block style is content needing its break.
+
+    That is a literal block (clip or keep chomping) as the last value: its final line break is
+    part of the string (9.1). Everything else may end at a break-less file end (11.6).
+    """
+    while not isinstance(value, NewScalar):
+        if isinstance(value, NewMapping):
+            if not value.entries:
+                return False
+            value = value.entries[-1][1]
+        elif not value.items:
+            return False
+        else:
+            value = value.items[-1]
+    text = value.value
+    return (
+        isinstance(text, str)
+        and _LF in text
+        and literal_fits(text)
+        and required_chomping(text) is not Chomping.STRIP
+    )
 
 
 def _kind(value: ConfigNode | NewValue) -> str:

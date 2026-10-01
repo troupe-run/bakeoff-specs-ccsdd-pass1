@@ -124,7 +124,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Boundary: PatchPlanner_
   - _Requirements: 2.1, 2.4, 2.5, 2.6, 2.7, 6.1, 6.2, 9.3, 13.1_
 
-- [ ] 3.3 Plan new keys, intermediate mappings and list appends
+- [x] 3.3 Plan new keys, intermediate mappings and list appends
   - Insert new block entries at the collection's insertion point and entries column (root column 0) with sibling styles, adding a leading break at a file end without one
   - Append new flow entries after the last entry on its line (after the opening bracket when empty), keeping trailing commas and closing brackets
   - Build the nested value for missing intermediate mappings and render it at the first missing key
@@ -313,3 +313,4 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 - 2.7: `render_block_value` has extra keyword-only args: `compact` (default True; pass False for a list-item collection whose `-` line has an end-of-line comment) and `preferred` (the first-level sibling quote style). Compact list-item collections put further entries at dash+2 (req 8.4). Content inside new collections uses minimal quoting (7.4).
 - 3.1: `resolve_target` returns Replace/AddKey/Append targets. Include roots and non-string-over-text-include are NOT refused there; the planner (3.2) must refuse them (exit 3). A different `file:` string set over a text include replaces the directive in the intended tree, and 3.2 decides whether to refuse it. Text-include targets are looked up by `id()` of the directive objects that `splice` passes through.
 - 3.2: The planner already writes a multi-line string over a plain/quoted scalar as a literal block, so 3.4 must reuse that rather than reimplement it. Still refused (exit 3) until 3.4: a block scalar set to a string it cannot hold (req 9.7 needs a double-quoted fallback), non-strings over block scalars, and kind changes. A different `file:` string over a text include is refused (exit 3, conservative). `plan_patch` refuses an empty plan, so SetCommand must detect no-ops (`plain_equal`) BEFORE planning (14.6).
+- 3.3: `add_entries` takes a list of entries (for 3.5 merges); each new entry copies the LAST existing entry's style. A flow entry added after an empty flow value uses `" , "` so the previous key does not absorb the comma.
