@@ -56,5 +56,5 @@ rules). The write side carries most of the risk and rules, so it gets its own sp
   - Error types and exit-code mapping live in one place (foundation). The set spec reuses them.
 
 ## Specs (dependency order)
-- [ ] config-foundation -- CLI scaffold, theatre/config-file location, YAML loading with recursive includes into a source-mapped model, path addressing, event-sourced projection with import, `show PATH`, `history [PATH]`, error/exit-code conventions. Dependencies: none
-- [ ] config-set-writeback -- `set PATH VALUE`: YAML 1.2 flow-node value parsing, target-file resolution, byte-surgical write-back rules, leaf-level set/remove events. Dependencies: config-foundation
+- [x] config-foundation -- CLI scaffold, theatre/config-file location, YAML loading with recursive includes into a source-mapped model, path addressing, event-sourced projection with import, `show PATH`, `history [PATH]`, error/exit-code conventions. Dependencies: none
+- [x] config-set-writeback -- `set PATH VALUE`: YAML 1.2 flow-node value parsing, target-file resolution, byte-surgical write-back rules, leaf-level set/remove events. Dependencies: config-foundation
