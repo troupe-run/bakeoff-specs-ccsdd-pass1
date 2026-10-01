@@ -108,7 +108,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Requirements: 7.4, 8.1, 8.4, 8.5, 8.6, 9.1, 9.2, 9.3_
 
 - [ ] 3. Target resolution and patch planning
-- [ ] 3.1 Resolve write targets, path errors and the intended configuration
+- [x] 3.1 Resolve write targets, path errors and the intended configuration
   - Map the path walk to replace, add-key and append targets; raise path-not-found errors naming PATH and the deepest node's file for missing paths below scalars and nulls, non-index segments on lists, indexes beyond the length, segments after an appended index, and digit-only keys to be created
   - Own the text-include content rule: VALUE exactly, with every line feed not already preceded by a carriage return written as CRLF when the target file uses CRLF; supply it to the splice from 1.3 so it applies at PATH and at any depth inside a replaced collection
   - Compute the intended configuration with include directives; at a text-include target (at PATH or nested) keep the directive and set its content through that rule
@@ -311,3 +311,4 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 - 2.5: `render_literal` raises `ValueError` when `literal_fits` is false, so callers must check first and fall back to double-quoted. A first line starting with a space is refused (no indentation indicator, per design). A lone `"\n"` renders as `|+` (`required_chomping` is KEEP). `wrap_paragraph` never breaks at a space next to a TAB or another space.
 - 2.6: KNOWN DEVIATION TO REVISIT: following req 10.7, any change to a folded value whose OLD text has more-indented lines is refused (exit 3). The contract only refuses a change that would PUT a more-indented line in. `rewrite_block` raises `ValueError` for a value no block can hold; 3.2/3.4 must check `literal_fits` first and fall back to double quotes. layout `_block_scalar_end` now honours `|N` indicators.
 - 2.7: `render_block_value` has extra keyword-only args: `compact` (default True; pass False for a list-item collection whose `-` line has an end-of-line comment) and `preferred` (the first-level sibling quote style). Compact list-item collections put further entries at dash+2 (req 8.4). Content inside new collections uses minimal quoting (7.4).
+- 3.1: `resolve_target` returns Replace/AddKey/Append targets. Include roots and non-string-over-text-include are NOT refused there; the planner (3.2) must refuse them (exit 3). A different `file:` string set over a text include replaces the directive in the intended tree, and 3.2 decides whether to refuse it. Text-include targets are looked up by `id()` of the directive objects that `splice` passes through.
