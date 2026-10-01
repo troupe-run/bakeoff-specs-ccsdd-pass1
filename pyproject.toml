@@ -15,6 +15,7 @@ troupe = "troupe.cli.main:main"
 dev = [
     "mypy>=1.13",
     "pytest>=8.3",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.8",
 ]
 

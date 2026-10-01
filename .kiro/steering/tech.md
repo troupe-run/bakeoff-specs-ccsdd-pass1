@@ -47,7 +47,7 @@ keep Product Principle 1: the user's file changes only where they asked.
 ### Common Commands
 ```bash
 uv run troupe config …        # run the CLI (from repo root)
-uv run pytest                 # tests
+uv run pytest -n auto        # tests (parallel; plain `uv run pytest` also works)
 uv run mypy --strict .        # type check
 uv run ruff check . && uv run ruff format --check .   # lint / format
 ```
