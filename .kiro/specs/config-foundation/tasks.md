@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Foundation: project scaffold and shared conventions
+- [x] 1. Foundation: project scaffold and shared conventions
 - [x] 1.1 Set up the uv project, console script and quality tooling
   - Create the src-layout package with the CLI and config sub-packages, typed-package marker and a minimal `config` command group entry point so the console script exists
   - Declare runtime dependencies (ruamel.yaml pinned below 0.20, eventsourcing 9.5.5 or later below 10) and a dev group with pytest, mypy and ruff; configure mypy strict mode, ruff lint and format rules and pytest test paths, and set `[tool.pytest.ini_options] pythonpath = ["tests"]` so helper modules in `tests/` are importable from test subdirectories (e.g. `tests/writeback/`)
@@ -19,7 +19,7 @@
   - _Boundary: Constants, Errors (src/troupe/config/constants.py, src/troupe/config/errors.py)_
   - _Requirements: 10.1, 10.3, 10.4, 10.5_
 
-- [ ] 2. Core value and path primitives
+- [x] 2. Core value and path primitives
 - [x] 2.1 (P) Implement YAML 1.2 core-schema typing of plain scalars
   - Classify written plain scalar text as null, boolean, integer (decimal, `0o` octal, `0x` hex), float (including infinities and NaN forms) or string, exactly per the core schema, returning plain built-in values
   - Done when a table-driven test passes for at least `yes`, `on`, `True`, `FALSE`, `~`, empty, `null`, `0o17`, `0x1F`, `1_0`, `2001-12-14`, `1e3`, `.inf`, `-.inf`, `.NaN`, `-.nan`, `012`, `+1`, and fails if any entry is typed differently
@@ -43,7 +43,7 @@
   - _Boundary: Model (src/troupe/config/model.py)_
   - _Requirements: 4.2, 4.3, 6.6_
 
-- [ ] 3. File layer: locating and loading the user's files
+- [x] 3. File layer: locating and loading the user's files
 - [x] 3.1 (P) Locate the root configuration file
   - Return the single existing `troupe.yml` or `troupe.yaml` under `<theatre>/.troupe/`; raise a load error naming the expected file when neither exists or the theatre directory is missing or not a directory; raise a load error naming both files when both exist
   - Never create directories or files while checking
@@ -71,7 +71,7 @@
   - _Boundary: Loader (src/troupe/config/loader.py)_
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7_
 
-- [ ] 4. Path resolution and configuration history
+- [x] 4. Path resolution and configuration history
 - [x] 4.1 (P) Implement path walking, resolution and leaf flattening
   - Walk a parsed path from the root, reporting the nodes reached, the number of segments consumed and why it stopped (complete, missing key, index out of range, non-index segment on a list, segment applied to a scalar)
   - Resolve a path strictly for reading, raising a not-found path error that names the file of the deepest existing node and PATH
@@ -107,7 +107,7 @@
   - _Boundary: Store (src/troupe/config/store.py)_
   - _Requirements: 9.1, 9.2, 9.3, 9.4_
 
-- [ ] 5. Application session and CLI
+- [x] 5. Application session and CLI
 - [x] 5.1 Implement the theatre session use cases
   - Open a theatre in the fixed order locate, load (from disk), open store, ensure import, so that no state is created when locating or loading fails; if the import fails, close the store before re-raising
   - Make the theatre session a context manager whose exit closes the history store without suppressing an exception
@@ -136,7 +136,7 @@
   - _Depends: 5.1, 5.2_
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 7.9, 10.1, 10.2, 10.3, 10.5_
 
-- [ ] 6. End-to-end validation through the real CLI
+- [x] 6. End-to-end validation through the real CLI
   - Tasks 6.1–6.4 each write only their own test module (locate/loader, includes, show, history) and only use the shared helpers from 1.1; any new helper stays in that task's own module, never in the shared conftest
 - [x] 6.1 (P) Validate locating and loading errors end to end
   - Through the console script, cover `.yml` and `.yaml` theatres, neither, both, a missing theatre directory, invalid YAML, a file with non-UTF-8 bytes, duplicate keys, explicit tags, an anchor (`a: &x 1`), an alias (`a: &x 1\nb: *x`), a merge key (`<<: {a: 1}`), a non-mapping root and an empty root file
