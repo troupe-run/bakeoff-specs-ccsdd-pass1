@@ -72,7 +72,7 @@
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7_
 
 - [ ] 4. Path resolution and configuration history
-- [ ] 4.1 (P) Implement path walking, resolution and leaf flattening
+- [x] 4.1 (P) Implement path walking, resolution and leaf flattening
   - Walk a parsed path from the root, reporting the nodes reached, the number of segments consumed and why it stopped (complete, missing key, index out of range, non-index segment on a list, segment applied to a scalar)
   - Resolve a path strictly for reading, raising a not-found path error that names the file of the deepest existing node and PATH
   - Flatten the configuration into leaves in document order (every scalar, including text includes and nulls; list items by index; empty collections contribute nothing), with includes transparent
