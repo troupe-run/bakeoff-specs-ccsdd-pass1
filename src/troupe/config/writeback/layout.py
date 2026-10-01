@@ -98,6 +98,7 @@ class FileLayout:
         self._dash_offset = dash_offset
         # Lazily filled caches keyed by node identity; the document keeps the nodes alive.
         self._dash_cache: dict[int, tuple[int, ...]] = {}
+        self._key_columns: dict[int, int] = self._block_scalar_key_columns()
         self._floors: dict[int, int] = self._token_floors()
 
     @classmethod
@@ -498,15 +499,52 @@ class FileLayout:
         if _KEEP in self._text[span.start : header_end]:
             return self._line_ends[last]
         lines = range(header_line + 1, last + 1)
-        indents = [self.indentation(n) for n in lines if not self.is_blank(n)]
-        if not indents:
-            return header_end
+        content_indent = self._explicit_indentation(span.start)
+        if content_indent is None:
+            indents = [self.indentation(n) for n in lines if not self.is_blank(n)]
+            if not indents:
+                return header_end
+            content_indent = min(indents)
         # A whitespace-only line longer than the content indentation is content (its spaces).
-        content_indent = min(indents)
         for line in reversed(lines):
             if len(self.line_text(line)) > content_indent:
                 return self._line_ends[line]
-        return header_end  # pragma: no cover - a non-blank line exists
+        return header_end
+
+    def _explicit_indentation(self, header: int) -> int | None:
+        """Content indentation set by the indentation indicator of the block header at ``header``.
+
+        The indicator (``|2``) counts from the owner's column: the key of a mapping value, the
+        ``-`` of a list item written on the header's line. ``None`` without an indicator or when
+        the owner is not found (the indentation then follows from the content lines).
+        """
+        digits = [c for c in self._text[header : self._header_end(header)] if c.isdigit()]
+        if not digits:
+            return None
+        owner = self._key_columns.get(header)
+        if owner is None:
+            index = header
+            while index > 0 and self._text[index - 1] in _INLINE_SPACE:
+                index -= 1
+            if index == 0 or self._text[index - 1] != _DASH:
+                return None
+            owner = self.column(index - 1)
+        return owner + int(digits[0])
+
+    def _block_scalar_key_columns(self) -> dict[int, int]:
+        """Header index of every block scalar mapping value written here -> its key's column."""
+        columns: dict[int, int] = {}
+        stack: list[ConfigNode] = [self._document.root]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, ConfigMapping):
+                for entry in node.entries:
+                    value = entry.value
+                    if _is_block_scalar(value) and self._here(value.origin.file):
+                        key = entry.key_origin.span.start
+                        columns[value.origin.span.start] = self.column(key)
+            stack.extend(_children(node))
+        return columns
 
     def _token_floors(self) -> dict[int, int]:
         """For every line holding tokens, the greatest token end on it (see :meth:`comment_start`).

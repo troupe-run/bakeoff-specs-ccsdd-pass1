@@ -88,7 +88,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.1_
   - _Requirements: 9.1, 9.2, 9.7, 10.2, 10.5_
 
-- [ ] 2.6 Rewrite existing literal and folded block scalars
+- [x] 2.6 Rewrite existing literal and folded block scalars
   - Rewrite a literal block's content at its existing indentation, keeping its indicator, indentation indicator and header comment and changing chomping only when required
   - Rewrite a folded block paragraph by paragraph: align old and new paragraphs, keep bytes of unchanged paragraphs and their separators, re-wrap changed paragraphs at their counterpart's width and new ones at the block's widest line
   - Refuse a folded change that needs a more-indented line, and any change of a folded block that already has more-indented lines
@@ -309,3 +309,4 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 - 2.2: `_block_scalar_end` takes the content indentation from the smallest non-blank line and ignores an explicit indentation indicator (`|2`). A whitespace-only line that is content under `|2` can be left out of `body_lines`; fix this in 2.6 if it matters there. Explicit `? k` keys make `entry_slot` raise `ValueError`, which the planner must turn into exit 3.
 - 2.4: Multi-line strings come out of `render_scalar` double-quoted; block-context callers must use a literal block (BlockScalar). A `<<` key is never plain (the loader refuses plain `<<` as a merge key). Lone surrogates make the renderer raise `WriteRefusedError` naming PATH. U+FFFE/U+FFFF are escaped. Keys are compared as text, so verification must catch typed-duplicate clashes such as a new plain `true` beside `True`.
 - 2.5: `render_literal` raises `ValueError` when `literal_fits` is false, so callers must check first and fall back to double-quoted. A first line starting with a space is refused (no indentation indicator, per design). A lone `"\n"` renders as `|+` (`required_chomping` is KEEP). `wrap_paragraph` never breaks at a space next to a TAB or another space.
+- 2.6: KNOWN DEVIATION TO REVISIT: following req 10.7, any change to a folded value whose OLD text has more-indented lines is refused (exit 3). The contract only refuses a change that would PUT a more-indented line in. `rewrite_block` raises `ValueError` for a value no block can hold; 3.2/3.4 must check `literal_fits` first and fall back to double quotes. layout `_block_scalar_end` now honours `|N` indicators.

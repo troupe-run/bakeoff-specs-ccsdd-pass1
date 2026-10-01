@@ -7,11 +7,24 @@ indentation, empty lines written as bare line breaks (9.2). A string a literal b
 (:func:`literal_fits` is false) is written double-quoted by the caller instead (9.7).
 
 Folded paragraphs are re-wrapped greedily by word with :func:`wrap_paragraph` (10.2, 10.5).
+
+An existing literal or folded block changed to another string is rewritten in place by
+:func:`rewrite_block` (9.4, 9.5, 10.x): the header keeps its indicator, indentation indicator and
+comment, the chomping changes only when required, and the content lines are written at the block's
+existing content indentation; a folded block keeps the bytes of its unchanged paragraphs.
 """
 
 import re
+from collections.abc import Sequence
+from dataclasses import dataclass
+from difflib import SequenceMatcher
 from enum import Enum
-from typing import Final
+from typing import Final, NoReturn
+
+from troupe.config.errors import WriteRefusedError
+from troupe.config.model import ConfigScalar
+from troupe.config.writeback.edits import EditKind, TextEdit
+from troupe.config.writeback.layout import FileLayout, ValueSlot
 
 
 class Chomping(Enum):
@@ -131,3 +144,269 @@ def wrap_paragraph(text: str, width: int | None) -> list[str]:
             current = word
     lines.append(current if current is not None else "")
     return lines
+
+
+# --- rewrite of existing blocks ------------------------------------------------------------------
+
+_FOLDED: Final = ">"
+_CHOMPING_CHARS: Final = "+-"
+_MORE_INDENTED: Final = " \t"
+
+Line = tuple[str, str]
+"""One output line: its content and the line break that ends it."""
+
+
+@dataclass(frozen=True)
+class _Region:
+    """The lines a rewrite replaces: ``[start, end)`` of the text and how to join the new lines."""
+
+    start: int
+    end: int
+    first_line: int  # first old content line
+    last_line: int  # last old content line (before ``first_line`` when there is none)
+    line_break: str  # break for new lines
+    leading_break: bool  # the header ends the file without a break: start with one
+    final_break: bool  # the region ends with a line break (else the new content ends without)
+
+
+def rewrite_block(
+    layout: FileLayout, slot: ValueSlot, scalar: ConfigScalar, value: str
+) -> list[TextEdit]:
+    """Edits that change the literal or folded block ``scalar`` at ``slot`` to ``value``.
+
+    The header keeps ``|``/``>``, any indentation indicator and the header comment; the chomping
+    indicator changes only when the value's trailing line breaks require it (9.4). The content
+    region runs from the first content line through the content end, and on through the blank
+    lines after it when the new chomping is keep (they would otherwise become content); its new
+    lines are written at the existing content indentation (9.5). A folded block is rewritten
+    paragraph by paragraph (10.1-10.5). No edits are returned for an unchanged value.
+
+    Raises:
+        WriteRefusedError: a folded value would need a more-indented line (10.6), or the old
+            folded value has more-indented lines (10.7).
+        ValueError: the value holds a character no block scalar can hold (callers check
+            :func:`literal_fits` first and fall back to double quotes).
+    """
+    if scalar.value == value:
+        return []
+    if _UNFIT.search(value):
+        raise ValueError(f"string cannot be written as a block scalar: {value!r}")
+    text = layout.file.text
+    header = layout.inline_extent(slot)
+    indicators = text[header.start : header.end]
+    chomping = chomping_for(_chomping_of(indicators), value)
+    region = _content_region(layout, slot, scalar, chomping)
+    indent = _content_indentation(layout, slot, indicators, region)
+
+    if indicators.startswith(_FOLDED):
+        lines = _folded_lines(layout, slot, region, indent, value, chomping)
+    else:
+        _, content = render_literal(value, indent, region.line_break)
+        lines = [(line, region.line_break) for line in content.split(region.line_break)[:-1]]
+    if lines and not region.final_break:
+        lines[-1] = (lines[-1][0], "")
+    new_content = "".join(line + brk for line, brk in lines)
+    if region.leading_break and new_content:
+        new_content = region.line_break + new_content
+
+    edits: list[TextEdit] = []
+    new_indicators = _with_chomping(indicators, chomping)
+    if new_indicators != indicators:
+        edits.append(TextEdit(header.start, header.end, new_indicators, EditKind.INLINE))
+    if new_content != text[region.start : region.end]:
+        edits.append(TextEdit(region.start, region.end, new_content, EditKind.LINES))
+    return edits
+
+
+def _chomping_of(indicators: str) -> Chomping:
+    for chomping in (Chomping.KEEP, Chomping.STRIP):
+        if chomping.value in indicators:
+            return chomping
+    return Chomping.CLIP
+
+
+def _with_chomping(indicators: str, chomping: Chomping) -> str:
+    """The header indicators with the chomping character replaced in place, or appended."""
+    for index, char in enumerate(indicators):
+        if char in _CHOMPING_CHARS:
+            return indicators[:index] + chomping.value + indicators[index + 1 :]
+    return indicators + chomping.value
+
+
+def _content_region(
+    layout: FileLayout, slot: ValueSlot, scalar: ConfigScalar, chomping: Chomping
+) -> _Region:
+    header_line = layout.line_of(slot.node.origin.span.start)
+    first = header_line + 1
+    content_end = layout.content_end(scalar, slot)
+    last = (
+        layout.line_of(content_end) if content_end > layout.inline_extent(slot).end else header_line
+    )
+    end_line = last
+    if chomping is Chomping.KEEP:
+        # Blank lines right after a keep block are content: replace them too.
+        while (
+            end_line + 1 < layout.line_count
+            and layout.is_blank(end_line + 1)
+            and layout.line_break(end_line + 1) != ""
+        ):
+            end_line += 1
+    if end_line >= first:
+        start = layout.line_start(first)
+        end = (
+            layout.line_start(end_line + 1)
+            if end_line + 1 < layout.line_count
+            else len(layout.file.text)
+        )
+        return _Region(
+            start,
+            end,
+            first,
+            last,
+            layout.line_break_at(start),
+            leading_break=False,
+            final_break=layout.line_break(end_line) != "",
+        )
+    if first < layout.line_count:
+        start = layout.line_start(first)
+        return _Region(start, start, first, last, layout.line_break_at(start), False, True)
+    end = len(layout.file.text)
+    return _Region(end, end, first, last, layout.line_break_at(end), True, False)
+
+
+def _content_indentation(
+    layout: FileLayout, slot: ValueSlot, indicators: str, region: _Region
+) -> int:
+    """The explicit indicator added to the owner column, else the first content line's indentation
+    (the owner column plus the file's step when the block has no content line)."""
+    digits = [char for char in indicators if char.isdigit()]
+    if digits:
+        return slot.owner_column + int(digits[0])
+    for line in range(region.first_line, region.last_line + 1):
+        if not layout.is_blank(line):
+            return layout.indentation(line)
+    return slot.owner_column + layout.indent_step()
+
+
+@dataclass(frozen=True)
+class _Paragraph:
+    lines: tuple[int, ...]  # old line numbers
+    text: str  # the lines' content joined by single spaces
+    width: int  # longest content line
+
+
+def _folded_lines(
+    layout: FileLayout,
+    slot: ValueSlot,
+    region: _Region,
+    indent: int,
+    value: str,
+    chomping: Chomping,
+) -> list[Line]:
+    """The new content lines of a folded block (10.1-10.7)."""
+    paragraphs, separators, leading = _old_paragraphs(layout, slot, region, indent)
+    width = max((paragraph.width for paragraph in paragraphs), default=None)
+
+    body = value.rstrip("\n")
+    trailing = len(value) - len(body)
+    segments = body.split("\n") if body else []
+    new_texts: list[str] = []
+    gaps: list[int] = []  # empty segments before each new paragraph
+    empty = 0
+    for segment in segments:
+        if not segment:
+            empty += 1
+            continue
+        if segment[0] in _MORE_INDENTED:
+            _refuse(layout, slot, f"the line {segment!r} would be more-indented in a folded block")
+        new_texts.append(segment)
+        gaps.append(empty)
+        empty = 0
+
+    # For each new paragraph: the old paragraph whose bytes it keeps, or the width to wrap at.
+    kept: list[int | None] = [None] * len(new_texts)
+    widths: list[int | None] = [width] * len(new_texts)
+    old_texts = [paragraph.text for paragraph in paragraphs]
+    matcher = SequenceMatcher(None, old_texts, new_texts, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        for offset in range(j2 - j1):
+            if tag == "equal":
+                kept[j1 + offset] = i1 + offset
+            elif tag == "replace" and offset < i2 - i1:
+                widths[j1 + offset] = paragraphs[i1 + offset].width
+
+    brk = region.line_break
+    pad = " " * indent
+    lines: list[Line] = []
+    if new_texts and paragraphs and gaps[0] == len(leading):
+        lines.extend(_old_lines(layout, leading, brk))
+    elif new_texts:
+        lines.extend([("", brk)] * gaps[0])
+    for index, new_text in enumerate(new_texts):
+        old = kept[index]
+        if index > 0:
+            previous = kept[index - 1]
+            if (
+                old is not None
+                and previous is not None
+                and old == previous + 1
+                and len(separators[previous]) == gaps[index] + 1
+            ):
+                lines.extend(_old_lines(layout, separators[previous], brk))
+            else:
+                lines.extend([("", brk)] * (gaps[index] + 1))
+        if old is not None:
+            lines.extend(_old_lines(layout, paragraphs[old].lines, brk))
+        else:
+            lines.extend((pad + line, brk) for line in wrap_paragraph(new_text, widths[index]))
+    if chomping is Chomping.KEEP:
+        lines.extend([("", brk)] * (trailing - 1 if new_texts else trailing))
+    return lines
+
+
+def _old_paragraphs(
+    layout: FileLayout, slot: ValueSlot, region: _Region, indent: int
+) -> tuple[list[_Paragraph], list[tuple[int, ...]], tuple[int, ...]]:
+    """Old paragraphs, the empty lines between consecutive ones, and the leading empty lines.
+
+    Raises :class:`WriteRefusedError` for a more-indented line (10.7).
+    """
+    paragraphs: list[_Paragraph] = []
+    separators: list[tuple[int, ...]] = []
+    leading: tuple[int, ...] = ()
+    run: list[int] = []
+    empties: list[int] = []
+
+    def close() -> None:
+        contents = [layout.line_text(n)[indent:] for n in run]
+        paragraphs.append(_Paragraph(tuple(run), " ".join(contents), max(len(c) for c in contents)))
+
+    for line in range(region.first_line, region.last_line + 1):
+        content = layout.line_text(line)
+        if len(content) > indent and content[indent] in _MORE_INDENTED:
+            _refuse(layout, slot, "the folded value has more-indented lines")
+        if content.strip(" \t") == "":
+            if run:
+                close()
+                run = []
+            empties.append(line)
+            continue
+        if not run:
+            if paragraphs:
+                separators.append(tuple(empties))
+            else:
+                leading = tuple(empties)
+            empties = []
+        run.append(line)
+    if run:
+        close()
+    return paragraphs, separators, leading
+
+
+def _old_lines(layout: FileLayout, lines: Sequence[int], line_break: str) -> list[Line]:
+    """Old lines with their own bytes and breaks (``line_break`` for a line ending the file)."""
+    return [(layout.line_text(n), layout.line_break(n) or line_break) for n in lines]
+
+
+def _refuse(layout: FileLayout, slot: ValueSlot, problem: str) -> NoReturn:
+    raise WriteRefusedError(problem, file=layout.file.path, path=str(slot.path))

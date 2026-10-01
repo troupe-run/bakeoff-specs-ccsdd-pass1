@@ -13,6 +13,7 @@ from troupe.config.model import (
     ConfigDocument,
     ConfigMapping,
     ConfigNode,
+    ConfigScalar,
     ConfigSequence,
     SourceFile,
     Span,
@@ -529,3 +530,38 @@ def test_whitespace_line_longer_than_the_indentation_is_block_scalar_content(
     layout, document = _setup(tmp_path, text)
     slot = _entry_slot(layout, document, "k")
     assert layout.content_end(slot.node, slot) == text.index("     \n") + 5
+
+
+@pytest.mark.parametrize(
+    ("text", "segments", "blank"),
+    [
+        ("a: |2-\n    x\n   \nb: 1\n", ("a",), "   \n"),
+        ("k:\n  a: |2-\n      x\n     \nb: 1\n", ("k", "a"), "     \n"),
+        ("a: |-2\n    x\n   \n", ("a",), "   \n"),
+    ],
+)
+def test_explicit_indentation_indicator_sets_the_content_indentation(
+    tmp_path: Path, text: str, segments: tuple[str, ...], blank: str
+) -> None:
+    """Req 9.5, 11.1: under `|2` the content indentation is the key column plus 2, so a
+    spaces-only line deeper than that (but not deeper than the other lines) is content."""
+    layout, document = _setup(tmp_path, text)
+    slot = _entry_slot(layout, document, *segments)
+    end = text.index(blank) + len(blank) - 1
+    assert layout.content_end(slot.node, slot) == end
+    body = layout.body_lines(slot)
+    assert body is not None
+    assert body.end == end + 1
+
+
+def test_explicit_indentation_indicator_of_a_list_item_counts_from_its_dash(
+    tmp_path: Path,
+) -> None:
+    """Req 9.5, 11.1: a list item's `|1` content indentation is the dash column plus 1."""
+    text = "k:\n  - |1-\n     x\n    \nz: 1\n"
+    layout, document = _setup(tmp_path, text)
+    item = _node(document, "k", 0)
+    assert isinstance(item, ConfigScalar)
+    assert item.value == "  x\n "
+    slot = _item_slot(layout, document, 0, "k")
+    assert layout.content_end(slot.node, slot) == text.index("    \n") + 4
