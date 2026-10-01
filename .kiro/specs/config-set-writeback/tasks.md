@@ -219,7 +219,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.1, 4.5_
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 4.1, 4.2, 4.3, 14.8, 16.3_
 
-- [ ] 5.3 (P) Validate scalar quoting and sibling styles
+- [x] 5.3 (P) Validate scalar quoting and sibling styles
   - Changed scalars: `a, 'y': "a: 'x'\n"` → `"a: 'y'\n"`; `a, 'é"q': 'a: "x"\n'` → `'a: "é\\"q"\n'`; `a, '"0.2"': 'a: x\n'` → `"a: '0.2'\n"`; `a, '5': "a: 'x'\n"` → `'a: 5\n'`; `a, '0x1F': 'a: x\n'` → `'a: 0x1F\n'`; `a, '"it\'s: here"': 'a: x\n'` → `"a: 'it''s: here'\n"`; `a, '"bell\\a"': 'a: x\n'` → `'a: "bell\\a"\n'`; `a, '"\\N"': 'a: "x"\n'` → `'a: "\\N"\n'`; `l.0, 'x,y': 'l: [a, b]\n'` → `"l: ['x,y', b]\n"`
   - Sibling styles: `c, '3': '"a": 1\n'` → `'"a": 1\n"c": 3\n'`; `b, 'y': 'a: "x"\n'` → `'a: "x"\nb: "y"\n'`; `l.1, 'b': "l:\n  - 'a'\n"` → `"l:\n  - 'a'\n  - 'b'\n"`; `b, '"q"': 'a:\n  x: 1\n'` → `'a:\n  x: 1\nb: q\n'`; `c, '{k: "v"}': 'a: "x"\n'` → `'a: "x"\nc:\n  k: v\n'`
   - Done when every case passes byte-exactly
