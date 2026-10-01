@@ -178,7 +178,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.1_
   - _Requirements: 13.3, 13.4, 13.5, 14.3, 14.4, 14.5_
 
-- [ ] 4.4 Implement the set use case
+- [x] 4.4 Implement the set use case
   - Resolve on the document loaded from disk, return early for a no-op, plan all patches, verify them together, diff, write every patch atomically in order, then record the changes in one batch; nothing is written before every patch is verified
   - When a write fails, restore the already-written files in reverse order, record nothing and re-raise the write-refused error with `path=str(PATH)` added, keeping the failed file and the reason, so every exit 3 names PATH, the file and why
   - When recording fails, restore every written file in reverse order and re-raise the store error (exit 4)
@@ -315,3 +315,4 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 - 3.2: The planner already writes a multi-line string over a plain/quoted scalar as a literal block, so 3.4 must reuse that rather than reimplement it. Still refused (exit 3) until 3.4: a block scalar set to a string it cannot hold (req 9.7 needs a double-quoted fallback), non-strings over block scalars, and kind changes. A different `file:` string over a text include is refused (exit 3, conservative). `plan_patch` refuses an empty plan, so SetCommand must detect no-ops (`plain_equal`) BEFORE planning (14.6).
 - 3.3: `add_entries` takes a list of entries (for 3.5 merges); each new entry copies the LAST existing entry's style. A flow entry added after an empty flow value uses `" , "` so the previous key does not absorb the comma.
 - 3.5: Merges pass the top-level PATH to nested `change_slot` refusals; 3.6 must name the nested path for YAML include roots (5.8). Deleting a compact first key on a `-` line is refused (req 5.7). OPEN: after the old last entry is deleted, new keys copy that deleted entry's style (7.1 is ambiguous here); revisit in validation.
+- 4.4: The use case is `set_value(theatre, path, value) -> SetOutcome`, with the CLI writing nothing on success. `write_patches(patches, path)` takes PATH. Some test docstrings cite requirement IDs loosely (e.g. `test_old_values_come_from_the_files_on_disk_not_the_history` proves 15.1/15.2/15.5); fix them in 5.11.
