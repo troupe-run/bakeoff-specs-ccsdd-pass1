@@ -108,7 +108,7 @@
   - _Requirements: 9.1, 9.2, 9.3, 9.4_
 
 - [ ] 5. Application session and CLI
-- [ ] 5.1 Implement the theatre session use cases
+- [x] 5.1 Implement the theatre session use cases
   - Open a theatre in the fixed order locate, load (from disk), open store, ensure import, so that no state is created when locating or loading fails; if the import fails, close the store before re-raising
   - Make the theatre session a context manager whose exit closes the history store without suppressing an exception
   - Show a value by resolving PATH in the loaded files only (never the store), raising the wrong-node-kind path error naming the node's file and PATH for mappings and lists (files are the truth, product-owner decision A)
