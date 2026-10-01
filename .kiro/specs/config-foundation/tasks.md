@@ -101,7 +101,7 @@
   - _Depends: 4.1, 4.2_
   - _Requirements: 7.1, 7.3, 7.5, 7.6, 7.7, 7.8, 7.9, 8.1, 8.2_
 
-- [ ] 4.4 Provide the change-recording API for the set command
+- [x] 4.4 Provide the change-recording API for the set command
   - Append one leaf-value-set event per set change and one leaf-removed event per remove change, in the given order, in one transaction; an empty change list records nothing
   - Done when tests against a real store prove consecutive seq numbers following the import, correct old/new values (including `old` null for a created leaf), no events for an empty batch, and no events at all when the batch save fails
   - _Boundary: Store (src/troupe/config/store.py)_
