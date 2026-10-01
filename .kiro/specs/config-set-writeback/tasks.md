@@ -16,7 +16,7 @@ loader task 3.2; U2 `MappingEntry.key_style`; U3 the CLI shell module `troupe.cl
 in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Task 2.6 keeps a guard test for U1.
 
 - [ ] 1. Foundation: package skeleton, test support and value primitives
-- [ ] 1.1 Create the writeback package skeleton, the shared value types and the set-test support
+- [x] 1.1 Create the writeback package skeleton, the shared value types and the set-test support
   - Create the writeback package and its modules as typed placeholders following the design's File Structure Plan and import direction
   - Define the parsed-value types (scalar with spelling, mapping, list) in the value module so tasks 1.2 and 1.3 share them
   - Add the set-test support module `tests/set_support.py`: a subprocess runner for any `troupe config` argv plus a `set` convenience that runs `troupe config set PATH VALUE --theatre DIR` with VALUE passed as one argv element, an assertion of a file's exact bytes, and a snapshot of a theatre tree (relative paths and bytes, ignoring `.troupe/history.sqlite*`) so tests can assert "unchanged" and "no extra file"
