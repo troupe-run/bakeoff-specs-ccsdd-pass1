@@ -18,9 +18,18 @@ comes first in the document; an undefined one is a composer error), plain ``<<``
 non-scalar keys and a top-level node that is not a mapping. An empty or comment-only file is an
 empty block mapping at ``Span(0, 0)``.
 
+Includes (4.1-4.7): any string scalar value (any style, never a key) starting with
+:data:`INCLUDE_PREFIX` is replaced by its target, ``including_file.path.parent / spec``. A target
+whose name ends in one of :data:`YAML_INCLUDE_SUFFIXES` is loaded recursively and its root embedded
+as if written in place (an empty target is null); any other target is its exact decoded text as a
+string and is never parsed. A YAML target already on the include chain from the root is a cycle.
+Every produced node carries an :class:`IncludeRef`. Each file is read at most once; a file
+included several times (a diamond) is shared and listed once in ``ConfigDocument.files``.
+
 Nothing is ever created, modified, renamed or deleted (3.6).
 """
 
+import dataclasses
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
@@ -29,6 +38,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import MarkedYAMLError, YAMLError
 from ruamel.yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
+from troupe.config.constants import INCLUDE_PREFIX, YAML_INCLUDE_SUFFIXES
 from troupe.config.errors import ConfigLoadError
 from troupe.config.model import (
     CollectionStyle,
@@ -37,6 +47,8 @@ from troupe.config.model import (
     ConfigNode,
     ConfigScalar,
     ConfigSequence,
+    IncludeKind,
+    IncludeRef,
     LineEnding,
     MappingEntry,
     Origin,
@@ -80,7 +92,7 @@ def load_config(
             entries=(), style=CollectionStyle.BLOCK, origin=Origin(root_file, Span(0, 0))
         )
     else:
-        node = _Builder(root_file).build(composed, ROOT)
+        node = _Builder(root_file, loader, (root_file,)).build(composed, ROOT)
         if not isinstance(node, ConfigMapping):
             kind = "a list" if isinstance(node, ConfigSequence) else "a scalar"
             raise ConfigLoadError(
@@ -91,30 +103,71 @@ def load_config(
 
 
 class _Loader:
-    """Reads source files (from disk or overrides) and remembers every file read, in order."""
+    """Reads source files (from disk or overrides) and remembers every file read, in order.
+
+    Each real path is read at most once; later requests share the first :class:`SourceFile`.
+    """
 
     def __init__(self, overrides: Mapping[Path, str]) -> None:
         self._overrides = overrides
+        self._sources: dict[Path, SourceFile] = {}
         self.files: list[SourceFile] = []
 
     def read_source(self, path: Path) -> SourceFile:
+        """Read the root file; an unreadable file is reported as the file itself."""
         real_path = path.resolve()
+        cached = self._sources.get(real_path)
+        if cached is not None:  # pragma: no cover - the root file is the first file read
+            return cached
         override = self._overrides.get(real_path)
-        text = _read_text(path) if override is None else override
+        if override is not None:
+            return self._remember(path, real_path, override)
+        try:
+            data = path.read_bytes()
+        except OSError as error:
+            raise ConfigLoadError(f"cannot read file: {_reason(error)}", file=path) from error
+        return self._remember(path, real_path, _decode(data, path))
+
+    def read_include(self, target: Path, including: SourceFile, key_path: ConfigPath) -> SourceFile:
+        """Read an include target; a missing or unreadable one names it and the including file."""
+        real_path = target.resolve()
+        cached = self._sources.get(real_path)
+        if cached is not None:
+            return cached
+        override = self._overrides.get(real_path)
+        if override is not None:
+            return self._remember(target, real_path, override)
+        if not target.is_file():
+            raise ConfigLoadError(
+                f"include target {target} does not exist or is not a regular file",
+                file=including.path,
+                path=_text(key_path),
+            )
+        try:
+            data = target.read_bytes()
+        except OSError as error:
+            raise ConfigLoadError(
+                f"cannot read include target {target}: {_reason(error)}",
+                file=including.path,
+                path=_text(key_path),
+            ) from error
+        return self._remember(target, real_path, _decode(data, target))
+
+    def _remember(self, path: Path, real_path: Path, text: str) -> SourceFile:
         source = SourceFile(
             path=path, real_path=real_path, text=text, line_ending=_detect_line_ending(text)
         )
+        self._sources[real_path] = source
         self.files.append(source)
         return source
 
 
-def _read_text(path: Path) -> str:
-    """Read ``path`` read-only and decode it strictly as UTF-8, keeping BOM and line endings."""
-    try:
-        data = path.read_bytes()
-    except OSError as error:
-        reason = error.strerror or type(error).__name__
-        raise ConfigLoadError(f"cannot read file: {reason}", file=path) from error
+def _reason(error: OSError) -> str:
+    return error.strerror or type(error).__name__
+
+
+def _decode(data: bytes, path: Path) -> str:
+    """Decode ``data`` strictly as UTF-8 without newline translation, keeping a BOM."""
     try:
         return data.decode("utf-8", errors="strict")
     except UnicodeDecodeError as error:
@@ -168,18 +221,27 @@ def _describe_marked_error(error: MarkedYAMLError) -> str:
 
 
 class _Builder:
-    """Builds model nodes for one composed file, refusing unsupported YAML on the way."""
+    """Builds model nodes for one composed file, refusing unsupported YAML on the way.
 
-    def __init__(self, source: SourceFile) -> None:
+    ``chain`` holds the YAML files from the root down to this builder's file (inclusive); a YAML
+    include of any of them is a cycle.
+    """
+
+    def __init__(self, source: SourceFile, loader: _Loader, chain: tuple[SourceFile, ...]) -> None:
         self._source = source
+        self._loader = loader
+        self._chain = chain
 
     def build(self, node: Node, path: ConfigPath) -> ConfigNode:
         self._refuse_properties(node, path)
         if isinstance(node, ScalarNode):
             style = self._scalar_style(node, path)
-            return ConfigScalar(
+            scalar = ConfigScalar(
                 value=_scalar_value(node, style), style=style, origin=self._origin(node)
             )
+            if isinstance(scalar.value, str) and scalar.value.startswith(INCLUDE_PREFIX):
+                return self._include(scalar, scalar.value[len(INCLUDE_PREFIX) :], path)
+            return scalar
         if isinstance(node, SequenceNode):
             items = tuple(
                 self.build(item, path.child(index)) for index, item in enumerate(node.value)
@@ -237,6 +299,42 @@ class _Builder:
         return ConfigMapping(
             entries=tuple(entries), style=_collection_style(node), origin=self._origin(node)
         )
+
+    def _include(self, directive: ConfigScalar, spec: str, path: ConfigPath) -> ConfigNode:
+        """Replace the ``file:`` string ``directive`` by its target (4.1-4.7)."""
+        target_path = self._source.path.parent / spec
+        if not target_path.name.endswith(YAML_INCLUDE_SUFFIXES):
+            target = self._loader.read_include(target_path, self._source, path)
+            ref = IncludeRef(IncludeKind.TEXT, spec, target, directive.origin)
+            return ConfigScalar(
+                value=target.text,
+                style=None,
+                origin=Origin(target, Span(0, len(target.text))),
+                include=ref,
+            )
+        self._refuse_cycle(target_path)
+        target = self._loader.read_include(target_path, self._source, path)
+        ref = IncludeRef(IncludeKind.YAML, spec, target, directive.origin)
+        composed = _compose(target)
+        if composed is None:
+            return ConfigScalar(
+                value=None,
+                style=ScalarStyle.PLAIN,
+                origin=Origin(target, Span(0, 0)),
+                include=ref,
+            )
+        embedded = _Builder(target, self._loader, (*self._chain, target)).build(composed, path)
+        return dataclasses.replace(embedded, include=ref)
+
+    def _refuse_cycle(self, target_path: Path) -> None:
+        """Refuse a YAML include of a file already on the chain, listing the cycle (4.6)."""
+        real_path = target_path.resolve()
+        real_paths = [source.real_path for source in self._chain]
+        if real_path not in real_paths:
+            return
+        cycle = [str(source.path) for source in self._chain[real_paths.index(real_path) :]]
+        cycle.append(str(target_path))
+        raise ConfigLoadError(f"include cycle: {' -> '.join(cycle)}", file=target_path)
 
     def _refuse_properties(self, node: Node, path: ConfigPath) -> None:
         """Refuse an anchor or explicit tag written on ``node`` itself (3.7, 3.9)."""

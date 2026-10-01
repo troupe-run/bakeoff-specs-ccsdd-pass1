@@ -63,7 +63,7 @@
   - _Boundary: Loader (src/troupe/config/loader.py)_
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9_
 
-- [ ] 3.3 Resolve `file:` includes recursively
+- [x] 3.3 Resolve `file:` includes recursively
   - Detect string values starting with `file:`, resolve the target relative to the directory of the containing file, embed `.yml`/`.yaml` targets as parsed content and use any other target's exact text as a string, recording include provenance on the produced node
   - Recurse into included YAML files to any depth; treat an empty YAML target as null
   - Refuse with a load error when a target is missing or unreadable (naming the target and the including file), when YAML includes form a cycle on the current chain (naming the files in the cycle), and when an included file fails any single-file check (naming the included file)
@@ -179,3 +179,4 @@
 ## Implementation Notes
 - 1.1: Test helpers live in `tests/support.py` (typed `make_theatre`/`run_cli` fixtures in `tests/conftest.py`); the subprocess runner uses the console script next to `sys.executable`, so run tests via `uv run pytest`. Ruff excludes `.kiro`/`.claude` (otherwise `ruff format` rewrites code blocks in spec markdown).
 - 3.2: A `---`-only or `~` root is refused as a non-mapping root (exit 4); only empty/comment-only/whitespace-only/BOM-only files are the empty mapping. ruamel rejects `a:\tb` (tab after colon) → exit 4. Duplicate keys compare key text and typed plain values. Folded U+0007 stripping applies to folded style only.
+- 3.3: Includes: any string scalar value style (not keys) starting with `file:`; suffix check case-sensitive; files cached by real_path (diamond OK). Edge: a YAML include whose whole content is another `file:` string keeps only the OUTER IncludeRef (node origin is in the innermost file) — the writer should treat such nodes as whole-include (exit 3 on replace).
