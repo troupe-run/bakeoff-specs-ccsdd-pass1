@@ -599,15 +599,25 @@ def quote_style_of(style: ScalarStyle | None) -> QuoteStyle | None: ...   # None
   content end (span end when old or new chomping is keep); content indentation = the explicit indicator
   added to the owner column, else the indentation of the first non-empty content line. A region that ends at
   end of file without a final break produces content without a final break.
-- Folded (10.x): old paragraphs are maximal runs of non-empty content lines; their text is the lines' content
-  joined by single spaces; more-indented lines (content starting with space/TAB) in the old block → refuse
-  (10.7). New paragraphs are the non-empty LF-separated segments of the value body; a segment starting with
-  space/TAB → refuse (10.6). `SequenceMatcher(None, old_texts, new_texts, autojunk=False)` opcodes:
-  `equal` → old line bytes kept; `replace` → pairs in order, re-wrapped at the paired old paragraph's longest
-  content-line width, extra new paragraphs at the block's overall width; `insert` → overall width; `delete` →
-  dropped. Separators between two paragraphs that were adjacent and unchanged with the same number of empty
-  lines keep their old bytes; others are `k + 1` bare breaks for `k` empty segments. Overall width = longest
-  old content line; no wrapping when the old value had no content line.
+- Folded (10.x): the old block is split into units between empty lines: a paragraph is a maximal run of
+  non-empty content lines that are not more-indented, its text the lines' content joined by single spaces; a
+  more-indented unit is a maximal run of consecutive more-indented lines (content starting with space/TAB),
+  its text their content joined by LF, and it is opaque (YAML keeps the line breaks before, inside and after
+  it, so a paragraph line directly next to it is a separate unit). The new value body's non-empty
+  LF-separated segments form the new units the same way (consecutive segments starting with space/TAB form
+  one more-indented unit). `SequenceMatcher(None, old_keys, new_keys, autojunk=False)` on `(spaced, text)`:
+  `equal` → old line bytes kept; `replace` → new paragraphs paired in order with the old paragraphs of the
+  range, re-wrapped at the paired old paragraph's longest content-line width, extra new paragraphs at the
+  block's overall width; `insert` → overall width; `delete` → dropped. A new more-indented unit is accepted
+  only when matched `equal` to an old one (its bytes kept), and not as the block's first unit unless the
+  header has an indentation indicator; any other new more-indented text → refuse (10.6, 10.7). An old block
+  with more-indented lines is otherwise rewritten normally. Separators: `k` empty segments between two new
+  units need `k + 1` empty lines between two paragraphs and `k` next to a more-indented unit; the old
+  separator bytes are kept only between two units that were adjacent and unchanged with that same number of
+  empty lines, otherwise bare breaks (so paragraphs next to a removed or changed unit get fresh separators).
+  Overall width = longest old content line (more-indented lines included, measured after the block's
+  indentation); no wrapping when the old value had no content line. The write verifier (re-load must equal
+  the intended value) remains the safety net for any case rendered wrongly.
 - `wrap_paragraph(text, width)`: words are maximal substrings separated by single spaces with non-space
   characters on both sides; greedy fill so each line's length ≤ width; a longer word takes its own line (10.2).
 
@@ -624,7 +634,7 @@ def render_literal(value: str, indent: int, line_break: str) -> tuple[str, str]:
     # (header such as "|-", content lines text)
 def wrap_paragraph(text: str, width: int | None) -> list[str]: ...
 def rewrite_block(layout: FileLayout, slot: ValueSlot, scalar: ConfigScalar, value: str) -> list[TextEdit]: ...
-    # literal or folded; raises WriteRefusedError for 10.6, 10.7
+    # literal or folded; raises WriteRefusedError when a change would put in a more-indented line (10.6, 10.7)
 ```
 
 #### CollectionRender
@@ -746,7 +756,8 @@ def text_include_value(value: str, target: SourceFile) -> str: ...
   absent ones and `add_entries` once for new ones; a flow collection whose entries are all deleted while new
   ones are added is replaced as a whole flow rendering.
 - **add_entries** (3.x, 4.1, 11.x): block → one LINES insertion at `insertion_point` (leading break when
-  needed), entries at `entries_column` (root: 0), sibling styles from the last existing entry (key: `quote_style_of(entry.key_style)`, value:
+  needed), entries at `entries_column` (root: 0), sibling styles from the last *remaining* entry — the last entry not deleted by the same set (a merge passes its deleted
+  indices); none remaining → no preferred style, i.e. minimal (key: `quote_style_of(entry.key_style)`, value:
   `quote_style_of(scalar.style)` when the value is a scalar — a text-include sibling has `style=None`, which
   yields `None`, i.e. no preferred style — and no preferred style otherwise); flow → one INLINE
   insertion right after the last entry's content end (`", " + entry`), or after the opening bracket when empty.
@@ -986,7 +997,7 @@ file exists (`set_support.snapshot_tree`).
   below null → 5 (2.x–4.x).
 - Writing rules: style retention and fallback per style; sibling key/value styles; double escaping; block and
   flow new collections with step 2 and 4 and indentless lists; literal/`|-`/`|+`; header chomping change;
-  folded re-wrap with unchanged, changed, inserted paragraphs; more-indented → 3; trailing comments;
+  folded re-wrap with unchanged, changed, inserted paragraphs; kept, removed and new (→ 3) more-indented runs; trailing comments;
   less-indented comment; flow append with trailing comma and comment; scalar → block with and without
   comment; comment columns incl. multibyte (5.x–12.x).
 - Merges and kind changes: mapping/list merges keeping comments of unchanged entries; deletions; scalar over

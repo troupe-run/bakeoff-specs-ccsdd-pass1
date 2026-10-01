@@ -301,12 +301,83 @@ def test_folded_refuses_a_new_tab_indented_line(tmp_path: Path) -> None:
         _edits(tmp_path, FOLDED, "x\n\ty\n", "text")
 
 
-def test_folded_refuses_changing_a_block_with_more_indented_lines(tmp_path: Path) -> None:
-    """Req 10.7: an existing folded value with more-indented lines cannot be changed: exit 3."""
+DOC = "doc: >\n  Run the tool like this:\n\n    $ troupe run\n\n  Then check output.\nx: 1\n"
+"""A folded value holding a more-indented line between two paragraphs (validation finding A)."""
+
+
+def test_folded_kept_more_indented_unit_and_changed_paragraph_after_it(tmp_path: Path) -> None:
+    """Req 10.1, 10.2, 10.7: the unchanged more-indented line keeps its bytes and the line breaks
+    around it; the changed last paragraph is re-wrapped at its old width (18)."""
+    value = "Run the tool like this:\n\n  $ troupe run\n\nThen check the output.\n"
+    assert _rewrite(tmp_path, DOC, value, "doc") == (
+        "doc: >\n  Run the tool like this:\n\n    $ troupe run\n\n"
+        "  Then check the\n  output.\nx: 1\n"
+    )
+
+
+def test_folded_more_indented_block_replaced_by_one_paragraph(tmp_path: Path) -> None:
+    """Req 9.4, 10.2, 10.7: a value without more-indented lines replaces one that had some."""
+    assert _rewrite(tmp_path, DOC, "Just run it.", "doc") == "doc: >-\n  Just run it.\nx: 1\n"
+
+
+def test_folded_more_indented_line_removed(tmp_path: Path) -> None:
+    """Req 10.1, 10.4, 10.7: removing the more-indented line keeps both paragraphs' bytes; the
+    paragraphs, now adjacent, get a fresh separator of two empty lines for two line breaks."""
+    value = "Run the tool like this:\n\nThen check output.\n"
+    assert _rewrite(tmp_path, DOC, value, "doc") == (
+        "doc: >\n  Run the tool like this:\n\n\n  Then check output.\nx: 1\n"
+    )
+
+
+def test_folded_kept_more_indented_unit_with_changes_on_both_sides(tmp_path: Path) -> None:
+    """Req 10.1, 10.2, 10.7: both paragraphs change, the more-indented line between them keeps its
+    bytes, and both separators are written fresh."""
+    value = "Run it like so:\n\n  $ troupe run\n\nThen read logs.\n"
+    assert _rewrite(tmp_path, DOC, value, "doc") == (
+        "doc: >\n  Run it like so:\n\n    $ troupe run\n\n  Then read logs.\nx: 1\n"
+    )
+
+
+def test_folded_kept_more_indented_unit_in_crlf_file(tmp_path: Path) -> None:
+    """Req 10.7, 13.2: the same rewrite in a CRLF file keeps CRLF everywhere."""
+    text = DOC.replace("\n", "\r\n").encode()
+    value = "Run the tool like this:\n\n  $ troupe run\n\nThen check the output.\n"
+    assert _rewrite(tmp_path, text, value, "doc") == (
+        "doc: >\r\n  Run the tool like this:\r\n\r\n    $ troupe run\r\n\r\n"
+        "  Then check the\r\n  output.\r\nx: 1\r\n"
+    )
+
+
+def test_folded_more_indented_lines_without_empty_lines_around(tmp_path: Path) -> None:
+    """Req 10.1, 10.7: a run of more-indented lines directly between paragraph lines keeps its
+    bytes; the changed paragraph before it is written without an empty line in between."""
+    text = "t: >\n  a\n    b\n    c\n  d\n"
+    assert _rewrite(tmp_path, text, "x\n  b\n  c\nd\n", "t") == "t: >\n  x\n    b\n    c\n  d\n"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(
+            "Run the tool like this:\n\n  $ troupe build\n\nThen check output.\n", id="changed"
+        ),
+        pytest.param(
+            "Run the tool like this:\n\n  $ troupe run\n  $ more\n\nThen check output.\n",
+            id="grown",
+        ),
+        pytest.param(
+            "Run the tool like this:\n\n  $ troupe run\n\nThen check output.\n\tnew\n", id="added"
+        ),
+        pytest.param("  $ troupe run\n\nThen check output.\n", id="first-line-without-indicator"),
+    ],
+)
+def test_folded_refuses_putting_in_a_more_indented_line(tmp_path: Path, value: str) -> None:
+    """Req 10.6, 10.7: more-indented text that is not an unchanged old run (or that would start
+    the block, whose indentation is detected from its first line) is refused: exit 3."""
     with pytest.raises(WriteRefusedError) as raised:
-        _edits(tmp_path, "t: >\n  a\n    more\n  b\n", "x\n", "t")
+        _edits(tmp_path, DOC, value, "doc")
     assert raised.value.exit_code == 3
-    assert raised.value.path == "t"
+    assert raised.value.path == "doc"
 
 
 def test_folded_leading_empty_line_bytes_are_kept(tmp_path: Path) -> None:

@@ -222,3 +222,58 @@ def test_multi_line_flow_collection_replaced_whole_is_refused(tmp_path: Path) ->
     error = _refused(tmp_path, "m: {a: 1,\n  b: 2}\n", "m", "{x: 1}")
     assert error.path == "m"
     assert "spans several lines" in error.problem
+
+
+# --- sibling styles after deletions (7.1-7.3) ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("config", "value", "expected"),
+    [
+        pytest.param(
+            "db:\n  host: h\n  'user': 'u'\n",
+            "{host: h, pw: s}",
+            "db:\n  host: h\n  pw: s\n",
+            id="deleted-single-quoted-last-entry",
+        ),
+        pytest.param(
+            'db:\n  host: h\n  "user": "u"\n',
+            "{host: h, pw: s}",
+            "db:\n  host: h\n  pw: s\n",
+            id="deleted-double-quoted-last-entry",
+        ),
+        pytest.param(
+            "db:\n  'host': 'h'\n  user: u\n",
+            "{host: h, pw: s}",
+            "db:\n  'host': 'h'\n  'pw': 's'\n",
+            id="deleted-plain-last-entry",
+        ),
+        pytest.param(
+            "db:\n  'a': 'x'\n",
+            "{b: y}",
+            "db:\n  b: y\n",
+            id="no-surviving-entry",
+        ),
+        pytest.param(
+            "o: {a: x, 'b': 'y'}\n",
+            "{a: x, c: z}",
+            "o: {a: x, c: z}\n",
+            id="flow-deleted-quoted-last-entry",
+        ),
+    ],
+)
+def test_new_keys_copy_the_last_surviving_entry(
+    tmp_path: Path, config: str, value: str, expected: str
+) -> None:
+    """Req 7.1, 7.2, 7.3, 5.1: new keys and values copy the quoting style of the last entry that
+    stays in the merged mapping, never that of an entry the same set deletes; with no remaining
+    entry they are written in the minimal style."""
+    assert _root(tmp_path, config, config.split(":", 1)[0], value) == expected
+
+
+def test_appended_list_items_copy_the_last_kept_item(tmp_path: Path) -> None:
+    """Req 7.2, 5.2, 4.1: a list merge only appends when no item is deleted, so the surplus items
+    copy the style of the old last item, which stays."""
+    assert (
+        _root(tmp_path, "l:\n  - a\n  - 'b'\n", "l", "[a, b, c]") == "l:\n  - a\n  - 'b'\n  - 'c'\n"
+    )

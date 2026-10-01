@@ -27,7 +27,7 @@ def _assert_success(result: CliResult) -> None:
     assert (result.exit_code, result.stdout, result.stderr) == (0, b"", ""), result.stderr
 
 
-def _assert_only_root_changed(theatre: Path, before: TreeSnapshot, expected: str) -> None:
+def _assert_only_root_changed(theatre: Path, before: TreeSnapshot, expected: str | bytes) -> None:
     """Assert troupe.yml holds exactly ``expected`` and every other file is unchanged."""
     assert_file_bytes(theatre / ROOT, expected)
     after = snapshot_tree(theatre)
@@ -38,7 +38,7 @@ def _assert_only_root_changed(theatre: Path, before: TreeSnapshot, expected: str
 
 
 def _set_and_check(
-    make_theatre: MakeTheatre, fixture: str, path: str, value: str, expected: str
+    make_theatre: MakeTheatre, fixture: str | bytes, path: str, value: str, expected: str | bytes
 ) -> None:
     theatre = make_theatre(fixture)
     before = snapshot_tree(theatre)
@@ -225,15 +225,61 @@ def test_folded_change_introducing_more_indented_line_is_refused(
     )
 
 
-def test_folded_with_existing_more_indented_line_refuses_change(
+DOC = "doc: >\n  Run the tool like this:\n\n    $ troupe run\n\n  Then check output.\nx: 1\n"
+"""A folded value holding a more-indented line between two paragraphs (validation finding A)."""
+
+
+@pytest.mark.parametrize(
+    ("fixture", "value", "expected"),
+    [
+        pytest.param(
+            DOC,
+            '"Run the tool like this:\\n\\n  $ troupe run\\n\\nThen check the output.\\n"',
+            "doc: >\n  Run the tool like this:\n\n    $ troupe run\n\n"
+            "  Then check the\n  output.\nx: 1\n",
+            id="A1-last-paragraph-changed",
+        ),
+        pytest.param(DOC, '"Just run it."', "doc: >-\n  Just run it.\nx: 1\n", id="A2-replaced"),
+        pytest.param(
+            DOC,
+            '"Run the tool like this:\\n\\nThen check output.\\n"',
+            "doc: >\n  Run the tool like this:\n\n\n  Then check output.\nx: 1\n",
+            id="A4-more-indented-line-removed",
+        ),
+        pytest.param(
+            DOC,
+            '"Run it like so:\\n\\n  $ troupe run\\n\\nThen read logs.\\n"',
+            "doc: >\n  Run it like so:\n\n    $ troupe run\n\n  Then read logs.\nx: 1\n",
+            id="changes-on-both-sides",
+        ),
+        pytest.param(
+            DOC.replace("\n", "\r\n").encode(),
+            '"Run the tool like this:\\n\\n  $ troupe run\\n\\nThen check the output.\\n"',
+            b"doc: >\r\n  Run the tool like this:\r\n\r\n    $ troupe run\r\n\r\n"
+            b"  Then check the\r\n  output.\r\nx: 1\r\n",
+            id="crlf",
+        ),
+    ],
+)
+def test_folded_with_existing_more_indented_line_can_change(
+    make_theatre: MakeTheatre, fixture: str | bytes, value: str, expected: str | bytes
+) -> None:
+    """Req 10.1, 10.2, 10.4, 10.7, 13.2: a folded value holding a more-indented line can change
+    as long as no more-indented line is put in; an unchanged run of more-indented lines keeps
+    its bytes and the line breaks around it, changed paragraphs are re-wrapped at their old
+    width (the last one: 18), and a value without more-indented lines replaces the block."""
+    _set_and_check(make_theatre, fixture, "doc", value, expected)
+
+
+def test_folded_change_of_an_existing_more_indented_line_is_refused(
     make_theatre: MakeTheatre,
 ) -> None:
-    """Req 10.7: an existing folded value holding a more-indented line cannot be changed: exit
-    3, nothing written."""
+    """Req 10.6, 10.7: changing the more-indented line itself would put a new more-indented
+    line into the folded value: exit 3, nothing written."""
     _refuse_and_check(
         make_theatre,
-        "t: >\n  a\n    more\n  b\n",
-        "t",
-        '"x\\n"',
-        "the folded value has more-indented lines",
+        DOC,
+        "doc",
+        '"Run the tool like this:\\n\\n  $ troupe build\\n\\nThen check output.\\n"',
+        "'  $ troupe build' would be more-indented in a folded block",
     )

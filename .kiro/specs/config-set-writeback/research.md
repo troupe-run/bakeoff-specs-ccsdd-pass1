@@ -234,6 +234,7 @@
 | Collections as list items | Compact (`- a: 1` / `- - a`), continuation two columns right of `-` | Conventional; independent of step | — |
 | New entry separators | `key: value`, `- value`, flow `, ` and `: ` | Minimal and conventional | PO wants sibling spacing copied |
 | Sibling for entries inside a newly written collection | None (minimal style) | "Preceding sibling" read as an existing entry | PO reads it as the previous new entry |
+| Sibling when a merge deletes the old last entry (open item of task 3.5) | The last *remaining* entry; none remaining → minimal style. Resolved in validation | The contract's "preceding sibling" is the one in the written file; copying a deleted entry's style gave e.g. `'pw': 's'` after a plain `host: h` | — |
 | Block scalar sibling | Not a "quoting style" → minimal | Contract speaks of quoting styles | — |
 | Multi-line string replacing a scalar inside a flow collection | Double-quoted | A literal block cannot appear in flow context; mirrors the new-key rule | — |
 | String that a literal block cannot hold | Double-quoted | End of the contract's fallback chain | — |
@@ -241,7 +242,7 @@
 | List item scalar → block collection | Compact when the item line has no comment, otherwise collection starts on the next line | Keeps the comment on its line | — |
 | Removing block entries | Whole lines through the last content line; interior comment lines go, trailing comment lines stay | Interior comments belong to the removed value | — |
 | Removing flow entries | Entry plus one separator, only within one line; otherwise exit 3 | Avoids deleting comments in multi-line flow text | — |
-| Folded value with existing more-indented lines | Exit 3 when changed | Paragraph mapping is ambiguous | — |
+| Folded value with existing more-indented lines | Changeable; each old run of more-indented lines is an opaque unit, kept with its surrounding line breaks when the new value holds it unchanged and in order; any other new more-indented text → exit 3 | Contract refuses only a change that *puts in* a more-indented line (validation finding A, see below) | — |
 | Folded paragraph correspondence | Longest-common-subsequence on paragraph texts; changed paragraphs paired in order within each gap | Unchanged paragraphs keep bytes even after insertions | — |
 | Folded width when the old value has no content | No wrapping | No width to copy | — |
 | Event order | Sets in new document order, then removes in old document order | Deterministic; readers see new state first | — |
@@ -337,3 +338,24 @@ config-foundation's `research.md`; G (malformed PATH → exit 2) is inherited fr
 - Python `os.replace`, `difflib.SequenceMatcher` — https://docs.python.org/3.12/library/
 - Consulted skills: none beyond the kiro spec skills (no design/accessibility/UX skill applies to a CLI
   text-patching feature).
+
+## Decision Record: folded values with existing more-indented lines (validation finding A)
+- **Finding**: feature validation found that requirement 10.7 and `block_scalar.py` refused *any* change to a
+  folded value whose old text held more-indented lines, and refused a new segment starting with a space even
+  when it was unchanged from the old value. The user contract only says "A change that would put a
+  more-indented line into a folded value → exit 3". Reproduction on
+  `doc: >\n  Run the tool like this:\n\n    $ troupe run\n\n  Then check output.\nx: 1\n`: changing only the
+  last paragraph, replacing the value by `Just run it.`, and removing the indented line all exited 3.
+- **Decision**: treat each run of old consecutive more-indented lines (with the line breaks around it, which
+  YAML does not fold) as an opaque unit in the paragraph alignment. A new more-indented segment run is
+  accepted only when it matches such an old unit exactly and in order; it then keeps its old bytes and, when
+  its neighbours are also kept and adjacent, its old separators. Any other new more-indented text is refused
+  (exit 3), as is a more-indented first line without an indentation indicator (the block's indentation would
+  be detected from it). Separators next to a more-indented unit need one empty line fewer than between two
+  paragraphs (the line break is kept, not folded). Changed paragraphs are paired with the old *paragraphs*
+  of their gap; the overall width includes more-indented lines (they are content lines).
+- **Note**: the finding expected the changed last paragraph `Then check the output.` on one line; the
+  contract (10.2) re-wraps it at its old width (18, `Then check output.`), so it becomes `Then check the` /
+  `output.`. The tests pin the contract behaviour.
+- **Safety net**: the write verifier (re-load must equal the intended value) still guards every case;
+  reorderings the alignment cannot keep are refused with exit 3 rather than written.

@@ -195,8 +195,8 @@ shared error conventions are provided by config-foundation and are used unchange
 **Objective:** As a developer, I want new entries to look like their neighbours, so that the file stays consistent.
 
 #### Acceptance Criteria
-1. When a new key is added to a mapping that already has entries, the troupe CLI shall write the key in the quoting style of the mapping's last existing key if that style can represent it, and otherwise in the minimal style (plain if possible, otherwise single-quoted, otherwise double-quoted).
-2. When a new string value is written for a new key or a new list item and the preceding sibling (the last existing entry's value or the last existing item) is a plain, single-quoted or double-quoted scalar, the troupe CLI shall write the string in that style if the style can represent it, and otherwise in the minimal style.
+1. When a new key is added to a mapping that already has entries, the troupe CLI shall write the key in the quoting style of the mapping's last remaining key (the last key that stays in the written file; a key the same set removes does not count) if that style can represent it, and otherwise in the minimal style (plain if possible, otherwise single-quoted, otherwise double-quoted).
+2. When a new string value is written for a new key or a new list item and the preceding sibling (the last remaining entry's value or the last remaining item) is a plain, single-quoted or double-quoted scalar, the troupe CLI shall write the string in that style if the style can represent it, and otherwise in the minimal style.
 3. When a new key or new string value has no preceding sibling, or the preceding sibling is a collection or a literal or folded block scalar, the troupe CLI shall write it in the minimal style.
 4. The troupe CLI shall write every key and string inside a newly written collection, including created intermediate mappings, in the minimal style.
 
@@ -232,8 +232,8 @@ shared error conventions are provided by config-foundation and are used unchange
 3. When a paragraph has no counterpart in the old value, the troupe CLI shall wrap it at the width of the longest content line of the old value.
 4. The troupe CLI shall match unchanged paragraphs between the old and new value in order, and shall treat changed paragraphs lying between the same matched paragraphs as counterparts of the old paragraphs there, pairing them in order.
 5. The troupe CLI shall measure widths in Unicode code points of the content after the block's indentation, and shall break lines only at single spaces between words.
-6. If the new value would require a more-indented line in the folded block (a paragraph that starts with a space or TAB), then the troupe CLI shall exit with code 3 and change no file.
-7. If the existing folded value contains more-indented lines and its value changes, then the troupe CLI shall exit with code 3 and change no file.
+6. If the new value would require a more-indented line in the folded block (a line that starts with a space or TAB) that is not an unchanged run of the old value's more-indented lines, then the troupe CLI shall exit with code 3 and change no file.
+7. If a change would put a more-indented line into a folded value, then the troupe CLI shall exit with code 3 and change no file; a change to a folded value that already contains more-indented lines is otherwise written, and each run of old more-indented lines that the new value keeps unchanged and in order keeps its bytes and the line breaks around it.
 
 ### Requirement 11: Placement of new entries
 **Objective:** As a developer, I want new entries placed where I would put them by hand, so that comments stay attached to what they describe.

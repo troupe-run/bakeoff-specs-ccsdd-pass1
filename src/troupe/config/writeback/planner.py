@@ -31,15 +31,15 @@ decision":
 
 A new key (with any missing intermediate mappings nested under it) or an appended list item goes
 through :meth:`_Planner.add_entries` into the file holding the collection (3.1, 3.2, 4.1): in a
-block collection as whole lines at its insertion point and entries column with the last entry's
-quote styles (7.1-7.3, 11.1, 11.2, 11.6), in a flow collection right after its last entry on that
-entry's line (11.3).
+block collection as whole lines at its insertion point and entries column with the quote styles of
+its last remaining entry (7.1-7.3, 11.1, 11.2, 11.6), in a flow collection right after its last
+entry on that entry's line (11.3).
 
 End-of-line comments on the changed lines are moved back to their columns by the EditApplier
 (12.x). Every refusal is a :class:`WriteRefusedError` naming the file and the path (14.9).
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -179,16 +179,18 @@ class _Planner:
         collection: ConfigMapping | ConfigSequence,
         entries: Sequence[tuple[str | None, NewValue]],
         path: ConfigPath,
+        deleted: Collection[int] = (),
     ) -> None:
         """Plan new entries (``key`` ``None``: list items) after the last entry of ``collection``.
 
-        They go into the file the collection is written in, styled after its last existing entry
-        (7.1-7.3). A block collection gets one line insertion at its insertion point (11.1, 11.2,
-        11.6); a flow collection one insertion on its last entry's line (11.3).
+        They go into the file the collection is written in, styled after its last remaining entry
+        (7.1-7.3): ``deleted`` are the indices of the entries the same set deletes. A block
+        collection gets one line insertion at its insertion point (11.1, 11.2, 11.6); a flow
+        collection one insertion on its last entry's line (11.3).
         """
         file = collection.origin.file
         layout = self._guard(file, path, lambda: self._layout(file))
-        siblings = _sibling_styles(collection)
+        siblings = _sibling_styles(collection, deleted)
         if collection.style is CollectionStyle.FLOW:
             edit = self._guard(
                 file,
@@ -448,7 +450,7 @@ class _Planner:
         existing = {entry.key for entry in node.entries}
         added = [(key, item) for key, item in value.entries if key not in existing]
         if added:
-            self.add_entries(node, added, path)
+            self.add_entries(node, added, path, deleted)
 
     def _merge_sequence(
         self,
@@ -469,7 +471,7 @@ class _Planner:
             )
         self._delete_entries(layout, node, range(len(value.items), len(node.items)), path)
         surplus = value.items[len(node.items) :]
-        if surplus:
+        if surplus:  # no item is deleted, so the old last item stays the preceding sibling
             self.add_entries(node, [(None, item) for item in surplus], path)
 
     def _render_flow_anew(
@@ -870,19 +872,25 @@ def _refuse(path: ConfigPath, file: SourceFile, problem: str) -> NoReturn:
     raise WriteRefusedError(problem, file=file.path, path=str(path))
 
 
-def _sibling_styles(collection: ConfigMapping | ConfigSequence) -> SiblingStyles:
-    """Quote styles of the last existing entry's key and scalar value (7.1-7.3).
+def _sibling_styles(
+    collection: ConfigMapping | ConfigSequence, deleted: Collection[int] = ()
+) -> SiblingStyles:
+    """Quote styles of the last remaining entry's key and scalar value (7.1-7.3).
 
-    A value that is a collection, a block scalar or a text include gives no preferred style.
+    Entries at the ``deleted`` indices are not in the written file, so they are no preceding
+    sibling; with no remaining entry there is no preferred style (minimal style). A value that is
+    a collection, a block scalar or a text include gives no preferred style.
     """
     if isinstance(collection, ConfigMapping):
-        if not collection.entries:
+        entries = [e for i, e in enumerate(collection.entries) if i not in deleted]
+        if not entries:
             return SiblingStyles(key=None, value=None)
-        last = collection.entries[-1]
+        last = entries[-1]
         return SiblingStyles(key=quote_style_of(last.key_style), value=_value_style(last.value))
-    if not collection.items:
+    items = [item for i, item in enumerate(collection.items) if i not in deleted]
+    if not items:
         return SiblingStyles(key=None, value=None)
-    return SiblingStyles(key=None, value=_value_style(collection.items[-1]))
+    return SiblingStyles(key=None, value=_value_style(items[-1]))
 
 
 def _value_style(node: ConfigNode) -> QuoteStyle | None:

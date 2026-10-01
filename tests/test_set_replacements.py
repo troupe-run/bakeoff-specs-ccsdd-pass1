@@ -143,6 +143,58 @@ def test_collection_merge(
     _set_and_check(make_theatre, fixture, path, value, expected)
 
 
+# ---- Requirement 7.1-7.3 with 5.1: new keys copy the last remaining entry ----
+
+
+@pytest.mark.parametrize(
+    ("fixture", "path", "value", "expected"),
+    [
+        pytest.param(
+            "db:\n  host: h\n  'user': 'u'\n",
+            "db",
+            "{host: h, pw: s}",
+            "db:\n  host: h\n  pw: s\n",
+            id="deleted-single-quoted-last-entry",
+        ),
+        pytest.param(
+            'db:\n  host: h\n  "user": "u"\n',
+            "db",
+            "{host: h, pw: s}",
+            "db:\n  host: h\n  pw: s\n",
+            id="deleted-double-quoted-last-entry",
+        ),
+        pytest.param(
+            "db:\n  'host': 'h'\n  user: u\n",
+            "db",
+            "{host: h, pw: s}",
+            "db:\n  'host': 'h'\n  'pw': 's'\n",
+            id="deleted-plain-last-entry",
+        ),
+        pytest.param(
+            "db:\n  'a': 'x'\n",
+            "db",
+            "{b: y}",
+            "db:\n  b: y\n",
+            id="no-remaining-entry",
+        ),
+        pytest.param(
+            "o: {a: x, 'b': 'y'}\n",
+            "o",
+            "{a: x, c: z}",
+            "o: {a: x, c: z}\n",
+            id="flow-deleted-quoted-last-entry",
+        ),
+    ],
+)
+def test_merge_new_keys_copy_the_last_remaining_entry(
+    make_theatre: MakeTheatre, fixture: str, path: str, value: str, expected: str
+) -> None:
+    """Req 7.1, 7.2, 7.3, 5.1: in a merge, a new key and its string value copy the quoting style of
+    the last entry that remains in the written file, not of an entry the same set deletes; with no
+    remaining entry they are written in the minimal style."""
+    _set_and_check(make_theatre, fixture, path, value, expected)
+
+
 # ---- Requirement 5.1, 2.2, 2.3: text includes inside a merged mapping ----
 
 TEXT_ROOT = "p:\n  t: file:t.txt\n  n: 1\n"

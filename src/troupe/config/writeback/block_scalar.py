@@ -182,8 +182,8 @@ def rewrite_block(
     paragraph by paragraph (10.1-10.5). No edits are returned for an unchanged value.
 
     Raises:
-        WriteRefusedError: a folded value would need a more-indented line (10.6), or the old
-            folded value has more-indented lines (10.7).
+        WriteRefusedError: the change would put a more-indented line into a folded value
+            (10.6, 10.7); an unchanged run of the old value's more-indented lines is kept.
         ValueError: the value holds a character no block scalar can hold (callers check
             :func:`literal_fits` first and fall back to double quotes).
     """
@@ -199,7 +199,8 @@ def rewrite_block(
     indent = _content_indentation(layout, slot, indicators, region)
 
     if indicators.startswith(_FOLDED):
-        lines = _folded_lines(layout, slot, region, indent, value, chomping)
+        explicit_indent = any(char.isdigit() for char in indicators)
+        lines = _folded_lines(layout, slot, region, indent, value, chomping, explicit_indent)
     else:
         _, content = render_literal(value, indent, region.line_break)
         lines = [(line, region.line_break) for line in content.split(region.line_break)[:-1]]
@@ -289,10 +290,29 @@ def _content_indentation(
 
 
 @dataclass(frozen=True)
-class _Paragraph:
-    lines: tuple[int, ...]  # old line numbers
-    text: str  # the lines' content joined by single spaces
-    width: int  # longest content line
+class _Unit:
+    """An old or new piece of a folded value between empty lines (or between line breaks YAML
+    does not fold).
+
+    A paragraph is a run of non-empty lines that are not more-indented; its text is the lines'
+    content joined by single spaces. A more-indented unit is a run of consecutive more-indented
+    lines (content starting with space or TAB); its text is their content joined by LF, exactly as
+    the value holds it, because YAML keeps the line breaks before, inside and after it.
+    """
+
+    spaced: bool  # a run of more-indented lines
+    text: str
+    lines: tuple[int, ...] = ()  # old line numbers (none for a new unit)
+    width: int = 0  # longest old content line
+
+
+def _separator_lines(gap: int, before: _Unit, after: _Unit) -> int:
+    """Empty lines between two units for ``gap`` empty value segments between them.
+
+    Between two paragraphs one line break folds away, so ``gap + 1`` empty lines are needed; next
+    to a more-indented unit the line break is kept as is and ``gap`` empty lines are needed.
+    """
+    return gap if before.spaced or after.spaced else gap + 1
 
 
 def _folded_lines(
@@ -302,105 +322,128 @@ def _folded_lines(
     indent: int,
     value: str,
     chomping: Chomping,
+    explicit_indent: bool,
 ) -> list[Line]:
     """The new content lines of a folded block (10.1-10.7)."""
-    paragraphs, separators, leading = _old_paragraphs(layout, slot, region, indent)
-    width = max((paragraph.width for paragraph in paragraphs), default=None)
+    units, separators, leading = _old_units(layout, region, indent)
+    width = max((unit.width for unit in units), default=None)
 
     body = value.rstrip("\n")
     trailing = len(value) - len(body)
     segments = body.split("\n") if body else []
-    new_texts: list[str] = []
-    gaps: list[int] = []  # empty segments before each new paragraph
+    new_units: list[_Unit] = []
+    gaps: list[int] = []  # empty segments before each new unit
     empty = 0
     for segment in segments:
         if not segment:
             empty += 1
             continue
-        if segment[0] in _MORE_INDENTED:
-            _refuse(layout, slot, f"the line {segment!r} would be more-indented in a folded block")
-        new_texts.append(segment)
+        spaced = segment[0] in _MORE_INDENTED
+        if spaced and new_units and new_units[-1].spaced and empty == 0:
+            new_units[-1] = _Unit(True, new_units[-1].text + "\n" + segment)
+            continue
+        new_units.append(_Unit(spaced, segment))
         gaps.append(empty)
         empty = 0
 
-    # For each new paragraph: the old paragraph whose bytes it keeps, or the width to wrap at.
-    kept: list[int | None] = [None] * len(new_texts)
-    widths: list[int | None] = [width] * len(new_texts)
-    old_texts = [paragraph.text for paragraph in paragraphs]
-    matcher = SequenceMatcher(None, old_texts, new_texts, autojunk=False)
+    # For each new unit: the old unit whose bytes it keeps, or the width to wrap at.
+    kept: list[int | None] = [None] * len(new_units)
+    widths: list[int | None] = [width] * len(new_units)
+    matcher = SequenceMatcher(
+        None,
+        [(unit.spaced, unit.text) for unit in units],
+        [(unit.spaced, unit.text) for unit in new_units],
+        autojunk=False,
+    )
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        for offset in range(j2 - j1):
-            if tag == "equal":
+        if tag == "equal":
+            for offset in range(j2 - j1):
                 kept[j1 + offset] = i1 + offset
-            elif tag == "replace" and offset < i2 - i1:
-                widths[j1 + offset] = paragraphs[i1 + offset].width
+        elif tag == "replace":
+            old_paragraphs = [i for i in range(i1, i2) if not units[i].spaced]
+            new_paragraphs = [j for j in range(j1, j2) if not new_units[j].spaced]
+            for i, j in zip(old_paragraphs, new_paragraphs, strict=False):
+                widths[j] = units[i].width
+
+    # Only an unchanged old run of more-indented lines may stay (10.6, 10.7); the block's first
+    # line must not be more-indented unless the header fixes the indentation.
+    for index, unit in enumerate(new_units):
+        if unit.spaced and (kept[index] is None or (index == 0 and not explicit_indent)):
+            line = unit.text.split("\n")[0]
+            _refuse(layout, slot, f"the line {line!r} would be more-indented in a folded block")
 
     brk = region.line_break
     pad = " " * indent
     lines: list[Line] = []
-    if new_texts and paragraphs and gaps[0] == len(leading):
+    if new_units and units and gaps[0] == len(leading):
         lines.extend(_old_lines(layout, leading, brk))
-    elif new_texts:
+    elif new_units:
         lines.extend([("", brk)] * gaps[0])
-    for index, new_text in enumerate(new_texts):
+    for index, unit in enumerate(new_units):
         old = kept[index]
         if index > 0:
             previous = kept[index - 1]
+            needed = _separator_lines(gaps[index], new_units[index - 1], unit)
             if (
                 old is not None
                 and previous is not None
                 and old == previous + 1
-                and len(separators[previous]) == gaps[index] + 1
+                and len(separators[previous]) == needed
             ):
                 lines.extend(_old_lines(layout, separators[previous], brk))
             else:
-                lines.extend([("", brk)] * (gaps[index] + 1))
+                lines.extend([("", brk)] * needed)
         if old is not None:
-            lines.extend(_old_lines(layout, paragraphs[old].lines, brk))
+            lines.extend(_old_lines(layout, units[old].lines, brk))
         else:
-            lines.extend((pad + line, brk) for line in wrap_paragraph(new_text, widths[index]))
+            lines.extend((pad + line, brk) for line in wrap_paragraph(unit.text, widths[index]))
     if chomping is Chomping.KEEP:
-        lines.extend([("", brk)] * (trailing - 1 if new_texts else trailing))
+        lines.extend([("", brk)] * (trailing - 1 if new_units else trailing))
     return lines
 
 
-def _old_paragraphs(
-    layout: FileLayout, slot: ValueSlot, region: _Region, indent: int
-) -> tuple[list[_Paragraph], list[tuple[int, ...]], tuple[int, ...]]:
-    """Old paragraphs, the empty lines between consecutive ones, and the leading empty lines.
-
-    Raises :class:`WriteRefusedError` for a more-indented line (10.7).
-    """
-    paragraphs: list[_Paragraph] = []
+def _old_units(
+    layout: FileLayout, region: _Region, indent: int
+) -> tuple[list[_Unit], list[tuple[int, ...]], tuple[int, ...]]:
+    """Old units, the empty lines between consecutive ones, and the leading empty lines."""
+    units: list[_Unit] = []
     separators: list[tuple[int, ...]] = []
     leading: tuple[int, ...] = ()
     run: list[int] = []
+    run_spaced = False
     empties: list[int] = []
 
     def close() -> None:
         contents = [layout.line_text(n)[indent:] for n in run]
-        paragraphs.append(_Paragraph(tuple(run), " ".join(contents), max(len(c) for c in contents)))
+        text = ("\n" if run_spaced else " ").join(contents)
+        units.append(_Unit(run_spaced, text, tuple(run), max(len(c) for c in contents)))
 
     for line in range(region.first_line, region.last_line + 1):
         content = layout.line_text(line)
-        if len(content) > indent and content[indent] in _MORE_INDENTED:
-            _refuse(layout, slot, "the folded value has more-indented lines")
-        if content.strip(" \t") == "":
+        spaced = len(content) > indent and content[indent] in _MORE_INDENTED
+        if not spaced and content.strip(" \t") == "":
             if run:
                 close()
                 run = []
             empties.append(line)
             continue
+        if run and spaced != run_spaced:
+            # YAML keeps the line break between a paragraph line and a more-indented line.
+            close()
+            run = []
+            empties = []
+            separators.append(())
         if not run:
-            if paragraphs:
+            if units and empties:
                 separators.append(tuple(empties))
-            else:
+            elif not units:
                 leading = tuple(empties)
             empties = []
+            run_spaced = spaced
         run.append(line)
     if run:
         close()
-    return paragraphs, separators, leading
+    return units, separators, leading
 
 
 def _old_lines(layout: FileLayout, lines: Sequence[int], line_break: str) -> list[Line]:
