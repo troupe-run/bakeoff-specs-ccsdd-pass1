@@ -46,7 +46,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Requirements: 2.8, 14.6, 15.3_
 
 - [ ] 2. Text analysis and rendering primitives
-- [ ] 2.1 Analyse file text: lines, columns, line breaks, indentation step and list dash offset
+- [x] 2.1 Analyse file text: lines, columns, line breaks, indentation step and list dash offset
   - Index lines and compute code-point columns, line content ends, blank and comment lines with their indentation
   - Choose the line break for an insertion: CRLF files CRLF, LF or break-less files LF, mixed files the break of the preceding line (LF if none)
   - Detect the indentation step (first block mapping nested under a block mapping key in that file, default 2) and the list dash offset (first block list under a mapping key, 0 allowed, default the step), using only nodes written in that file
