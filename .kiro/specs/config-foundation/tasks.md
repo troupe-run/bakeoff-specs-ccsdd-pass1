@@ -167,7 +167,7 @@
   - _Boundary: tests for history_
   - _Requirements: 3.8, 6.9, 7.1, 7.2, 7.3, 7.5, 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 9.1, 9.2, 9.3_
 
-- [ ] 6.5 Validate read-only safety and state location
+- [x] 6.5 Validate read-only safety and state location
   - Hash every file in a theatre with includes (including an include target outside `.troupe/`) before and after `show` and `history` runs, and list the theatre tree afterwards
   - Product-owner decision E: on a theatre whose includes live in a directory outside `.troupe/` (e.g. `file:../shared/agents.yaml`), list every file and directory of the theatre before and after each of these commands: first `show` (import), `history`, a second `show`, a usage error (malformed PATH), a path error (exit 5) and a load failure (exit 4, broken include); after each one the only new entries anywhere in the theatre are under `.troupe/` and named `history.sqlite*`, no entry appears in any include directory, and `.troupe/` holds no `history.sqlite-wal` or `history.sqlite-shm` (the store was closed)
   - Prove a run that fails to load creates no history state, and a run with a corrupt history store exits 4 naming the store
