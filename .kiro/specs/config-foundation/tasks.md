@@ -34,7 +34,7 @@
   - _Boundary: Paths_
   - _Requirements: 1.5, 5.1, 5.3, 8.3_
 
-- [ ] 2.3 Define the source-mapped configuration model
+- [x] 2.3 Define the source-mapped configuration model
   - Define immutable node types for scalars, mappings (with key text, key origin and key style per entry) and sequences, each with origin (file and character span), style (scalar style or block/flow), and optional include provenance (kind YAML or text, spec text, target file, directive origin)
   - Define the source file record (display path, real path, exact text, line ending: none, LF, CRLF or mixed) and the document record (root file, root mapping, all files read)
   - Document span semantics in the module (character indices, exact plain/quoted scalar spans, block scalar spans that start at the indicator and may extend over trailing blank lines, unreliable spans for empty null values, composer-reported block collection spans) as stated in design.md
