@@ -162,7 +162,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.3, 3.1, 3.2_
   - _Requirements: 13.6, 14.1, 14.2, 14.8_
 
-- [ ] 4.2 (P) Derive leaf changes for the history
+- [x] 4.2 (P) Derive leaf changes for the history
   - Diff the leaves of the documents before and after: set changes for new or changed leaves in new document order, then remove changes in old document order, with typed comparison
   - The before document is always the configuration loaded from disk for this command, never the history (product-owner decision A)
   - Done when unit tests on loaded fixture pairs prove the exact change list for a changed leaf, a created leaf with `old` null, removed leaves, a type change `1`→`"1"`, no changes between `{}` and `[]`, and the leaves of a newly embedded YAML include (set events) and of a new text include (one string leaf)
