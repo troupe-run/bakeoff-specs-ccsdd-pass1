@@ -252,7 +252,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Depends: 1.1, 4.5_
   - _Requirements: 12.1, 12.2, 12.3, 12.4_
 
-- [ ] 5.7 (P) Validate merges, deletions and kind changes
+- [x] 5.7 (P) Validate merges, deletions and kind changes
   - The five merge fixtures of task 3.5 through the CLI, byte-exactly, plus `db, '{port: 5432, host: b, pool: 3}'` on the first fixture giving the same bytes as `db, '{host: b, port: 5432, pool: 3}'`, and `p, '{t: "new\\n", n: 1}'` on `'p:\n  t: file:t.txt\n  n: 1\n'` with t.txt `'old\n'` changing only t.txt to `'new\n'`, and the same set with t.txt `b'old\r\n'` changing only t.txt to `b'new\r\n'`
   - Two-file set (product-owner decision B): `p, '{t: new, n: 2}'` on the same root with t.txt `'old\n'` exits 0, changes troupe.yml to `'p:\n  t: file:t.txt\n  n: 2\n'` and t.txt to `'new'` byte-exactly, leaves every other file unchanged, and `history` then shows `set p.t` (old `"old\n"`, new `"new"`) and `set p.n` (old 1, new 2) with consecutive seq
   - Kind changes: `db, '5': 'db:\n  host: a\n  # trailing\nnext: 1\n'` → `'db: 5\n  # trailing\nnext: 1\n'`; `db, '{}': 'db:\n  host: a\nnext: 1\n'` → `'db: {}\nnext: 1\n'`; `x, '{k: v}': 'x:\n  - a\n'` → `'x:\n  k: v\n'`
