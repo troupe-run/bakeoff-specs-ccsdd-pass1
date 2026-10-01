@@ -119,7 +119,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 - [ ] 3.2 Plan in-place changes of existing values
   - Replace existing plain/quoted/empty scalars in their slot with a single-line value in the chosen style (multi-line strings double-quoted inside flow parents), and rewrite existing literal/folded blocks with string values that still fit them
   - Replace a text-include target's whole content with the text produced by the content rule of 3.1 (CRLF-converted for CRLF targets), wherever the slot change reaches it; refuse YAML include roots that would change (including to a different `file:` string) and non-string values for text includes
-  - Collect edits per file and apply them into one file patch (the refusal of multi-file plans is completed and tested in 3.6)
+  - Collect edits per file and apply them into one file patch per changed file (multi-file plans are completed and tested in 3.6)
   - Done when planner tests on loaded fixtures produce the exact new texts for `a, 'yy': "a: 'x'  # c\n"` → `"a: 'yy' # c\n"`, a scalar change inside an included file, `a, '1': 'a:\n'` → `'a: 1\n'`, a multi-line string in a flow list, `a, 'file:inc.yaml': 'a: x\n'` → `'a: file:inc.yaml\n'`, a literal block rewrite, a text-include rewrite of a CRLF target (`prompt, '"new\\ntext\\n"'` with prompt.txt `b'old\r\n'` → `b'new\r\ntext\r\n'`), and refusals for an include root and a non-string text include
   - _Boundary: PatchPlanner_
   - _Requirements: 2.1, 2.4, 2.5, 2.6, 2.7, 6.1, 6.2, 9.3, 13.1_
@@ -146,24 +146,25 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - _Boundary: PatchPlanner_
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.7, 14.9_
 
-- [ ] 3.6 Plan includes inside replaced collections and enforce the one-file rule
+- [ ] 3.6 Plan includes inside replaced collections and multi-file patches
   - Inside a merged collection: refuse when a YAML include root would change, naming the path of that value (the nested path, not PATH) and the included file; remove only the directive entry when an included value is dropped; change a nested text include's content through the slot change of 3.2
-  - Refuse a plan whose edits touch more than one file, naming PATH and every file (the first file as the error's file, the others in its problem)
-  - Done when planner tests prove `agents, '{coder: {model: z}, lead: x}'` on `'agents:\n  coder: file:coder.yaml\n  lead: x\n'` (coder.yaml `'model: y\n'`) is refused naming `agents.coder` and coder.yaml, `agents, '{lead: y}'` changes only the root file to `'agents:\n  lead: y\n'`, `p, '{t: "new\\n", n: 1}'` on `'p:\n  t: file:t.txt\n  n: 1\n'` with t.txt `b'old\r\n'` patches only t.txt to `b'new\r\n'`, and the two-file plan `p, '{t: new, n: 2}'` on the same root with t.txt `'old\n'` is refused naming troupe.yml and t.txt
+  - Return one file patch per changed file, in the order the files appear in the loaded document (root file first), never two patches for the same file (product-owner decision B: a set that must change several files is carried out, not refused)
+  - Done when planner tests prove `agents, '{coder: {model: z}, lead: x}'` on `'agents:\n  coder: file:coder.yaml\n  lead: x\n'` (coder.yaml `'model: y\n'`) is refused naming `agents.coder` and coder.yaml, `agents, '{lead: y}'` changes only the root file to `'agents:\n  lead: y\n'`, `p, '{t: "new\\n", n: 1}'` on `'p:\n  t: file:t.txt\n  n: 1\n'` with t.txt `b'old\r\n'` patches only t.txt to `b'new\r\n'`, and the two-file plan `p, '{t: new, n: 2}'` on the same root with t.txt `'old\n'` yields exactly two patches, in this order, with byte-exact new texts: troupe.yml `'p:\n  t: file:t.txt\n  n: 2\n'` and t.txt `'new'`
   - _Boundary: PatchPlanner_
   - _Requirements: 2.2, 2.3, 5.8, 5.9, 13.6_
 
 - [ ] 4. Verification, effects and wiring
 - [ ] 4.1 (P) Verify a patch by re-loading the configuration in memory
-  - Re-load with every current file overridden (original texts plus the patched text); targets of newly written includes are read by the loader from disk
-  - Compare the read-back with the intended configuration including key order and include directives; map load errors (including a missing target or cycle of a newly written include) and mismatches to write-refused errors naming the patched file, PATH and, for load errors, the loader's message naming the target
-  - Done when unit tests prove a correct patch returns the re-loaded document, a newly written include with an existing target verifies, and an unparsable patch, a value mismatch, a missing include target and an include cycle each raise the write-refused error with PATH and (where applicable) the target in the message
+  - Re-load with every current file overridden (original texts plus the patched texts of all patches at once); targets of newly written includes are read by the loader from disk
+  - Compare the read-back with the intended configuration including key order and include directives; map load errors (including a missing target or cycle of a newly written include) and mismatches to write-refused errors naming the (first) patched file, PATH and, for load errors, the loader's message naming the target (refusal confirmed by the product owner, decision C)
+  - Done when unit tests prove a correct patch returns the re-loaded document, two patches (troupe.yml and t.txt of the 3.6 two-file plan) verify together, a newly written include with an existing target verifies, and an unparsable patch, a value mismatch (a file included at two places), a missing include target and an include cycle each raise the write-refused error with PATH and (where applicable) the target in the message
   - _Boundary: WriteVerifier_
   - _Depends: 1.3, 3.1, 3.2_
-  - _Requirements: 14.1, 14.2, 14.8_
+  - _Requirements: 13.6, 14.1, 14.2, 14.8_
 
 - [ ] 4.2 (P) Derive leaf changes for the history
   - Diff the leaves of the documents before and after: set changes for new or changed leaves in new document order, then remove changes in old document order, with typed comparison
+  - The before document is always the configuration loaded from disk for this command, never the history (product-owner decision A)
   - Done when unit tests on loaded fixture pairs prove the exact change list for a changed leaf, a created leaf with `old` null, removed leaves, a type change `1`→`"1"`, no changes between `{}` and `[]`, and the leaves of a newly embedded YAML include (set events) and of a new text include (one string leaf)
   - _Boundary: LeafDiff_
   - _Depends: 1.3_
@@ -172,24 +173,25 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 - [ ] 4.3 (P) Write user files atomically
   - Write through symlinks to the real file, via an exclusively created hidden temporary file in the same directory with the target's permission bits, flushed and synced, then renamed over the target; remove the temporary file on any failure and raise a write-refused error naming the file
   - Provide restore of a file's original text through the same path
-  - Done when tests in a temporary directory prove the new bytes (with a BOM kept), the kept permission bits, the kept symlink, a directory listing identical to before apart from the target's content after success, no leftover temporary file after a failing rename injected at the OS boundary and after an unwritable directory, and an unchanged target after each failure
+  - Done when tests in a temporary directory prove the new bytes (with a BOM kept), the kept permission bits, the kept symlink, a directory listing identical to before apart from the target's content after success, a directory listing identical to before (no leftover temporary file) after a failing rename injected at the OS boundary and after an unwritable directory (product-owner decision E), and an unchanged target after each failure
   - _Boundary: AtomicWriter_
   - _Depends: 1.1_
   - _Requirements: 13.3, 13.4, 13.5, 14.3, 14.4, 14.5_
 
 - [ ] 4.4 Implement the set use case
-  - Resolve, return early for a no-op, plan, verify, diff, write, then record the changes in one batch; restore the file and re-raise the store error when recording fails
-  - When the restore itself fails, report the store error and name the file that could not be restored in the same message (the store stays the error's file; the unrestorable file is named in its problem)
-  - Re-raise a write-refused error from the atomic writer with `path=str(PATH)` added, keeping the file and the reason, so every exit 3 names PATH, the file and why
+  - Resolve on the document loaded from disk, return early for a no-op, plan all patches, verify them together, diff, write every patch atomically in order, then record the changes in one batch; nothing is written before every patch is verified
+  - When a write fails, restore the already-written files in reverse order, record nothing and re-raise the write-refused error with `path=str(PATH)` added, keeping the failed file and the reason, so every exit 3 names PATH, the file and why
+  - When recording fails, restore every written file in reverse order and re-raise the store error (exit 4)
+  - When a restore itself fails, attempt the remaining restores, keep the original error and exit code (3 or 4) and name every file that could not be restored in its problem (the error's file stays the failed file or the store)
   - Tests call the use case directly with a theatre opened through the foundation session (the CLI is wired only in 4.5)
-  - Done when tests on real theatres prove a no-op writes nothing and records nothing, a successful set writes exactly one file and records the diff, a refusal leaves files and history untouched, a failure injected at the SQLite boundary during recording leaves the file byte-identical to before, an additionally injected restore failure yields a message naming both the store and the file, and a write failure injected at the OS boundary yields a write-refused error naming PATH, the file and the reason
+  - Done when tests on real theatres prove a no-op writes nothing and records nothing, a successful single-file set writes one file and records the diff, the two-file set of 3.6 writes both files byte-exactly and records both leaves, a refusal leaves files and history untouched, a failure of the second write injected at the OS boundary (the restore call succeeds) restores the first file byte-identically, raises a write-refused error naming PATH, t.txt and the reason and records no event, the same with the restore also failing names troupe.yml as not restored and keeps exit code 3, a failure injected at the SQLite boundary during recording leaves both files byte-identical to before, an additionally injected restore failure yields a message naming both the store and the file, and after every one of these outcomes the listing of each directory holding a written file equals the listing before (product-owner decision E)
   - _Boundary: SetCommand_
   - _Depends: 4.1, 4.2, 4.3_
-  - _Requirements: 13.4, 14.5, 14.6, 14.7, 15.4, 15.6, 16.2_
+  - _Requirements: 13.4, 13.6, 14.4, 14.5, 14.6, 14.7, 14.10, 15.4, 15.6, 16.2_
 
 - [ ] 4.5 Register and handle the `set` subcommand
   - Create the new module `src/troupe/cli/set_command.py`, importing `TroupeArgumentParser`, `Handler`, `SubcommandRegistrar` and `theatre_option_parent` from `troupe.cli.shell` and never from `troupe.cli.main` (import chain `troupe.cli.shell ← set_command ← troupe.cli.main`; the writeback core never imports `troupe.cli`), with `add_set_subparser(subparsers)`, which adds `set PATH VALUE` with the shared `--theatre` option and registers `set_defaults(handler=handle_set)`, and `handle_set(args: argparse.Namespace, out: io.BytesIO) -> None` matching the foundation's `Handler` protocol
-  - `handle_set` parses PATH and VALUE first (`ConfigPath.parse(args.path)`, then `parse_value(args.value, path)`), then calls `open_theatre` itself, runs the use case and writes nothing to `out` on success
+  - `handle_set` parses PATH and VALUE first (`ConfigPath.parse(args.path)`, then `parse_value(args.value, path)`), then enters `with open_theatre(args.theatre) as theatre:` itself (so the history store is closed when the command ends, config-foundation 7.9), runs the use case inside the block and writes nothing to `out` on success
   - The only change to `src/troupe/cli/main.py` is one added entry, `add_set_subparser`, in the foundation's marked registration list `SUBCOMMAND_REGISTRARS`; the existing `show`/`history` parsing, dispatch and error mapping are reused unchanged
   - Done when `uv run troupe config set a 2 --theatre DIR` changes `'a: 1\n'` to `'a: 2\n'` with exit 0 and empty stdout from the repository root, the first set on a fresh theatre leaves the import events in the history, missing VALUE, a surplus argument, malformed PATH and an invalid VALUE exit 2 with empty stdout and create no `.troupe/history.sqlite*`, and an include-root refusal exits 3 with stderr `<file>: <PATH>: <reason>`
   - _Boundary: CliSet (src/troupe/cli/set_command.py, one SUBCOMMAND_REGISTRARS entry in src/troupe/cli/main.py)_
@@ -252,12 +254,13 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 
 - [ ] 5.7 (P) Validate merges, deletions and kind changes
   - The five merge fixtures of task 3.5 through the CLI, byte-exactly, plus `db, '{port: 5432, host: b, pool: 3}'` on the first fixture giving the same bytes as `db, '{host: b, port: 5432, pool: 3}'`, and `p, '{t: "new\\n", n: 1}'` on `'p:\n  t: file:t.txt\n  n: 1\n'` with t.txt `'old\n'` changing only t.txt to `'new\n'`, and the same set with t.txt `b'old\r\n'` changing only t.txt to `b'new\r\n'`
+  - Two-file set (product-owner decision B): `p, '{t: new, n: 2}'` on the same root with t.txt `'old\n'` exits 0, changes troupe.yml to `'p:\n  t: file:t.txt\n  n: 2\n'` and t.txt to `'new'` byte-exactly, leaves every other file unchanged, and `history` then shows `set p.t` (old `"old\n"`, new `"new"`) and `set p.n` (old 1, new 2) with consecutive seq
   - Kind changes: `db, '5': 'db:\n  host: a\n  # trailing\nnext: 1\n'` → `'db: 5\n  # trailing\nnext: 1\n'`; `db, '{}': 'db:\n  host: a\nnext: 1\n'` → `'db: {}\nnext: 1\n'`; `x, '{k: v}': 'x:\n  - a\n'` → `'x:\n  k: v\n'`
   - Refusals and includes (each exit 3 asserts stderr names PATH, the file and the reason): `l.0, '{b: 2}': 'l:\n  - a: 1\n    b: 2\n'` exits 3; on root `'agents:\n  coder: file:coder.yaml\n  lead: x\n'` with coder.yaml `'model: y\n'`, `agents, '{coder: {model: z}, lead: x}'` exits 3 naming `agents.coder` and coder.yaml, and `agents, '{lead: y}'` → `'agents:\n  lead: y\n'` with coder.yaml unchanged
   - Done when every case passes byte-exactly
   - _Boundary: tests for set replacements_
   - _Depends: 1.1, 4.5_
-  - _Requirements: 2.2, 2.3, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 14.9, 16.2_
+  - _Requirements: 2.2, 2.3, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 13.6, 14.9, 15.1, 15.5, 16.2_
 
 - [ ] 5.8 (P) Validate byte preservation, line endings, encoding and file identity
   - `b.d, '"x\\ny\\n"': b'a: 1\r\nb:\r\n  c: 2\r\n'` → `b'a: 1\r\nb:\r\n  c: 2\r\n  d: |\r\n    x\r\n    y\r\n'`; `c, '3': b'a: 1\r\nb: 2\n'` → `b'a: 1\r\nb: 2\nc: 3\n'`; `c, '3': 'a: 1\nb: 2'` → `'a: 1\nb: 2\nc: 3'`; `a, '2': b'\xef\xbb\xbfa: 1\n'` → `b'\xef\xbb\xbfa: 2\n'`
@@ -270,9 +273,11 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
 
 - [ ] 5.9 (P) Validate write safety, no-ops and refusals
   - No-ops (exit 0, files and history unchanged): `a, '1.00': 'a: 1.0\n'`; `agents.coder, 'file:agents/coder.yaml'` on root `'agents:\n  coder: file:agents/coder.yaml\n'` with `.troupe/agents/coder.yaml` `'model: small\n'`; `p, '{t: "old\\n"}'` on `'p:\n  t: file:t.txt\n'` with t.txt `'old\n'`
-  - Refusals (files and history unchanged): `x.k, '2'` on `'x: file:shared.yaml\ny: file:shared.yaml\n'` with shared.yaml `'k: 1\n'` exits 3 naming shared.yaml; `p, '{t: new, n: 2}'` on `'p:\n  t: file:t.txt\n  n: 1\n'` with t.txt `'old\n'` exits 3 naming troupe.yml and t.txt; `b, 'file:missing.yaml'` exits 3 naming the target
+  - Refusals (files and history unchanged; confirmed by the product owner, decision C): `x.k, '2'` on `'x: file:shared.yaml\ny: file:shared.yaml\n'` with shared.yaml `'k: 1\n'` exits 3 naming shared.yaml; `b, 'file:missing.yaml'` exits 3 naming the target
   - Write failure: an include target in a read-only directory exits 3 naming it, unchanged, with no temporary file left (skipped when running as root)
-  - Done when every case passes, each exit 3 stderr names PATH, the file concerned and the reason, and each refusal leaves the theatre snapshot and the history output identical to before
+  - Multi-file rollback (product-owner decision B), with the in-process runner from 1.1: the two-file set `p, '{t: new, n: 2}'` on `'p:\n  t: file:t.txt\n  n: 1\n'` with t.txt `'old\n'`, with the second `os.replace` call failing at the OS boundary (the restore succeeds), exits 3 naming PATH and t.txt, leaves troupe.yml and t.txt byte-identical to before, leaves no temporary file, and `history` shows no `set` event
+  - No extra file (product-owner decision E): for a successful set, the verification refusal, the write failure and the multi-file rollback above, the listing of every directory holding a file the set wrote or would write is identical to before apart from the written files' contents
+  - Done when every case passes, each exit 3 stderr names PATH, the file concerned and the reason, and each refusal or failure leaves the theatre snapshot and the history output identical to before
   - _Boundary: tests for set safety_
   - _Depends: 1.1, 4.5_
   - _Requirements: 2.8, 13.6, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7, 14.8, 16.2_
@@ -281,7 +286,8 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - First set on a fresh theatre: `history` lists the import events, then the set event; a new key records `old` null; the mapping merge fixture of 3.5 records `set db.host`, `set db.pool`, then `remove db.user` with consecutive `seq`
   - Typed changes `a, '"1"'` then `a, '1.0'` on `'a: 1\n'` each record a set event with JSON-typed values; `x, '[]': 'x: {}\n'` changes the file and records nothing; a no-op and a refused set record nothing
   - New includes: `b, 'file:inc.yaml'` on `'b: x\n'` with inc.yaml `'k: 1\nl: [p]\n'` records `set b.k` (old null, new 1), `set b.l.0` (new "p"), then `remove b` (old "x"); `c, 'file:notes.txt'` with notes.txt `'hi\n'` records one `set c` with new `"hi\n"`
-  - Using the in-process runner from 1.1, a store failure injected at the SQLite boundary while recording (the recorder's insert raises) restores the file byte-identically, exits 4 naming `history.sqlite`, and leaves stdout empty
+  - Files are the truth (product-owner decision A): on `'a: 1\n'`, a first command imports; then hand-edit the file to `'a: 5\n'`; `history` shows no event for the hand edit; `a, '7'` then records exactly one `set a` event with `old` 5 (the hand-edited value, not the imported 1) and `new` 7
+  - Using the in-process runner from 1.1, a store failure injected at the SQLite boundary while recording (the recorder's insert raises) restores the file byte-identically, exits 4 naming `history.sqlite`, leaves stdout empty and leaves the directory listing unchanged (no temporary file, product-owner decision E)
   - Done when each JSON line is parsed and asserted for seq, op, path, old and new
   - _Boundary: tests for set history_
   - _Depends: 1.1, 4.5_

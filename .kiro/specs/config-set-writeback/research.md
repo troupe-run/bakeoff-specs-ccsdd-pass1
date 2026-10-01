@@ -110,10 +110,12 @@
 ## Design Decisions
 
 ### Decision: Patch, re-load, compare, then write
+- **Status**: Confirmed by product owner (2026-10-01, decision C): refuse with exit 3 and no file changed when
+  the in-memory read-back is not the intended configuration.
 - **Context**: Contract: byte-surgical; exit 3 leaves files unchanged; brief: verify before writing.
 - **Alternatives Considered**: 1) trust the renderer; 2) verify by re-parsing only the changed file in
   isolation; 3) verify by re-loading the whole configuration with in-memory overrides.
-- **Selected Approach**: 3. All files of the loaded document are passed as overrides (changed text for the
+- **Selected Approach**: 3. All files of the loaded document are passed as overrides (changed text for every
   changed file, original text for the others), so verification never re-reads the disk and checks includes,
   duplicate keys and typing exactly as `show` would. The loaded configuration (as a plain tree, ordered, typed)
   must equal the intended tree, and the set of files read must be unchanged.
@@ -136,6 +138,8 @@
 - **Follow-up**: Revisit if the product owner prefers whole replacement.
 
 ### Decision: Atomic write with a temporary file in the target's own directory
+- **Status**: Confirmed by product owner with a condition (2026-10-01, decision E): no extra file may be left
+  behind once any command finishes, successfully or not; a crash mid-write is undefined.
 - **Context**: Files must be written atomically; state only under `<theatre>/.troupe/`; no other file may be
   created. Include targets may lie outside `.troupe/` (e.g. `file:../shared.yaml`).
 - **Alternatives Considered**:
@@ -151,20 +155,41 @@
   command (Product Principle 2). The "no other file" rule is read as an end-state rule; the temp file is never
   left behind on any handled path.
 - **Trade-offs**: A hard kill between create and rename can leave the hidden temp file; documented risk.
-- **Follow-up**: Tests list the directory before/after for success and injected failures.
+- **Follow-up**: Tests list every directory holding a written file before/after for success and for every
+  failure path: verification refusal, write failure (with rollback) and history failure (with restore) (14.4).
 
-### Decision: One file per set; history after the file; compensate on history failure
-- **Context**: Several files cannot be replaced atomically together; file write and event append cannot share
-  one transaction.
-- **Selected Approach**: A plan that would change more than one file is refused (exit 3). The file is written
-  first, then events are recorded; if recording fails, the original text is written back atomically and the
-  command exits 4 naming the history store.
-- **Alternatives Considered**: record first, then write (a failed write would leave events for a change that
-  never happened, and events cannot be deleted).
-- **Rationale**: Files are authoritative (config-foundation decision); a set either happens completely or not.
-- **Follow-up**: Store failure injected at the external SQLite boundary in a safety test.
+### Decision: Multi-file sets: verify all, write each atomically, roll back; history after all writes (revised)
+- **Status**: PO delegated: safest assumption — **changed** from the earlier "refuse multi-file sets" (2026-10-01,
+  decision B).
+- **Context**: Several files cannot be replaced atomically together; file writes and the event append cannot
+  share one transaction. The first draft refused any set that changed more than one file (exit 3). But the
+  contract says "the only bytes that differ in any file are those this section requires to change", and rule 1
+  writes each existing value into the file containing it, so replacing a mapping that contains a text include
+  and an ordinary value legitimately changes two files. Refusing contradicts the contract.
+- **Selected Approach**: The planner returns one `FilePatch` per changed file, in `document.files` order. All
+  patches are verified together in memory (re-load with every override) before anything is written. Then each
+  file is written atomically in that order. If a write fails, every already-written file is restored to its
+  original bytes (reverse order) and the set exits 3 with no history event. Events are recorded only after all
+  writes succeeded; if recording fails, every written file is restored and the set exits 4 naming the store. If
+  a restore fails, the original exit code is kept and the message names every unrestored file (14.10).
+  Changes that would alter the configuration anywhere other than at PATH (e.g. a file included at two places)
+  are still refused by verification (14.2, unchanged).
+- **Alternatives Considered**: 1) keep refusing multi-file sets (contradicts the contract, see above);
+  2) record first, then write (a failed write would leave events for a change that never happened, and events
+  cannot be deleted); 3) a journal/backup file to make multi-file writes crash-safe (creates extra files outside
+  `.troupe/`, which decision E forbids once the command ends).
+- **Rationale**: Covers the contract; data safety comes from verifying everything before the first write and
+  from rolling back on any handled failure. Files are authoritative (decision A); a set either happens
+  completely or not, apart from an unhandled crash.
+- **Trade-offs**: A crash between two renames can leave one file changed and another not (like a crash
+  mid-write, undefined). Restore failures cannot be fully hidden; they are reported by name.
+- **Revisit when**: crash-safety across files is required, concurrent writers come into contract, or the product
+  owner prefers refusal after all.
+- **Follow-up**: Planner test of the two-file plan (3.6), SetCommand rollback and restore-failure tests (4.4),
+  e2e success (5.7) and rollback (5.9); store failure injected at the external SQLite boundary (5.10).
 
 ### Decision: `file:` strings in VALUE create includes, judged by the read-back (revised)
+- **Status**: PO delegated: safest assumption — kept (2026-10-01, decision D).
 - **Context**: A first draft refused any VALUE string starting with `file:` (exit 3). The coordinator pointed
   out that the contract defines such strings as includes and does not forbid setting them, so refusing narrows
   scope quietly (collaboration.md).
@@ -182,7 +207,7 @@
   when the resulting configuration loads.
 - **Trade-offs**: The verifier reads the new target from disk (read-only); the set never creates the target.
 - **Follow-up**: CLI tests for a YAML target, a text target, a missing target and a cycle; history test for
-  the embedded leaves.
+  the embedded leaves. Revisit if the product owner wants `set` to create include targets.
 
 ### Decision: Contract gaps resolved conservatively
 
@@ -196,9 +221,10 @@
 | No-op vs refusal order | No-op wins (exit 0) | "A set that changes nothing … should not modify files"; nothing to refuse | — |
 | PATH below a null (`key:`) | Exit 5 | Null is not a mapping (rule 2 needs an ancestor mapping) | PO wants null treated as empty mapping |
 | Digit segment that would create a mapping key, or index below a missing list, or `list.<len>.x` | Exit 5 | Digit keys out of contract; rule 3 only for PATH ending in the index | — |
-| VALUE string starting with `file:` written to YAML | Written as a normal string; the read-back decides: missing target, cycle or unloadable target → exit 3, otherwise success with the include's leaves recorded | The contract defines such strings as includes and does not forbid setting them; refusing would narrow scope. Verification keeps it safe | PO wants targets created by `set` |
-| Change touching two files (text include inside a replaced collection) | Exit 3 | Cannot be atomic | — |
-| Same file included twice and edited | Exit 3 (verification) | The edit would change other paths too | — |
+| VALUE string starting with `file:` written to YAML | PO delegated, kept (D). Written as a normal string; the read-back decides: missing target, cycle or unloadable target → exit 3, otherwise success with the include's leaves recorded | The contract defines such strings as includes and does not forbid setting them; refusing would narrow scope. Verification keeps it safe | PO wants targets created by `set` |
+| Change touching two files (text include inside a replaced collection) | Carried out: verify all, write each atomically, roll back on failure (PO delegated, changed: B) | Rule 1 requires it; refusing contradicts the contract | Crash-safety across files required |
+| Same file included twice and edited | Exit 3 (verification) — confirmed by PO (C) | The edit would change other paths too | — |
+| Malformed PATH for `set` | Exit 2 before the theatre is opened (foundation 1.5) — PO delegated, kept (G) | Prevents creating empty-string keys | Empty keys come into contract |
 | Mixed-line-ending file | Inserted breaks copy the line they follow (LF if none) | Matches local context; CRLF-only rule is about CRLF files | — |
 | Text include with mixed/LF/no line ending | VALUE written exactly | Contract converts only for CRLF targets | — |
 | File without final line break | Insert break before the new entry; still no final break | Minimal byte change | — |
@@ -232,7 +258,8 @@
   probes), `difflib.SequenceMatcher` (stdlib) for folded paragraph alignment, `os.replace`/`tempfile`-style
   exclusive create for atomic writes, `argparse` via the foundation parser. Build the renderers and planner:
   no library renders YAML fragments byte-faithfully into existing text.
-- **Simplification**: No undo/transaction framework (one file per set, one compensation path); no generic
+- **Simplification**: No undo/transaction framework (one compensation function restoring written files in
+  reverse order, used for write failures and history failures alike); no generic
   "YAML emitter" (renderers produce only what the rules need); no line-ending abstraction beyond one function
   choosing the break for an insertion point; folded and literal rendering share chomping and indentation code.
 
@@ -241,7 +268,66 @@
 - ruamel internals (marks, fold markers) change — pinned `<0.20` upstream; probes encoded as unit tests here.
 - Rule interactions (comment column with flow appends, CRLF with literal blocks) — byte-exact CLI tests per
   rule on fixtures with comments, CRLF, multibyte characters and odd quoting.
-- Transient temp file left by a hard kill — hidden recognisable name; documented.
+- Transient temp file left by a hard kill — hidden recognisable name; documented (undefined per PO decision E).
+- Partially applied multi-file set after a hard kill between two renames — undefined like any crash mid-write;
+  handled failures always roll back (decision B).
+
+## Product Owner Decisions (2026-10-01)
+Answers relevant to this spec. Each record states the decision, the alternatives, why, what would make us
+revisit it, and its status. Decisions F, H and I concern loading/history output and are recorded in
+config-foundation's `research.md`; G (malformed PATH → exit 2) is inherited from there.
+
+### A. Files are the truth; `old` comes from the files as on disk
+- **Status**: Confirmed by product owner.
+- **Decision**: `set` reads the files as they are on disk for this command (`theatre.document`). The history is
+  change history only. A hand edit after the import produces no event; a later `set` records as `old` the value
+  currently in the file, not the last value in the history.
+- **Alternatives**: take `old` from a projection of the history (would report a value that is no longer in the
+  file); reconcile hand edits into the history before the set (contract: importing is not reconciling).
+- **Why**: The files are what the user edits and reviews; the event must describe the change actually made to
+  them.
+- **Revisit when**: a later contract step makes the event store authoritative or asks for reconciliation.
+- **Spec impact**: 15.1, 15.2 (wording); design LeafDiff/SetCommand; tests in tasks 4.2 and 5.10.
+
+### B. A set that must change more than one file is carried out
+- **Status**: PO delegated: safest assumption — **changed** (previously refused with exit 3).
+- **Decision, alternatives, why, revisit**: see "Decision: Multi-file sets" above.
+- **Spec impact**: 13.6 rewritten, 14.4, 14.5, 14.7 extended, new 14.10, 15.6; design PatchPlanner (tuple of
+  `FilePatch`), WriteVerifier (all overrides), SetCommand (`write_patches`, rollback), error table, Non-Goals;
+  tasks 3.2, 3.6, 4.1, 4.4, 5.7, 5.9.
+
+### C. Refuse when the in-memory read-back is not the intended configuration
+- **Status**: Confirmed by product owner.
+- **Decision**: Exit 3 and no file changed when the patched texts cannot be read back or read back as anything
+  other than the intended configuration (including a file included at two places).
+- **Alternatives**: trust the renderer; verify only the changed file in isolation.
+- **Why**: The loader is the single definition of meaning; any planner mistake becomes a refusal, not a
+  corrupted file.
+- **Revisit when**: never likely; only if legitimate sets are refused often in practice.
+- **Spec impact**: 14.1, 14.2 (unchanged).
+
+### D. A `file:` VALUE is written as a plain string
+- **Status**: PO delegated: safest assumption — kept.
+- **Decision**: The string is rendered like any other string; if its target is missing, forms a cycle or cannot
+  be loaded, the set exits 3 and no file changes.
+- **Alternatives**: refuse every `file:` VALUE (narrows the contract); create the target (writes files the user
+  did not ask for).
+- **Why**: Exit 3 means "write refused, nothing changed"; the user is never left with a configuration that
+  cannot load (which would make every later command exit 4).
+- **Revisit when**: the product owner wants `set` to create include targets.
+- **Spec impact**: 2.7, 2.8, 14.8, 15.7 (unchanged).
+
+### E. Temporary file then rename; nothing left behind
+- **Status**: Confirmed by product owner with a condition.
+- **Decision**: Temp-file-then-rename in the target's directory is acceptable, but no extra file may remain once
+  any command finishes, successfully or not; a crash mid-write is undefined. The history store is closed at the
+  end of the command (config-foundation 7.9).
+- **Alternatives**: in-place overwrite (no temp file, but a crash truncates the user's file); temp file in
+  `.troupe/` (not atomic across file systems).
+- **Why**: Atomicity protects the user's data; the condition keeps the "no other file" rule as an end-state
+  guarantee that tests can check.
+- **Revisit when**: a platform without atomic rename in the same directory is supported.
+- **Spec impact**: 14.3, 14.4 (sharpened); design AtomicWriter/CliSet; tasks 4.3, 4.4, 4.5, 5.9, 5.10.
 - Upstream addition not delivered (U1–U6 are delivered in config-foundation) — task 2.6 keeps a failing guard test for U1 and stops.
 
 ## References

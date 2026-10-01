@@ -110,6 +110,7 @@
 ## Design Decisions
 
 ### Decision: Files are authoritative for current values; the event store is authoritative for history only
+- **Status**: Confirmed by product owner (2026-10-01, decision A).
 - **Context**: Open decision from roadmap/brief: does `show` read the files or the projection? Contract:
   "importing is not reconciling" (history is not updated for hand edits), and `show PATH` "prints the value at
   PATH" of the configuration, which is the hand-edited file set.
@@ -126,8 +127,8 @@
   decisions (Product Principle 2). The "importing is not reconciling" rule constrains history only.
 - **Trade-offs**: History and `show` can disagree after hand edits; this is the contract's intent. A
   current-value projection is not built (no consumer needs it).
-- **Follow-up**: Test: import, hand-edit file, `show` prints the new value and `history` has no new events.
-  Revisit if a later contract step makes the event store authoritative.
+- **Follow-up**: Test: import, hand-edit file, `show` prints the new value and `history` has no new events
+  (tasks 5.1, 6.3, 6.4). Revisit if a later contract step makes the event store authoritative.
 
 ### Decision: Event store persistence
 - **Selected Approach**: eventsourcing `Application` with the SQLite persistence module, database at
@@ -159,19 +160,19 @@
 ### Decision: Contract gaps resolved conservatively
 | Gap | Choice | Why | Revisit when |
 |-----|--------|-----|--------------|
-| Malformed PATH (`""`, `a..b`, `.a`, `a.`) | Exit 2 (usage) | The argument is malformed, not "not found" | PO prefers 5 |
-| Duplicate keys | Exit 4 naming file and key path | Ambiguous meaning; writes could hit the wrong key | Never likely |
+| Malformed PATH (`""`, `a..b`, `.a`, `a.`) | Exit 2 (usage) — PO delegated: safest assumption (G) | The argument is malformed, not "not found" | PO prefers 5 |
+| Duplicate keys | Exit 4 naming file and key path — PO delegated: safest assumption (I) | Ambiguous meaning; writes could hit the wrong key | Never likely |
 | Top-level node not a mapping | Exit 4 | Paths start at a mapping; writes need a mapping root | A step addresses list roots |
 | Empty / comment-only root file | Empty configuration, zero leaves | It is a valid YAML document with no settings | — |
 | Empty YAML include target | Null scalar in place of the include | "As if written in place": `key:` with nothing is null | — |
-| Explicit tags (`!!str 5`, `!foo x`) | Exit 4 naming file and key path | Not described by the contract; guessing a type risks wrong writes | A contract step adds tags |
-| Anchors / aliases / merge keys | Exit 4 (detected by the `&` property) | Out of contract; refusing protects the byte-surgical writer | Step 6 |
+| Explicit tags (`!!str 5`, `!foo x`) | Exit 4 naming file and key path — PO delegated: safest assumption (I) | Not described by the contract; guessing a type risks wrong writes | A contract step adds tags |
+| Anchors / aliases / merge keys | Exit 4 naming file and key path where known (anchor by the `&` property, merge key by a plain `<<` key, undefined alias by the composer error) — PO: our choice (H) | Out of contract; refusing protects the byte-surgical writer | Step 6 |
 | Complex (non-scalar) mapping keys | Exit 4 | Cannot be addressed by a dotted path | — |
 | Mapping keys | The key scalar's text as written (`"a b"` → `a b`, `true` → `true`) | Paths are textual | — |
 | Include suffix match | Case-sensitive `.yml` / `.yaml` | Contract text; avoids guessing | — |
-| Non-UTF-8 file or text-include target | Exit 4 naming the file | Cannot represent exactly as a string | Binary includes requested |
+| Non-UTF-8 file or text-include target | Exit 4 naming the file — PO delegated: safest assumption (I) | Cannot represent exactly as a string | Binary includes requested |
 | Unreadable/corrupt history store | Exit 4 naming `<theatre>/.troupe/history.sqlite` | Closest contract meaning; refuse rather than reset history | — |
-| Non-finite floats in history JSON | JSON string of the YAML 1.2 canonical form: `".inf"`, `"-.inf"`, `".nan"`; lines are encoded with `allow_nan=False` so invalid JSON can never be emitted | Contract requires JSON Lines; Python's `Infinity`/`NaN` tokens are not JSON. `null` was rejected because it cannot be told apart from a real null and loses the value. Accepted cost: in history only, `.inf` the float and `".inf"` the string look the same. `show` still prints `repr()` (`inf`, `nan`) | PO prefers another encoding |
+| Non-finite floats in history JSON | PO delegated: safest assumption (F). JSON string of the YAML 1.2 canonical form: `".inf"`, `"-.inf"`, `".nan"`; lines are encoded with `allow_nan=False` so invalid JSON can never be emitted | Contract requires JSON Lines; Python's `Infinity`/`NaN` tokens are not JSON. `null` was rejected because it cannot be told apart from a real null and loses the value. Accepted cost: in history only, `.inf` the float and `".inf"` the string look the same. `show` still prints `repr()` (`inf`, `nan`) | PO prefers another encoding |
 | JSON escaping | `json.dumps` defaults (ASCII-escaped) | Always valid regardless of terminal encoding | — |
 | Import order | Document order (depth-first, as written, includes expanded in place) | Deterministic, matches what a reader sees | — |
 
@@ -196,7 +197,80 @@
 - `os.environ` keys such as `COMPRESSOR_TOPIC`, `CIPHER_TOPIC` or `HISTORYAPP_*` could alter the store
   configuration — the store passes explicit values for the persistence keys and the topics it relies on;
   residual risk accepted (developer-controlled environment).
-- SQLite `-wal`/`-shm` side files appear under `.troupe/` — allowed (state only under `.troupe/`).
+- SQLite `-wal`/`-shm` side files appear under `.troupe/` while the store is open — allowed (state only under
+  `.troupe/`); the store is closed at the end of every command (7.9), after which SQLite removes them.
+
+## Product Owner Decisions (2026-10-01)
+Answers to the open questions of this spec. Each record states the decision, the alternatives, why, what would
+make us revisit it, and its status.
+
+### A. Files are the truth; the history is change history only
+- **Status**: Confirmed by product owner.
+- **Decision**: `show` (and the downstream `set`) always read the configuration files as they are on disk for the
+  current command. The event store is change history only: a hand edit shows in `show` but produces no history
+  event; config-set-writeback takes `old` from the configuration loaded from disk, not from the history.
+- **Alternatives**: `show` reads a projection of the events; hybrid (projection with a fallback to the files).
+- **Why**: After a hand edit a projection would print a value that is no longer in the user's file; "importing is
+  not reconciling" constrains history only.
+- **Revisit when**: a later contract step makes the event store authoritative or asks for reconciliation of hand
+  edits.
+- **Spec impact**: 6.9 (wording sharpened), 7.3; tests in tasks 5.1, 6.3 (new hand-edit case) and 6.4.
+
+### E. State only under `.troupe/`; store closed; nothing created elsewhere
+- **Status**: Confirmed by product owner, with a condition (no extra file may be left once any command finishes).
+- **Decision**: The only state files are `<theatre>/.troupe/history.sqlite*`. The history store is closed at the end
+  of every command, on success and on failure (`Theatre` context manager, `HistoryStore.close`). No file or
+  directory is created, modified, renamed or deleted anywhere else in the theatre, including directories of
+  included files.
+- **Alternatives**: leave closing to process exit (SQLite side files and open connections linger, behaviour depends
+  on interpreter shutdown); keep state elsewhere (e.g. a user cache directory) — rejected by the contract.
+- **Why**: The contract allows state only under `.troupe/`; explicit closing makes the end state deterministic and
+  testable (no `-wal`/`-shm` after a command).
+- **Revisit when**: concurrent writers come into contract (connection lifetime and locking would need a design) or
+  state is moved out of the theatre.
+- **Spec impact**: 7.6 (sharpened), new 7.9; design Store/Theatre/CliMain; tasks 4.3, 5.1, 5.3, 6.5.
+
+### F. Non-finite floats in history as `".inf"`, `"-.inf"`, `".nan"`
+- **Status**: PO delegated: safest assumption (kept).
+- **Decision**: In history JSON lines, infinite and NaN values are the JSON strings of their YAML 1.2 canonical
+  forms; lines are encoded with `allow_nan=False`.
+- **Alternatives**: bare `Infinity`/`NaN` tokens (not JSON); `null` (loses the value and cannot be told apart
+  from a real null); an object wrapper such as `{"float": "inf"}` (changes the shape of `old`/`new`).
+- **Why**: The contract requires JSON Lines; YAML's canonical spellings are unambiguous to a human reader.
+  Accepted cost: in history only, the float `.inf` and the string `".inf"` look the same.
+- **Revisit when**: the product owner or a consumer of the history needs to tell those apart.
+- **Spec impact**: 8.7 (unchanged).
+
+### G. Malformed PATH is a usage error
+- **Status**: PO delegated: safest assumption (kept).
+- **Decision**: An empty PATH or a PATH with an empty segment (`a..b`, `.a`, `a.`) exits 2 naming PATH, before
+  the theatre is opened (no state, no file touched).
+- **Alternatives**: exit 5 (path not found); treat empty segments as empty-string keys.
+- **Why**: The path grammar has no empty keys; a usage error prevents `set` from ever creating empty-string keys.
+- **Revisit when**: keys containing `.` or empty keys come into contract.
+- **Spec impact**: 1.5 (unchanged).
+
+### H. Anchors, aliases and merge keys are load failures
+- **Status**: PO left to our choice; we chose the conservative refusal.
+- **Decision**: A file with an anchor, an alias or a merge key (`<<`) exits 4 naming the file and, where known, the
+  key path.
+- **Alternatives**: expand them like a YAML loader would (then `set` could write through an alias and change
+  values elsewhere); ignore them (wrong values).
+- **Why**: Out of contract until step 6; surgical writes through aliases could change values at other paths.
+- **Revisit when**: contract step 6.
+- **Spec impact**: new 3.9; design Loader refusals; tasks 3.2, 6.1.
+
+### I. Duplicate keys, explicit tags and non-UTF-8 files are load failures
+- **Status**: PO delegated: safest assumption (kept).
+- **Decision**: Each exits 4 naming the file (and the key path where known).
+- **Alternatives**: last key wins (PyYAML behaviour); honour tags; decode with replacement characters.
+- **Why**: Duplicate keys make the value ambiguous (YAML 1.2 forbids them); tags could change typing in ways the
+  byte-surgical writer cannot preserve; non-UTF-8 bytes cannot be patched safely. Refusing to load cannot corrupt
+  data.
+- **Revisit when**: a contract step adds tags or non-UTF-8 encodings.
+- **Spec impact**: 3.2 (UTF-8 made explicit), 3.3, 3.7; tasks 3.2, 6.1.
+
+Decisions B, C and D concern `set` only and are recorded in config-set-writeback's `research.md`.
 
 ## References
 - YAML 1.2.2 specification, 10.3.2 Tag Resolution (Core Schema) — https://yaml.org/spec/1.2.2/#1032-tag-resolution

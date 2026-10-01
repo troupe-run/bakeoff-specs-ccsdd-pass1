@@ -58,3 +58,15 @@ rules). The write side carries most of the risk and rules, so it gets its own sp
 ## Specs (dependency order)
 - [x] config-foundation -- CLI scaffold, theatre/config-file location, YAML loading with recursive includes into a source-mapped model, path addressing, event-sourced projection with import, `show PATH`, `history [PATH]`, error/exit-code conventions. Dependencies: none
 - [x] config-set-writeback -- `set PATH VALUE`: YAML 1.2 flow-node value parsing, target-file resolution, byte-surgical write-back rules, leaf-level set/remove events. Dependencies: config-foundation
+
+## Product owner decisions (2026-10-01)
+Full records (decision, alternatives, why, revisit trigger, status) are in each spec's `research.md`.
+- **A** (confirmed): files are the truth; `show`/`set` read the files as on disk; history is change history only (hand edits add no event; a later `set` records the on-disk value as `old`).
+- **B** (PO delegated → changed): a `set` that must change several files is carried out: all patches verified in memory first, each file written atomically, already-written files restored on a write failure (exit 3); 14.2 refusals unchanged.
+- **C** (confirmed): exit 3 with no file changed when the in-memory read-back is not the intended configuration.
+- **D** (PO delegated → kept): a `file:` VALUE is written as a plain string; missing/cyclic/unloadable target → exit 3, no file changed.
+- **E** (confirmed with condition): temp-file-then-rename is fine, but no extra file may remain after any command; state only under `.troupe/`; history store closed at command end.
+- **F** (PO delegated → kept): non-finite floats appear in history as the JSON strings `".inf"`, `"-.inf"`, `".nan"`.
+- **G** (PO delegated → kept): malformed PATH (empty, empty segment, leading/trailing dot) → exit 2.
+- **H** (our choice): anchors, aliases and merge keys → exit 4 naming the file (and key path where known).
+- **I** (PO delegated → kept): duplicate keys, explicit tags and non-UTF-8 files → exit 4 naming the file (and key path where known).

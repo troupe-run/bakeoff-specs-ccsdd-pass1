@@ -26,8 +26,10 @@ on (U1–U6, see "Required Upstream Additions") is delivered in config-foundatio
 - Loading, includes, path syntax and resolution, history storage/import/printing, error types (config-foundation).
 - Step 5's change of the new-key target rule; anchors/aliases/merge keys (step 6); multi-document files; TAB
   before end-of-line comments; concurrent writers; Windows.
-- Writing several files in one set (refused, 13.6). Include creation is supported only by writing the `file:`
-  string itself; the included target is never created or edited by the set (2.7, 14.8).
+- Cross-file atomicity beyond "verify everything in memory, then write each file atomically, roll back written
+  files on a write failure" (13.6, 14.5): a set that changes several files is carried out (PO decision B), but a
+  crash between two renames, like a crash mid-write, is undefined. Include creation is supported only by writing
+  the `file:` string itself; the included target is never created or edited by the set (2.7, 14.8).
 
 ## Boundary Commitments
 
@@ -74,9 +76,12 @@ on (U1–U6, see "Required Upstream Additions") is delivered in config-foundatio
 ### Revalidation Triggers
 - Any change to the foundation seams consumed here (model fields, span semantics, `load_config` overrides,
   `walk_path`/`flatten_leaves`, `record_changes`, error classes, `MappingEntry.key_style`, `INCLUDE_PREFIX`,
-  the `troupe.cli.shell` names and `SUBCOMMAND_REGISTRARS`).
+  the `troupe.cli.shell` names, `SUBCOMMAND_REGISTRARS`, and the `Theatre` context manager that closes the history
+  store, config-foundation 7.9).
 - Step 5 (new-key target rule) or step 6 (anchors) — the target resolver and planner must be revisited.
-- A decision to allow multi-file sets, to create include targets, or a different collection-replacement strategy.
+- A change to the multi-file write protocol (verify all, write each atomically, roll back on failure; 13.6, 14.5,
+  14.10), a decision to create include targets, or a different collection-replacement strategy.
+- A change to file authority (PO decision A: `old` values come from the files as on disk, never from the history).
 - A change of include semantics in the foundation loader (the verifier relies on it to judge written `file:` strings).
 - A ruamel.yaml upgrade beyond 0.19.x (positions, fold markers, representability probes).
 
@@ -102,8 +107,8 @@ content ends itself.
 
 ### Existing Architecture Analysis
 config-foundation defines a layered design: CLI → theatre session → file layer (locate, loader) and pure
-model/resolve modules, with an event-sourced history. Files are authoritative for current values; the history
-is append-only. This spec adds a write path beside `show_value`, keeping the file layer as the only code that
+model/resolve modules, with an event-sourced history. Files are authoritative for current values (confirmed by the
+product owner, decision A); the history is append-only change history. This spec adds a write path beside `show_value`, keeping the file layer as the only code that
 touches user files (loader reads, `atomic` writes).
 
 ### Architecture Pattern & Boundary Map
@@ -140,9 +145,11 @@ graph TB
 ```
 
 **Architecture Integration**:
-- Selected pattern: a pure *plan* stage (resolve → plan edits → apply in memory → verify) followed by a small
-  *effect* stage (atomic write → record events). Everything before the write is side-effect free, so every
-  refusal trivially leaves files unchanged (14.7).
+- Selected pattern: a pure *plan* stage (resolve → plan edits for every affected file → apply in memory → verify
+  all patched files together) followed by a small *effect* stage (atomic write of each file in order, rollback of
+  already-written files on a write failure → record events, rollback of all written files on a history
+  failure). Everything before the first write is side-effect free, so every refusal trivially leaves files
+  unchanged (14.7).
 - Domain boundaries: renderers produce text fragments only; the planner alone decides positions; the layout
   module alone interprets raw file text (lines, columns, comments); the edit applier alone mutates text.
 - Existing patterns preserved: typed errors carrying file and path, single-place constants
@@ -174,11 +181,11 @@ src/troupe/config/writeback/
 ├── block_scalar.py       # BlockScalar: literal rendering, chomping, header rewrite, folded paragraphs and wrap
 ├── collection_render.py  # CollectionRender: new block/flow collections and entries as text lines
 ├── target.py             # TargetResolver: rules 1–4, exit 5 mapping, intended configuration, NewValue for text includes
-├── planner.py            # PatchPlanner: slot changes, merge, add entries, deletions, kind changes → FilePatch
-├── verify.py             # WriteVerifier: re-load with overrides, compare with intended, map failures to exit 3
-├── leaf_diff.py          # LeafDiff: before/after leaves → SetChange/RemoveChange in recording order
+├── planner.py            # PatchPlanner: slot changes, merge, add entries, deletions, kind changes → FilePatches (one per file)
+├── verify.py             # WriteVerifier: re-load with all overrides, compare with intended, map failures to exit 3
+├── leaf_diff.py          # LeafDiff: before (as on disk) / after leaves → SetChange/RemoveChange in recording order
 ├── atomic.py             # AtomicWriter: the only writer of user files (atomic replace, restore)
-└── setter.py             # SetCommand: set_value use case (no-op, plan, verify, write, record, compensate)
+└── setter.py             # SetCommand: set_value use case (no-op, plan, verify, write all, roll back, record, compensate)
 src/troupe/cli/
 └── set_command.py        # CliSet: add_set_subparser, handle_set (new module of this spec)
 tests/
@@ -195,7 +202,7 @@ tests/
 ├── test_set_block_scalars.py # literal and folded rules
 ├── test_set_comments.py  # end-of-line comment columns
 ├── test_set_preservation.py # CRLF/mixed/BOM/no final newline, symlinks, permissions, untouched files
-├── test_set_safety.py    # verification refusals, no-op, unloadable new includes, multi-file, write failures, no temp files
+├── test_set_safety.py    # verification refusals, no-op, unloadable new includes, multi-file rollback, write failures, no extra files
 └── test_set_history.py   # set/remove events, order, typed comparison, no-op, history failure compensation
 ```
 
@@ -230,18 +237,26 @@ sequenceDiagram
     S->>S: resolve target and intended configuration
     S->>S: no-op check, return when equal
     S->>P: plan edits and apply in memory
-    P-->>S: FilePatch or WriteRefusedError
-    S->>W: re-load with overrides and compare
+    P-->>S: FilePatches one per file or WriteRefusedError
+    S->>W: re-load with all overrides and compare
     W-->>S: after document or WriteRefusedError
     S->>S: diff leaves
-    S->>A: write file atomically
+    loop each FilePatch in order
+        S->>A: write file atomically
+        A-->>S: ok or WriteRefusedError
+    end
+    S->>A: on write failure restore already written files, exit 3
     S->>H: record_changes
     H-->>S: ok or ConfigLoadError
-    S->>A: restore file on history failure
+    S->>A: on history failure restore all written files, exit 4
 ```
 **Key decisions**: argument and VALUE errors (exit 2) happen before `open_theatre`, so they create no state;
-everything after `open_theatre` up to the write is pure; a refusal at any step raises before the write (14.7);
-the import done by `open_theatre` is not undone by a later refusal (1.6, foundation decision).
+everything after `open_theatre` up to the first write is pure; a refusal at any step raises before any write
+(14.7); every patch is verified before the first write (13.6); files are written one after another in the
+patches' order, and a failure restores the already-written files in reverse order (14.5); history is recorded
+only after every write succeeded; the import done by `open_theatre` is not undone by a later refusal (1.6,
+foundation decision); `handle_set` runs inside `with open_theatre(...) as theatre:`, so the history store is
+closed when the command ends (config-foundation 7.9).
 
 ### Slot change decision (planner)
 ```mermaid
@@ -292,15 +307,17 @@ flowchart TD
 | 13.1, 13.4 | Only required bytes, other files untouched | PatchPlanner, EditApplier, AtomicWriter | `FilePatch` | Set command |
 | 13.2 | Line endings of inserted text | FileLayout | `line_break_at` | — |
 | 13.3, 13.5 | UTF-8/BOM, symlink, permissions | AtomicWriter | `write_atomically` | — |
-| 13.6 | One file per set | PatchPlanner | `plan_patch` | — |
+| 13.6 | Several files per set: all built and verified before any write | PatchPlanner, WriteVerifier, SetCommand | `plan_patch` (tuple of `FilePatch`), `verify_patch`, `set_value` | Set command |
 | 14.1, 14.2 | Verify by re-load | WriteVerifier, PlainTree | `verify_patch` | Set command |
-| 14.3–14.5 | Atomic write, no temp file, write failure → 3 | AtomicWriter | `write_atomically` | Set command |
+| 14.3, 14.4 | Atomic write, no extra file after any outcome | AtomicWriter, SetCommand | `write_atomically` | Set command |
+| 14.5 | Write failure → restore written files, 3 | SetCommand, AtomicWriter | `write_patches`, `restore_file` | Set command |
+| 14.10 | Restore failure keeps original exit code, names files | SetCommand | `set_value` | Set command |
 | 14.6 | No-op first | SetCommand, PlainTree | `set_value`, `plain_equal` | Set command |
 | 14.7 | No change on any failure | SetCommand | pure plan stage | Set command |
 | 14.8 | Unloadable new include → 3 | WriteVerifier | `verify_patch` | Set command |
 | 14.9 | Unsupported layouts → 3 | PatchPlanner, EditApplier | `WriteRefusedError` | — |
-| 15.1–15.5, 15.7 | Events, typed comparison, order, leaves of new includes | LeafDiff, SetCommand | `diff_leaves`, `record_changes` | Set command |
-| 15.6 | Restore on history failure → 4 | SetCommand, AtomicWriter | `restore_file` | Set command |
+| 15.1–15.5, 15.7 | Events (`old` from the files as on disk), typed comparison, order, leaves of new includes | LeafDiff, SetCommand | `diff_leaves(theatre.document, after)`, `record_changes` | Set command |
+| 15.6 | Restore all written files on history failure → 4 | SetCommand, AtomicWriter | `restore_file` | Set command |
 | 16.1, 16.2, 16.4 | Messages, exit 3 naming, load errors | CliSet, SetCommand (PATH added to write failures), all raisers | foundation `format_message` | — |
 
 ## Components and Interfaces
@@ -315,11 +332,11 @@ flowchart TD
 | BlockScalar | Core (render) | Literal/folded rendering and rewrites | 9.x, 10.x | ScalarRender (P0), difflib (P1) | Service |
 | CollectionRender | Core (render) | New collections and entries as text | 7.4, 8.x, 9.1–9.3 | ScalarRender, BlockScalar (P0) | Service |
 | TargetResolver | Core | Rules 1–4 targets, exit 5, intended tree | 2.x, 3.x, 4.x, 16.3 | `walk_path` (P0), PlainTree (P0) | Service |
-| PatchPlanner | Core | Edits for one set → one FilePatch | 2.x, 3.x, 4.1, 5.x, 9.x, 11.x, 13.1, 13.6, 14.9 | all renderers, FileLayout, EditApplier (P0) | Service |
-| WriteVerifier | Core | Re-load and compare | 14.1, 14.2, 14.8 | `load_config` (P0), PlainTree (P0) | Service |
+| PatchPlanner | Core | Edits for one set → one FilePatch per changed file | 2.x, 3.x, 4.1, 5.x, 9.x, 11.x, 13.1, 13.6, 14.9 | all renderers, FileLayout, EditApplier (P0) | Service |
+| WriteVerifier | Core | Re-load with all patches and compare | 13.6, 14.1, 14.2, 14.8 | `load_config` (P0), PlainTree (P0) | Service |
 | LeafDiff | Core | Leaf changes for history | 15.1–15.5, 15.7 | `flatten_leaves` (P0) | Service |
-| AtomicWriter | File layer | Only writer of user files | 13.3, 13.5, 14.3–14.5, 15.6 | OS (P0) | Service |
-| SetCommand | Application | `set_value` use case | 1.6, 13.4, 14.6, 14.7, 15.x, 16.2 | all above, HistoryStore (P0) | Service |
+| AtomicWriter | File layer | Only writer of user files | 13.3, 13.5, 14.3, 14.4, 14.5, 15.6 | OS (P0) | Service |
+| SetCommand | Application | `set_value` use case | 1.6, 13.4, 13.6, 14.4–14.7, 14.10, 15.x, 16.2 | all above, HistoryStore (P0) | Service |
 | CliSet | CLI | `set` subparser and handler (`troupe.cli.set_command`) | 1.1, 1.5, 1.6, 16.1, 16.2, 16.4 | `troupe.cli.shell` (P0), SetCommand (P0) | Service |
 
 ### Core
@@ -707,7 +724,7 @@ def text_include_value(value: str, target: SourceFile) -> str: ...
 
 | Field | Detail |
 |-------|--------|
-| Intent | Turn a `SetRequest` into exactly one changed file text |
+| Intent | Turn a `SetRequest` into the changed text of every file the set must change (one `FilePatch` per file) |
 | Requirements | 2.1, 2.4, 2.5, 2.6, 2.7, 2.8, 3.1–3.3, 4.1, 5.1–5.9, 9.1–9.7, 11.3–11.6, 13.1, 13.6, 14.9 |
 
 **Responsibilities & Constraints**
@@ -737,8 +754,14 @@ def text_include_value(value: str, target: SourceFile) -> str: ...
 - **delete_entry** (5.3, 5.4, 5.7): block → LINES deletion from the entry's line start through the line break of
   its content-end line, refused when `starts_line` is false; flow → the entry plus the preceding `,` and spaces
   (first entry: through the following `,` and spaces), refused when the range spans lines.
-- Collects edits per file; more than one file → `WriteRefusedError(file=<first file>, path=str(request.path),
-  problem=<reason naming every other file>)` (13.6); applies them with `apply_edits`.
+- Collects edits per file (keyed by `SourceFile.real_path`) and applies each file's edits with `apply_edits`
+  into one `FilePatch` per changed file (13.6, PO decision B). A rule-1 change in another file (for example a
+  text-include target inside a replaced mapping, next to an ordinary value changed in the including file) is
+  legitimate: the contract requires each existing value to be changed in the file that contains it. Edits that
+  would change the configuration at other paths (a file included at two places) are not refused here but by
+  WriteVerifier's comparison (14.2, PO decision C).
+- Order: patches are returned in the order their files appear in `document.files` (read order, root file
+  first), so the write order is deterministic.
 
 **Contracts**: Service [x]
 ```python
@@ -747,35 +770,39 @@ class FilePatch:
     file: SourceFile
     new_text: str
 
-def plan_patch(document: ConfigDocument, request: SetRequest) -> FilePatch: ...
+def plan_patch(document: ConfigDocument, request: SetRequest) -> tuple[FilePatch, ...]: ...
+    # one FilePatch per changed file, in document.files order; never two patches for the same real_path.
     # raises WriteRefusedError(file=..., path=..., problem=...) for every refusal; path=str(request.path),
     # except a YAML include root that would change inside a replaced collection (5.8): there path is that
     # nested value's path (e.g. `agents.coder`) and file is the included file
 ```
 - Preconditions: `request.intended` differs from `request.current` (no-op handled by SetCommand).
-- Postconditions: `new_text != file.text`; nothing is written.
+- Postconditions: the tuple is non-empty; for every patch `new_text != file.text`; nothing is written.
 
 #### WriteVerifier
 
 | Field | Detail |
 |-------|--------|
-| Intent | Prove the patched texts load as the intended configuration |
-| Requirements | 14.1, 14.2, 14.8 |
+| Intent | Prove the patched texts of all files, together, load as the intended configuration |
+| Requirements | 13.6, 14.1, 14.2, 14.8 |
 
 **Contracts**: Service [x]
 ```python
-def verify_patch(config_file: Path, document: ConfigDocument, patch: FilePatch,
+def verify_patch(config_file: Path, document: ConfigDocument, patches: Sequence[FilePatch],
                  request: SetRequest) -> ConfigDocument: ...
 ```
-- Overrides: every `document.files` entry by `real_path` with its original text, the patched file with
-  `patch.new_text`. Targets of includes written by this set are not in the overrides and are read from disk by
-  the loader (read-only), exactly as a later `show` would read them.
+- Overrides: every `document.files` entry by `real_path` with its original text, and every patched file with its
+  `new_text` (all patches at once, 13.6). Targets of includes written by this set are not in the overrides and are
+  read from disk by the loader (read-only), exactly as a later `show` would read them.
 - `ConfigLoadError` (including a missing or unreadable target of a newly written include, an include cycle, or a
-  target that fails to load) → `WriteRefusedError(file=patch.file.path, path=str(PATH), problem=<"written value
-  cannot be read back: " + loader message>)`; the loader message names the include target (14.8).
+  target that fails to load) → `WriteRefusedError(file=<first patched file>.path, path=str(PATH),
+  problem=<"written value cannot be read back: " + loader message>)`; the loader message names the file that
+  failed and, for includes, the include target (14.8).
 - Mismatch (`plain_equal(node_to_plain(after.root), request.intended, ordered=True)` false) →
-  `WriteRefusedError` naming the patched file and PATH (14.2). Because every include in the read-back tree is an
+  `WriteRefusedError` naming the first patched file (further patched files in `problem`) and PATH (14.2,
+  confirmed by the product owner, decision C). Because every include in the read-back tree is an
   `IncludeDirective` that must match the intended tree, no separate check of the set of files read is needed.
+- Runs before any file is written; a refusal therefore leaves every file unchanged.
 
 #### LeafDiff
 
@@ -788,6 +815,9 @@ def verify_patch(config_file: Path, document: ConfigDocument, patch: FilePatch,
 ```python
 def diff_leaves(before: ConfigDocument, after: ConfigDocument) -> tuple[LeafChange, ...]: ...
 ```
+- `before` is always `theatre.document`, the configuration that `open_theatre` loaded from disk for this command
+  (PO decision A). Every `old` is therefore the value currently in the files, including a hand edit made since
+  the import; the history is never consulted, and the hand edit itself produces no event (15.1, 15.2).
 - `flatten_leaves` of both; keyed by `str(leaf.path)`. `SetChange(path, old or None, new)` for each after-leaf
   that is new or not `scalar_equal`, in after-document order; then `RemoveChange(path, old)` for each
   before-leaf whose path is gone, in before-document order.
@@ -813,6 +843,11 @@ def restore_file(file: SourceFile) -> None: ...     # write_atomically(file, fil
 - Creates `.<name>.troupe-tmp-<16 hex>` in the target's directory with `O_CREAT|O_EXCL|O_WRONLY` and the
   target's permission bits, writes, `fsync`s, `os.replace`s onto the target; on any exception removes the temp
   file and raises `WriteRefusedError(file=file.path)` (14.4, 14.5).
+- No extra file once a command finishes (PO decision E, confirmed with that condition): the temporary file exists
+  only between its creation and the rename (success) or its removal in a `finally` block (failure). After every
+  handled outcome — success, verification refusal, write failure (including rollback), history failure
+  (including restore) — the listing of every directory that holds a written file equals the listing before the
+  command. A crash between create and rename is undefined behaviour and may leave the hidden temp file.
 - Never creates directories; never touches other files.
 
 ### Application and CLI
@@ -822,25 +857,35 @@ def restore_file(file: SourceFile) -> None: ...     # write_atomically(file, fil
 | Field | Detail |
 |-------|--------|
 | Intent | The `set` use case, ordering pure planning before effects |
-| Requirements | 1.6, 13.4, 14.6, 14.7, 15.1, 15.4, 15.6, 16.2 |
+| Requirements | 1.6, 13.4, 13.6, 14.4, 14.5, 14.6, 14.7, 14.10, 15.1, 15.2, 15.4, 15.6, 16.2 |
 
 **Contracts**: Service [x]
 ```python
 @dataclass(frozen=True)
 class SetOutcome:
-    written: Path | None              # None for a no-op
+    written: tuple[Path, ...]         # empty for a no-op; otherwise the written files in write order
     changes: tuple[LeafChange, ...]
 
 def set_value(theatre: Theatre, path: ConfigPath, value: NewValue) -> SetOutcome: ...
+def write_patches(patches: Sequence[FilePatch]) -> None: ...
+    # writes each patch with write_atomically in order; on a WriteRefusedError restores the already-written
+    # files in reverse order with restore_file, then raises (see below)
 ```
-- Steps: `resolve_target` → if `plain_equal(current, intended, ordered=False)` return no-op (14.6) →
-  `plan_patch` → `verify_patch` → `diff_leaves` → `write_atomically` → `theatre.history.record_changes(changes)`
-  (empty sequence records nothing, 15.4). A `ConfigLoadError` from recording triggers `restore_file` and is
-  re-raised (exit 4, 15.6); a failing restore is reported in the same message: the error keeps the store as
-  its `file` and the unrestorable file is named in `problem`.
-- A `WriteRefusedError` from `write_atomically` (which knows only the file) is re-raised as
-  `WriteRefusedError(file=<same file>, path=str(PATH), problem=<same reason>)`, so every exit 3 names PATH,
-  the file and why (16.2).
+- Steps: `resolve_target` on `theatre.document` (the files as on disk, decision A) → if
+  `plain_equal(current, intended, ordered=False)` return no-op (14.6) → `plan_patch` (all patches) →
+  `verify_patch` (all patches at once, 13.6) → `diff_leaves(theatre.document, after)` → `write_patches` →
+  `theatre.history.record_changes(changes)` (empty sequence records nothing, 15.4). Nothing is written until
+  every patch has been verified.
+- Write failure (14.5): when writing patch *k* fails, patches *1..k−1* are restored to their original text in
+  reverse order and `WriteRefusedError(file=<file k>, path=str(PATH), problem=<reason>)` is raised (exit 3); no
+  history event is recorded. A `WriteRefusedError` from `write_atomically` (which knows only the file) is thus
+  always re-raised with PATH, so every exit 3 names PATH, the file and why (16.2).
+- History failure (15.6): a `ConfigLoadError` from recording restores **every** written file (reverse order) and
+  is re-raised (exit 4) naming the store.
+- Restore failure (14.10): every restore is attempted even if an earlier one fails; the original error is raised
+  with its own exit code (3 for a write failure, 4 for a history failure) and its `problem` additionally names
+  each file that could not be restored. The error's `file` stays the failed file (write) or the store
+  (history).
 
 #### CliSet
 
@@ -853,8 +898,8 @@ def set_value(theatre: Theatre, path: ConfigPath, value: NewValue) -> SetOutcome
 ```python
 def add_set_subparser(subparsers: argparse._SubParsersAction[TroupeArgumentParser]) -> None: ...
 def handle_set(args: argparse.Namespace, out: io.BytesIO) -> None: ...
-    # ConfigPath.parse(args.path) → parse_value(args.value, path) → open_theatre(...) → set_value;
-    # writes nothing to out
+    # ConfigPath.parse(args.path) → parse_value(args.value, path) →
+    # with open_theatre(args.theatre) as theatre: set_value(theatre, path, value); writes nothing to out
 ```
 - Lives in the new module `src/troupe/cli/set_command.py`, which imports `TroupeArgumentParser`, `Handler`,
   `SubcommandRegistrar` and `theatre_option_parent` from `troupe.cli.shell` and never imports `troupe.cli.main`.
@@ -862,7 +907,8 @@ def handle_set(args: argparse.Namespace, out: io.BytesIO) -> None: ...
   shared `--theatre` option (`theatre_option_parent()`) and `set_defaults(handler=handle_set)`; `handle_set`
   matches the foundation `Handler` protocol `Callable[[argparse.Namespace, io.BytesIO], None]`.
 - `handle_set` parses PATH and VALUE first (exit 2 errors create no state) and only then calls `open_theatre`
-  itself.
+  itself, inside a `with` block so the history store is closed when the command ends (config-foundation 7.9,
+  PO decision E).
 - The only change to `src/troupe/cli/main.py` is adding `add_set_subparser` to the marked registration list
   `SUBCOMMAND_REGISTRARS`; errors propagate to `run`, which maps them to exit codes and stderr (16.1); load
   errors are the foundation's (16.4).
@@ -873,11 +919,12 @@ def handle_set(args: argparse.Namespace, out: io.BytesIO) -> None: ...
 - **Value slot**: where a value sits (file, parent style, owner column, indicator end, node). Derived, never
   stored.
 - **Write target**: Replace / AddKey / Append (sum type), plus the intended configuration.
-- **Text edit**: `(start, end, text, kind)` on one file's original text; a set yields edits for exactly one
-  file.
+- **Text edit**: `(start, end, text, kind)` on one file's original text; a set yields edits for one or more
+  files, grouped into one `FilePatch` per file.
 - **Leaf change**: foundation `SetChange` / `RemoveChange`; this spec decides which ones and their order.
-- Invariants: no file is written unless verification succeeded; at most one file per set; history batch
-  recorded only after a successful write.
+- Invariants: no file is written unless verification of all patches succeeded; every written file is either
+  kept (all writes succeeded) or restored (any write or the history recording failed); history batch recorded
+  only after every write succeeded.
 
 ### Data Contracts & Integration
 - History events: unchanged foundation contract (`op` `set` with `old`/`new`, `op` `remove` with `new` null),
@@ -889,9 +936,9 @@ def handle_set(args: argparse.Namespace, out: io.BytesIO) -> None: ...
 Every refusal is detected in the pure plan stage and raised as a foundation error carrying file and PATH; the
 CLI shell maps it to the exit code and prints `format_message` to stderr with empty stdout.
 
-Errors carry one `file` and one `path`. When a message must name several files (13.6: every file the set
-would change; 15.6: the history store and a file that could not be restored), `file` holds the first one and
-the others are named in `problem`. For 5.8 (a value inside a replaced collection that wholly comes from a YAML
+Errors carry one `file` and one `path`. When a message must name several files (14.2: every patched file;
+14.10: the failed file or the history store plus every file that could not be restored), `file` holds the first
+one and the others are named in `problem`. For 5.8 (a value inside a replaced collection that wholly comes from a YAML
 include would change), `path` is that nested value's path (for example `agents.coder`), not PATH, and `file`
 is the included file.
 
@@ -903,11 +950,12 @@ is the included file.
 | Config cannot be loaded | `ConfigLoadError` (foundation) | 4 | file |
 | PATH not found / below scalar / bad index / digit key | `PathNotFoundError` | 5 | file of deepest node, PATH |
 | YAML include root replaced; text include with non-string | `WriteRefusedError` | 3 | included file, PATH (5.8: the nested value's path) |
-| Two files; unsupported layout; folded more-indented | `WriteRefusedError` | 3 | file, PATH, reason (two files: further files in `problem`) |
+| Unsupported layout; folded more-indented | `WriteRefusedError` | 3 | file, PATH, reason |
 | Newly written include cannot be read back (missing target, cycle, target fails to load) | `WriteRefusedError` | 3 | file, PATH, include target |
-| Verification failed (parse error or mismatch) | `WriteRefusedError` | 3 | file, PATH |
-| File cannot be written | `WriteRefusedError` (re-raised by SetCommand with PATH) | 3 | file, PATH, reason |
-| History cannot be recorded after write | `ConfigLoadError` (store) after restore | 4 | history store (unrestorable file in `problem`) |
+| Verification failed (parse error or mismatch, e.g. file included at two places) | `WriteRefusedError` | 3 | first patched file (others in `problem`), PATH |
+| File cannot be written (already-written files restored) | `WriteRefusedError` (re-raised by SetCommand with PATH) | 3 | failed file, PATH, reason |
+| History cannot be recorded after write (all written files restored) | `ConfigLoadError` (store) | 4 | history store |
+| Restore after a write or history failure fails | original error, original exit code | 3 or 4 | as above, plus every unrestored file in `problem` |
 
 ### Monitoring
 None (CLI tool); stderr only.
@@ -947,10 +995,20 @@ file exists (`set_support.snapshot_tree`).
 ### Safety Tests
 - No-op (same value, `1.0` vs `1.00`) → exit 0, files and history unchanged (14.6, 15.4).
 - Diamond include edit → 3 with files unchanged; new `file:` string with a missing target or a cycle → 3 naming
-  PATH and the target; two files → 3 (13.6, 14.2, 14.8). A `file:` string with an existing YAML/text target
-  succeeds and records the include's leaves (2.7, 15.7).
+  PATH and the target (14.2, 14.8). A `file:` string with an existing YAML/text target succeeds and records the
+  include's leaves (2.7, 15.7).
+- Two-file set (`p, '{t: new, n: 2}'` on a mapping holding a text include and an ordinary value) → exit 0, both
+  files changed byte-exactly, events for both leaves (13.6).
+- Rollback: the same two-file set with the second `os.replace` failing (injected at the OS boundary, the restore
+  call succeeds) → exit 3, the first file restored byte-identical, no `set` event, no temp file (14.5); with the
+  restore failing too → exit 3 naming the unrestored file (14.10).
 - Write failure (read-only directory) → 3, file unchanged, no temp file; injected failure between temp write
   and rename (monkeypatched `os.replace` at the OS boundary) leaves no temp file (14.3–14.5).
-- History failure injected at the SQLite boundary after the write → files restored byte-identical, exit 4
-  naming `history.sqlite` (15.6).
+- History failure injected at the SQLite boundary after the writes → every written file restored byte-identical,
+  exit 4 naming `history.sqlite` (15.6).
+- No extra file (PO decision E): the listing of every directory that holds a written file is compared before and
+  after a successful set and after each failure path — verification refusal, write failure (incl. rollback) and
+  history failure — and must be unchanged apart from file contents (14.4).
+- Files are the truth (PO decision A): import, hand-edit `a` from `1` to `5`, `set a 7` → the `set` event has
+  `old` 5, and no event exists for the hand edit (15.1).
 - Every non-zero exit asserts `stdout == b""` and the named file/PATH (16.x).

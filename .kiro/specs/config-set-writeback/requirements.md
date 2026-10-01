@@ -91,8 +91,8 @@ shared error conventions are provided by config-foundation and are used unchange
   position and style of every value, to resolve PATH with the same rules as `show`, to import a never-imported
   theatre before the command runs, to append `set`/`remove` events to the same history `history` prints (all
   or none per invocation), and to map errors to exit codes and messages in the shared format.
-- **Choices made where the contract is silent** (conservative; rationale in `research.md`, revisit with the
-  product owner if any is unwanted):
+- **Choices made where the contract is silent** (conservative; rationale in `research.md`; the items marked
+  with a letter were put to the product owner on 2026-10-01, see "Product Owner Decisions" in `research.md`):
   - `set` prints nothing on success (1.1).
   - An empty or comment-only VALUE, a VALUE containing a block-style node, a tag, an anchor or an alias, and
     VALUE mappings with duplicate, empty or non-scalar keys are usage errors (1.3, 1.4).
@@ -102,10 +102,20 @@ shared error conventions are provided by config-foundation and are used unchange
   - A null value (`key:` with nothing) is not a mapping: a PATH below it is not found (3.4).
   - A PATH that would need a digit-only mapping key, or an index below a missing list, is not found (3.6, 4.3).
   - Setting a mapping over a mapping, or a list over a list, changes only the entries that differ (5.1–5.3).
-  - A VALUE string that starts with `file:` is written like any other string and therefore becomes an include
-    when the configuration is read; the set succeeds only if that include loads (2.7, 2.8, 14.8, 15.7).
-  - A set that would change more than one file, or that would change the configuration anywhere other than
-    at PATH (for example a file included at two places), is refused (13.6, 14.2).
+  - D, PO delegated (safest assumption kept): a VALUE string that starts with `file:` is written as a plain
+    string and therefore becomes an include when the configuration is read; if its target is missing, forms a
+    cycle or cannot be loaded, the set exits 3 and no file changes (2.7, 2.8, 14.8, 15.7).
+  - B, PO delegated (changed): a set that must change more than one file is carried out, not refused. All file
+    contents are built and verified in memory before any file is written; if a write fails, the files already
+    written are restored and the set exits 3 (13.6, 14.5, 14.10).
+  - C, confirmed by the product owner: a set that would change the configuration anywhere other than at PATH
+    (for example a file included at two places), or whose in-memory read-back is not the intended
+    configuration, is refused with exit 3 and no file changed (14.1, 14.2).
+  - A, confirmed by the product owner: files are the truth. `set` reads the files as they are on disk; a value
+    edited by hand since the import is the `old` value of the next `set` event, and the hand edit itself is
+    not recorded (15.1, 15.2).
+  - E, confirmed with a condition: files are written through a temporary file that is renamed over the target,
+    and no extra file is left behind once the command finishes, whether it succeeds or fails (14.3, 14.4).
   - Set events are recorded in the new configuration's document order, followed by remove events in the
     previous configuration's document order (15.5).
   - If the history cannot be recorded after the files were written, the files are restored and the command
@@ -252,9 +262,9 @@ shared error conventions are provided by config-foundation and are used unchange
 1. When a set succeeds, the troupe CLI shall leave every byte of every file unchanged except the bytes that Requirements 2 to 12 require to change.
 2. The troupe CLI shall write every line break it inserts with the file's line-ending convention: CRLF in a file that uses CRLF, LF in a file that uses LF or has no line break, and in a file with mixed line endings the line ending of the line after which it inserts (LF if that line has none).
 3. The troupe CLI shall keep each written file in UTF-8 and keep a byte order mark at its start if one was present.
-4. The troupe CLI shall leave files that the set does not change byte-identical, and shall create, remove or rename no file other than the written file itself and the history state under `<theatre>/.troupe/`.
+4. The troupe CLI shall leave files that the set does not change byte-identical, and shall create, remove or rename no file other than the written files themselves and the history state under `<theatre>/.troupe/`.
 5. When the change is written into a file reached through a symbolic link, the troupe CLI shall write the link's target and keep the link, and shall keep the written file's permissions.
-6. If a set would change more than one file, then the troupe CLI shall exit with code 3, name PATH and the files, and change no file.
+6. When a set requires changing more than one file (for example replacing a mapping that contains a text include and an ordinary value), the troupe CLI shall change each of those files under the same rules as a single file, and shall build the changed contents of all of them and verify them together (14.1) before writing any file.
 
 ### Requirement 14: Write safety
 **Objective:** As a developer, I want troupe to refuse a change rather than risk corrupting my files, so that my configuration can never be left damaged.
@@ -263,23 +273,24 @@ shared error conventions are provided by config-foundation and are used unchange
 1. Before writing, the troupe CLI shall read the changed file contents back as configuration and confirm that the result equals the current configuration with the value at PATH replaced by VALUE, where each string written from VALUE that starts with `file:` must have been read back as an include written with exactly that string.
 2. If the changed contents cannot be read back, or the configuration read back differs from the intended configuration anywhere (for example because the changed file is included at more than one place), then the troupe CLI shall exit with code 3, name PATH and the file, and change no file.
 3. The troupe CLI shall write each file atomically, so that at every moment the file holds either its complete previous content or its complete new content.
-4. The troupe CLI shall leave no temporary file behind, whether the set succeeds or fails.
-5. If a file cannot be written, then the troupe CLI shall exit with code 3, name the file, and leave every file with its previous content.
+4. The troupe CLI shall leave no temporary or other extra file behind once the set finishes, whether it succeeds, is refused, fails to write a file or fails to record the history, so that the listing of every directory that holds a written file is unchanged apart from the written files' contents.
+5. If a file cannot be written, then the troupe CLI shall restore every file already written by this set to its previous bytes, exit with code 3, name PATH and the file that could not be written, and record no `set` or `remove` event.
 6. When VALUE equals the current value at PATH, the troupe CLI shall exit with code 0, modify no file and record no event, before any check that would otherwise refuse the set.
-7. If a set exits with code 2, 3, 4 or 5, then the troupe CLI shall leave every user file unchanged and record no `set` or `remove` event.
+7. If a set exits with code 2, 3, 4 or 5, then the troupe CLI shall leave every user file unchanged (files already written are restored; a file whose restore fails is named under 14.10) and record no `set` or `remove` event.
 8. If an include written by the set cannot be read back (its target is missing or unreadable, it leads back into its own include chain, or the target cannot be loaded), then the troupe CLI shall exit with code 3, write a stderr message that names PATH and the include target, and change no file.
 9. If the change cannot be written in a way that satisfies Requirements 5 to 12 for the layout found in the file, then the troupe CLI shall exit with code 3, name PATH and the file, and change no file.
+10. If restoring a file after a failed write (14.5) or a failed history recording (15.6) itself fails, then the troupe CLI shall keep the exit code of the original failure and write a stderr message that also names every file that could not be restored.
 
 ### Requirement 15: History of a set
 **Objective:** As a developer, I want every successful set recorded leaf by leaf, so that `troupe config history` shows what changed.
 
 #### Acceptance Criteria
-1. When a set succeeds, the troupe CLI shall record one `set` event per leaf whose value it changed or created, with the leaf's previous value as `old` (null for a created leaf) and its new value as `new`.
-2. When a set succeeds, the troupe CLI shall record one `remove` event per leaf that no longer exists, with its previous value as `old` and null as `new`.
+1. When a set succeeds, the troupe CLI shall record one `set` event per leaf whose value it changed or created, with the leaf's previous value as `old` (null for a created leaf) and its new value as `new`, where the previous value is the value in the configuration loaded from disk for this command (including any hand edit made since the import), never a value taken from the history.
+2. When a set succeeds, the troupe CLI shall record one `remove` event per leaf that no longer exists, with its previous value, taken from the configuration loaded from disk for this command, as `old` and null as `new`.
 3. The troupe CLI shall compare leaves by dotted path and by typed value, so that `1`, `1.0`, `true` and `"1"` are different values and a leaf whose type changes counts as changed.
 4. When a set changes no leaf (including a no-op set and a change between an empty mapping and an empty list), the troupe CLI shall record no event.
 5. The troupe CLI shall record the events of one set together, with consecutive `seq` numbers: first the `set` events in the new configuration's document order, then the `remove` events in the previous configuration's document order.
-6. If the events cannot be recorded after the files were written, then the troupe CLI shall restore every written file to its previous content, exit with code 4 and write a stderr message that names the history store location.
+6. If the events cannot be recorded after the files were written, then the troupe CLI shall restore every file written by this set to its previous content, exit with code 4 and write a stderr message that names the history store location.
 7. When a set writes a new include, the troupe CLI shall derive its events from the configuration as read back, so that each leaf of an embedded YAML include is recorded as a created or changed leaf and a text include is recorded as one string leaf.
 
 ### Requirement 16: Error reporting for set

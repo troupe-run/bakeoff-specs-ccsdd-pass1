@@ -23,8 +23,10 @@ resolution, history API and error types.
 ### Non-Goals
 - `set`, VALUE parsing, write-target resolution, rendering and patching (config-set-writeback).
 - Deciding which leaves a `set` changed (config-set-writeback computes the diff with this spec's flattening).
-- Anchors/aliases/merge keys, multi-document files, explicit tags, concurrent writers, Windows.
-- A "current value" projection from events (no consumer; see decision "Files are authoritative").
+- Support for anchors/aliases/merge keys and explicit tags (refused with exit 4, 3.7, 3.9; PO decisions H, I),
+  multi-document files, concurrent writers, Windows.
+- A "current value" projection from events (no consumer; see decision "Files are authoritative", confirmed by the
+  product owner as decision A).
 
 ## Boundary Commitments
 
@@ -71,7 +73,9 @@ resolution, history API and error types.
   their invariants.
 - Moving any shell-level name out of `troupe.cli.shell`, or making `troupe.cli.shell` import any other
   `troupe.cli` module (would reintroduce the `main` ↔ subcommand import cycle).
-- Change of authority (e.g. `show` reading the event store) or of when the import happens.
+- Change of authority (e.g. `show` reading the event store) or of when the import happens (authority confirmed by
+  the product owner, decision A).
+- Change of the session lifecycle (`Theatre` as a context manager whose exit closes the history store, 7.9).
 - Change of history storage location, aggregate ID, event names or `seq` derivation.
 - Change of span semantics (character vs byte indices, exactness of plain/quoted scalar spans, block scalar spans
   extending over trailing blank lines, unreliable spans of empty null values, tightness of collection spans) or of
@@ -89,8 +93,8 @@ This section names every contract the downstream spec relies on; full signatures
 | Loading | `troupe.config.loader` | `load_config(config_file, overrides=None)` | Re-load with patched text in memory to verify before writing |
 | Paths | `troupe.config.paths` | `ConfigPath` (`parse`, `segments`, `child`, `__str__`), `is_index_segment` | Parse PATH with identical rules |
 | Resolution | `troupe.config.resolve` | `walk_path`, `PathWalk`, `WalkStop`, `resolve_path`, `flatten_leaves`, `Leaf` | Deepest existing ancestor for new keys, list append checks, before/after leaf diff |
-| History write API | `troupe.config.store`, `troupe.config.history` | `HistoryStore.record_changes`, `SetChange`, `RemoveChange`, `LeafChange` (= `SetChange \| RemoveChange`), `HistoryRecord` | Append one `set`/`remove` event per changed leaf, atomically |
-| Session | `troupe.config.theatre` | `Theatre`, `open_theatre` | Locate + load + ensure import before `set` runs |
+| History write API | `troupe.config.store`, `troupe.config.history` | `HistoryStore.record_changes`, `HistoryStore.close`, `SetChange`, `RemoveChange`, `LeafChange` (= `SetChange \| RemoveChange`), `HistoryRecord` | Append one `set`/`remove` event per changed leaf, atomically |
+| Session | `troupe.config.theatre` | `Theatre` (context manager; `close()` closes the history store), `open_theatre` | Locate + load from disk + ensure import before `set` runs; `theatre.document` is the configuration as on disk for this command (decision A); the handler uses `with open_theatre(...) as theatre:` so the store is closed at command end (7.9) |
 | Errors | `troupe.config.errors` | `ExitCode`, `TroupeError`, `UsageError`, `WriteRefusedError`, `ConfigLoadError`, `PathError`, `PathNotFoundError`, `WrongNodeKindError`, `format_message` | Raise with file/path; the CLI shell maps to exit codes |
 | CLI shell (leaf) | `troupe.cli.shell` | `TroupeArgumentParser`, `Handler` (protocol: `Callable[[argparse.Namespace, io.BytesIO], None]`), `SubcommandRegistrar`, `theatre_option_parent` | The `set` subcommand module imports these from `troupe.cli.shell` only (never from `troupe.cli.main`) to define its registrar (adds the `set` subparser with `theatre_option_parent()`, sets its `Handler` via `set_defaults(handler=...)`) |
 | CLI entry | `troupe.cli.main` | `SUBCOMMAND_REGISTRARS`, `build_parser`, `run`, `main` | Add one registrar entry (imported from the `set` module) to `SUBCOMMAND_REGISTRARS`; inherits buffering and error mapping from `run` |
@@ -212,6 +216,7 @@ sequenceDiagram
     T-->>C: Theatre
     C->>T: show_value or list_history
     T-->>C: value or records or PathError
+    C->>T: leave with-block, Theatre.close closes the store
     C->>U: stdout on success only, stderr and exit code on error
 ```
 
@@ -221,6 +226,11 @@ sequenceDiagram
   state is created if any earlier step fails (7.4). An exit 5 after the import does not undo the import (decision in `research.md`).
 - The handler renders the complete output as UTF-8 bytes into an `io.BytesIO` buffer; `run` copies it to stdout
   only after the handler succeeded (10.2).
+- The handler holds the theatre in a `with open_theatre(...) as theatre:` block, so the history store is closed
+  when the command ends, on success and on every error (7.9). `open_theatre` itself closes the store before
+  re-raising if the import fails.
+- Files are the truth (decision A, confirmed by the product owner): every command loads the files from disk;
+  `show` reads only that freshly loaded document; the history is change history only.
 
 ### Include resolution
 ```mermaid
@@ -248,7 +258,7 @@ flowchart TD
 | 1.5 | Malformed PATH → 2 | Paths, Errors | `ConfigPath.parse` | — |
 | 2.1–2.4 | Locate yml/yaml, neither/both/missing dir → 4 | Locate, Constants | `find_config_file` | Command execution |
 | 3.1 | YAML 1.2 core schema typing | Scalars, Loader | `resolve_plain_scalar` | — |
-| 3.2–3.4, 3.7 | Unreadable/invalid, duplicate keys, root kind, explicit tags → 4 | Loader, Errors | `load_config`, `ConfigLoadError` | — |
+| 3.2–3.4, 3.7, 3.9 | Unreadable/non-UTF-8/invalid, duplicate keys, root kind, explicit tags, anchors/aliases/merge keys → 4 | Loader, Errors | `load_config`, `ConfigLoadError` | — |
 | 3.8 | Folded scalars hold the folded value without U+0007 markers | Loader | `load_config` | — |
 | 3.5 | Empty root → empty configuration | Loader | `load_config` | — |
 | 3.6 | Read-only access to user files | Loader, Locate | read-only open | — |
@@ -256,13 +266,14 @@ flowchart TD
 | 5.1–5.5 | Path addressing | Paths, Resolve | `ConfigPath`, `walk_path`, `resolve_path` | — |
 | 6.1–6.6 | Scalar printing | CliRender, Theatre | `format_show_output`, `show_value` | Command execution |
 | 6.7, 6.8 | Mapping/list or missing → 5 naming file and path | Resolve, Errors | `WrongNodeKindError`, `PathNotFoundError` | — |
-| 6.9 | Show reads files, not history | Theatre | `show_value` uses `ConfigDocument` only | Command execution |
+| 6.9 | Show reads files as on disk, not history; hand edit adds no event | Theatre, Store | `show_value` uses `ConfigDocument` only; `ensure_imported` never reconciles | Command execution |
 | 7.1, 7.2 | One import event per leaf, document order | Resolve, Store, HistoryAggregate | `flatten_leaves`, `ensure_imported` | Command execution |
 | 7.3, 7.5 | Import once; no reconcile; empty config imported | Store, HistoryAggregate | `HistoryStarted`, `is_imported` | — |
 | 7.4 | No state on load failure | Theatre | `open_theatre` ordering | Command execution |
-| 7.6 | State only under `.troupe/` | Store, Constants | `HISTORY_STORE_NAME` | — |
+| 7.6 | State only under `.troupe/`; nothing created elsewhere | Store, Constants, Loader, Locate | `HISTORY_STORE_NAME`; read-only file layer | — |
 | 7.7 | Import atomic | Store | single `save` transaction | — |
 | 7.8 | Unreadable store → 4 | Store, Errors | `ConfigLoadError` | — |
+| 7.9 | Store closed at command end | Store, Theatre, CliMain | `HistoryStore.close`, `Theatre.__exit__`, handler `with` block | Command execution |
 | 8.1–8.7 | History JSON Lines, seq, filter, valid JSON for non-finite floats | Store, Paths, CliRender | `records`, `path_has_prefix`, `format_history_line` | Command execution |
 | 9.1–9.4 | Set/remove recording API | Store, HistoryAggregate | `record_changes`, `SetChange`, `RemoveChange` | — |
 | 10.1–10.5 | Exit codes, empty stdout, messages | Errors, CliMain | `ExitCode`, `format_message`, `run`, `Handler` (BytesIO buffer) | Command execution |
@@ -278,11 +289,11 @@ flowchart TD
 | Paths | Core | Dotted path syntax and prefix matching | 1.5, 5.1, 5.3, 8.3 | Errors (P0) | Service |
 | Model | Core | Source-mapped node types | 4.2, 4.3, 6.6 | Scalars (P0) | State |
 | Locate | File layer | Find root config file | 2.1–2.4 | Constants, Errors (P0) | Service |
-| Loader | File layer | Read files, build model, includes | 3.1–3.8, 4.1–4.7 | ruamel.yaml (P0), Model (P0) | Service |
+| Loader | File layer | Read files, build model, includes | 3.1–3.9, 4.1–4.7 | ruamel.yaml (P0), Model (P0) | Service |
 | Resolve | Core | Walk/resolve paths, flatten leaves | 5.1–5.5, 6.7, 6.8, 7.2 | Model, Paths (P0) | Service |
 | HistoryAggregate | Core | Event-sourced history aggregate and events | 7.1, 7.3, 7.5, 9.1–9.4 | eventsourcing (P0) | Event, State |
-| Store | Core / persistence | Persist, import, record, project records | 7.1–7.8, 8.1–8.6, 9.1–9.4 | eventsourcing SQLite (P0) | Service, State |
-| Theatre | Core / application | Session use cases | 6.1–6.9, 7.4, 8.5 | Locate, Loader, Resolve, Store (P0) | Service |
+| Store | Core / persistence | Persist, import, record, project records, close | 7.1–7.9, 8.1–8.6, 9.1–9.4 | eventsourcing SQLite (P0) | Service, State |
+| Theatre | Core / application | Session use cases and lifecycle | 6.1–6.9, 7.4, 7.9, 8.5 | Locate, Loader, Resolve, Store (P0) | Service |
 | CliMain | CLI | Parse, dispatch, map errors, buffer stdout | 1.1–1.5, 10.1–10.5 | Theatre (P0), CliRender (P0) | Service |
 | CliRender | CLI | Format show/history output | 6.1–6.6, 8.1, 8.2, 8.6, 8.7 | Scalars (P2) | Service |
 
@@ -524,7 +535,7 @@ def find_config_file(theatre_dir: Path) -> Path: ...
 | Field | Detail |
 |-------|--------|
 | Intent | The only reader of user files: read, decode, compose, build the source-mapped model with includes |
-| Requirements | 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7 |
+| Requirements | 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7 |
 
 **Responsibilities & Constraints**
 - Reads bytes (read-only), decodes UTF-8 strictly (decode failure → `ConfigLoadError(file)`), detects line
@@ -540,8 +551,11 @@ def find_config_file(theatre_dir: Path) -> Path: ...
   in YAML source and folded scalars have no escapes; double-quoted `"\a"` is unaffected because it is not folded).
   The span and `SourceFile.text` are untouched (3.8).
 - Refusals (each `ConfigLoadError` with `file` and the key `path`): duplicate key in a mapping; a node whose
-  span text starts with `!` (explicit tag) or `&` (anchor, which also excludes aliases); a non-scalar mapping
-  key; a top-level node that is not a mapping (empty document is allowed and yields an empty mapping).
+  span text starts with `!` (explicit tag, 3.7) or `&` (anchor, 3.9); an alias (3.9: an alias needs an anchor, so
+  a defined alias is caught by its anchor, and an undefined alias is a composer error reported with
+  line:column); a plain mapping key `<<` (merge key, 3.9); a non-scalar mapping key; a top-level node that is not
+  a mapping (empty document is allowed and yields an empty mapping). Non-UTF-8 bytes are refused at decode time
+  (3.2). These are product-owner decisions H and I (`research.md`).
 - Includes: any `str` scalar value (any style; never a key) starting with `INCLUDE_PREFIX`. Target path =
   `including_file.path.parent / spec` (no normalisation for display; `real_path` via `resolve()`). Missing,
   unreadable or non-regular target → `ConfigLoadError(file=including file, path=key path, problem names target)`.
@@ -566,8 +580,9 @@ def load_config(
 ) -> ConfigDocument: ...
 ```
 - Preconditions: `config_file` returned by `find_config_file`.
-- Postconditions: returns a fully expanded `ConfigDocument`, or raises `ConfigLoadError`; no file is created or
-  modified in any case.
+- Postconditions: returns a fully expanded `ConfigDocument`, or raises `ConfigLoadError`; no file or directory is
+  created, modified, renamed or deleted in any case (3.6, 7.6). Without overrides, the document is exactly the
+  files as on disk at the time of the call (decision A).
 
 ### Core
 
@@ -670,7 +685,7 @@ def to_history_record(event: ConfigHistory.Event) -> HistoryRecord | None: ...
 | Field | Detail |
 |-------|--------|
 | Intent | Persist the history under `.troupe/`, import once, record changes, project history records |
-| Requirements | 7.1, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 8.1, 8.2, 8.3, 8.4, 9.1, 9.2, 9.3, 9.4 |
+| Requirements | 7.1, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9, 8.1, 8.2, 8.3, 8.4, 9.1, 9.2, 9.3, 9.4 |
 
 **Responsibilities & Constraints**
 - Wraps an eventsourcing `Application` constructed with an explicit `env`:
@@ -680,6 +695,11 @@ def to_history_record(event: ConfigHistory.Event) -> HistoryRecord | None: ...
 - Opened only after a successful load (7.4); `config_dir` is `<theatre>/.troupe`, which exists because the config
   file was found there; the store never creates directories.
 - Every write is one `Application.save(aggregate)` call, i.e. one SQLite transaction (7.7, 9.3).
+- Creates files only at `<theatre>/.troupe/history.sqlite` and the SQLite side files `history.sqlite-wal` /
+  `history.sqlite-shm` next to it (7.6).
+- `close()` closes the eventsourcing `Application` (and with it every SQLite connection); it is idempotent and
+  never raises a new error over an error already in flight. Closing the last connection lets SQLite checkpoint the
+  WAL and remove the `-wal`/`-shm` side files, which is the observable test for a clean close (7.9).
 - Any eventsourcing/SQLite failure while opening, importing, recording or reading → `ConfigLoadError(file=<theatre>/.troupe/history.sqlite)`
   (exit 4). A failed write leaves the store unchanged (transaction rolled back). For `record_changes`, the caller
   (config-set-writeback) owns the ordering between its file write and the event write.
@@ -699,9 +719,11 @@ class HistoryStore:
         # precondition: is_imported(); empty sequence records nothing;
         # otherwise one LeafValueSet / LeafRemoved per change, in the given order, one transaction
     def records(self) -> tuple[HistoryRecord, ...]: ...  # the history projection, oldest first (applies to_history_record)
+    def close(self) -> None: ...                          # closes the Application and its SQLite connections; idempotent
 ```
 - **How a writer records events** (config-set-writeback): after `open_theatre` (which guarantees the import), the
-  writer loads before/after documents, diffs `flatten_leaves` outputs, builds `SetChange` for each leaf changed or
+  writer uses `theatre.document` (the configuration loaded from disk for this command, decision A) as the
+  before document, so each `old` is the value currently in the files, never a value from the history; it diffs `flatten_leaves` outputs, builds `SetChange` for each leaf changed or
   created and `RemoveChange` for each leaf gone, and calls `theatre.history.record_changes(changes)` once per
   invocation. A no-op set passes an empty sequence (records nothing).
 
@@ -710,7 +732,7 @@ class HistoryStore:
 | Field | Detail |
 |-------|--------|
 | Intent | Application use cases shared by all subcommands |
-| Requirements | 6.1–6.9, 7.4, 8.3, 8.5 |
+| Requirements | 6.1–6.9, 7.4, 7.9, 8.3, 8.5 |
 
 **Contracts**: Service [x]
 ```python
@@ -718,17 +740,24 @@ class HistoryStore:
 class Theatre:
     directory: Path
     config_file: Path
-    document: ConfigDocument
+    document: ConfigDocument            # the files as on disk when the command opened the theatre (decision A)
     history: HistoryStore
+    def close(self) -> None: ...        # history.close()
+    def __enter__(self) -> Theatre: ...
+    def __exit__(self, *exc: object) -> None: ...   # close(); never suppresses the exception
 
 def open_theatre(directory: Path) -> Theatre: ...
-    # find_config_file → load_config → HistoryStore.open → ensure_imported(flatten_leaves(root))
+    # find_config_file → load_config → HistoryStore.open → ensure_imported(flatten_leaves(root));
+    # if ensure_imported raises, the store is closed before re-raising (7.9)
 def show_value(theatre: Theatre, path: ConfigPath) -> ScalarValue: ...
     # resolve_path on theatre.document; mapping/sequence → WrongNodeKindError(file=node file, path)
 def list_history(theatre: Theatre, prefix: ConfigPath | None) -> tuple[HistoryRecord, ...]: ...
     # records(), filtered with path_has_prefix(record.path, str(prefix)) when prefix is given
 ```
-- `show_value` reads only the loaded document, never the store (6.9).
+- `show_value` reads only the loaded document, never the store (6.9). Every command calls `open_theatre`, so a
+  hand edit made since the import is visible to `show` and to the downstream `set`, and is not added to the
+  history (decision A, 7.3).
+- Callers use `with open_theatre(directory) as theatre:`; leaving the block closes the store (7.9).
 
 ### CLI
 
@@ -753,8 +782,9 @@ class TroupeArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> NoReturn: ...   # raises UsageError(message)
 
 Handler: TypeAlias = Callable[[argparse.Namespace, io.BytesIO], None]
-    # A subcommand handler: validates its own arguments (e.g. ConfigPath.parse), then calls
-    # open_theatre(args.theatre) itself, runs its use case and writes UTF-8 bytes into the buffer.
+    # A subcommand handler: validates its own arguments (e.g. ConfigPath.parse), then enters
+    # `with open_theatre(args.theatre) as theatre:` itself, runs its use case inside the block (so the store
+    # is closed at the end, 7.9) and writes UTF-8 bytes into the buffer.
     # Registered on its subparser via subparser.set_defaults(handler=...).
 
 SubcommandRegistrar: TypeAlias = Callable[[argparse._SubParsersAction[TroupeArgumentParser]], None]
@@ -857,7 +887,7 @@ has loaded.
 | Malformed PATH | `UsageError` | 2 | PATH |
 | No / both config files, missing theatre dir | `ConfigLoadError` | 4 | expected file / both files |
 | Unreadable, non-UTF-8, invalid YAML, multi-document | `ConfigLoadError` | 4 | file (+ line:column) |
-| Duplicate key, explicit tag, anchor, complex key, non-mapping root | `ConfigLoadError` | 4 | file and key path |
+| Duplicate key, explicit tag, anchor, alias, merge key, complex key, non-mapping root | `ConfigLoadError` | 4 | file and key path (where known) |
 | Include target missing/unreadable | `ConfigLoadError` | 4 | including file, key path, target |
 | Include cycle | `ConfigLoadError` | 4 | target file and chain |
 | History store unreadable | `ConfigLoadError` | 4 | `<theatre>/.troupe/history.sqlite` |
@@ -891,7 +921,8 @@ used only for the scalar typing table and model spans.
 - Locate: `.yml` only, `.yaml` only, both → 4 naming both, neither → 4, missing theatre dir → 4 (2.x).
 - Includes: YAML include embedded and addressable, text include printed byte-exact incl. CRLF, nested include
   relative to included file's directory, missing target → 4 naming target and includer, cycle → 4 (4.x).
-- Load refusals: invalid YAML, duplicate key, explicit tag, non-mapping root → 4 naming file (and key path);
+- Load refusals: invalid YAML, non-UTF-8 bytes, duplicate key, explicit tag, anchor, alias, merge key (`<<`),
+  non-mapping root → 4 naming file (and key path where known);
   empty file → `show a` exits 5 and `history` prints nothing (3.x).
 - Folded values through the CLI: `show` prints the folded text with no `\x07`, and the history import event's `new`
   is the folded text (3.8).
@@ -901,14 +932,21 @@ used only for the scalar typing table and model spans.
   `history` imports, second command imports nothing, prefix filter `a` matches `a` and `a.b` but not `ab`,
   booleans print as JSON `true`, and `.inf`/`-.inf`/`.nan` leaves appear as `".inf"`/`"-.inf"`/`".nan"` in lines
   that a strict JSON parser accepts (7.x, 8.x).
-- No reconcile and file authority: import, hand-edit a value, `show` prints the new value, `history` unchanged
-  (6.9, 7.3).
+- No reconcile and file authority (decision A): import, hand-edit a value, `show` prints the new value, `history`
+  output byte-identical to before (no event for the hand edit) (6.9, 7.3).
 - Record changes: `record_changes` with set/remove/empty against a real store in `tmp_path`, then the CLI
   `history` shows the appended lines with consecutive `seq` (9.x).
 
 ### Safety Tests
 - Read-only: hash every file in the theatre (and include targets outside `.troupe`) before and after `show` and
   `history`; only `.troupe/history.sqlite*` may appear (3.6, 7.6).
+- State location after every command (decision E): list the whole theatre tree (files and directories, including
+  directories holding included files outside `.troupe/`) before and after each of `show`, `history`, a usage
+  error, a load failure and a path error; the only new entries anywhere are under `.troupe/` and are
+  `history.sqlite*` (7.6).
+- Store closed (decision E): after each command, `.troupe/` holds no `history.sqlite-wal` / `history.sqlite-shm`
+  (SQLite removes them when the last connection closes), and a store-level test proves `close()` is idempotent and
+  that `Theatre.__exit__` closes the store when the body raises (7.9).
 - No state on failure: a broken config leaves no `history.sqlite*` (7.4).
 - Atomic import: a store-level test injects a failure at the external SQLite boundary (the recorder's insert
   raises after the first rows are written inside the transaction); afterwards `is_imported()` is False, no

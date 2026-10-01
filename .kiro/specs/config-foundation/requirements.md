@@ -87,20 +87,32 @@ positions, to the downstream `set` command (spec config-set-writeback).
   the configuration history (import, storage, listing, filtering); recording of change events on behalf of the
   `set` command; exit codes 2, 4 and 5 and their messages; the shared definition of exit code 3.
 - **Out of scope**: `troupe config set`, VALUE parsing, every rule about how values are written back into files,
-  deciding which leaves a `set` changed or removed (all owned by config-set-writeback); anchors, aliases and
-  merge keys; multi-document files; TAB characters before end-of-line comments; keys containing `.`;
+  deciding which leaves a `set` changed or removed (all owned by config-set-writeback); support for anchors,
+  aliases and merge keys (they are refused, 3.9); multi-document files; TAB characters before end-of-line comments; keys containing `.`;
   digit-only mapping keys; concurrent invocations; Windows.
 - **Adjacent expectations**: config-set-writeback relies on this feature to (a) load the configuration with the
   exact file and position of every value, (b) resolve paths with the same rules as `show`, (c) append `set` and
   `remove` events to the same history that `history` prints, and (d) report failures with the same exit codes
   and message conventions. Hand edits made after the import are not added to the history by this feature
   ("importing is not reconciling").
-- **Choices made where the contract is silent** (conservative; rationale in `research.md`, revisit with the
-  product owner if any is unwanted): malformed PATH syntax is a usage error (1.5); duplicate keys, a non-mapping
-  top-level node, explicit tags and an unreadable history store are load failures (3.3, 3.4, 3.7, 7.8); an empty root file is an
-  empty configuration (3.5); non-finite floats appear in history as the JSON strings `".inf"`, `"-.inf"`,
-  `".nan"` (8.7); import order is document order and an empty configuration still counts as imported
-  (7.1, 7.5); `show` reads the files, not the history (6.9).
+- **Choices made where the contract is silent** (conservative; rationale in `research.md`): a non-mapping
+  top-level node and an unreadable history store are load failures (3.4, 7.8); an empty root file is an empty
+  configuration (3.5); import order is document order and an empty configuration still counts as imported
+  (7.1, 7.5).
+- **Product owner decisions (2026-10-01)** (records in `research.md`, "Product Owner Decisions"):
+  - A, confirmed by the product owner: the files are the truth. `show` (and the downstream `set`) always read the
+    files as they are on disk; the history is only change history, so a hand edit shows in `show` but produces no
+    history event (6.9, 7.3).
+  - E, confirmed with a condition: state files only under `<theatre>/.troupe/`, the history store is closed at the
+    end of every command, and no file or directory is created anywhere else in the theatre (7.6, 7.9).
+  - F, PO delegated (safest assumption kept): non-finite floats appear in history as the JSON strings `".inf"`,
+    `"-.inf"`, `".nan"` (8.7).
+  - G, PO delegated (safest assumption kept): malformed PATH syntax (empty PATH, empty segment, leading or
+    trailing dot) is a usage error, exit 2 (1.5).
+  - H, PO left to our choice: anchors, aliases and merge keys are load failures, exit 4 naming the file and the
+    key path where known (3.9).
+  - I, PO delegated (safest assumption kept): duplicate keys, explicit tags and files that are not valid UTF-8 are
+    load failures, exit 4 naming the file and the key path where known (3.2, 3.3, 3.7).
 
 ## Requirements
 
@@ -128,13 +140,14 @@ positions, to the downstream `set` command (spec config-set-writeback).
 
 #### Acceptance Criteria
 1. The troupe CLI shall interpret every configuration file using the YAML 1.2 core schema (for example `yes` and `on` are strings, `true`/`false` are booleans, `null` and `~` are null, `0o17` is the integer 15).
-2. If a configuration file cannot be read or is not valid YAML, then the troupe CLI shall exit with code 4 and write a stderr message that names that file.
+2. If a configuration file cannot be read, is not valid UTF-8 or is not valid YAML, then the troupe CLI shall exit with code 4 and write a stderr message that names that file.
 3. If a configuration file contains the same key twice in one mapping, then the troupe CLI shall exit with code 4 and write a stderr message that names the file and the duplicated key path.
 4. If a configuration file's top-level node is neither a mapping nor empty, then the troupe CLI shall exit with code 4 and write a stderr message that names that file.
 5. When the root configuration file is empty or contains only comments, the troupe CLI shall treat the configuration as an empty mapping with no values.
 6. The troupe CLI shall read the configuration without creating, modifying, renaming or deleting the configuration file or any included file.
 7. If a configuration file gives a value an explicit tag (for example `!!str 5` or `!custom x`), then the troupe CLI shall exit with code 4 and write a stderr message that names the file and the key path of the tagged value.
 8. When a configuration value is written as a folded block scalar (`>`, with any chomping or indentation indicator), the troupe CLI shall use the value defined by YAML 1.2 line folding (for example `>\n  a\n  b\n` is `a b` followed by a newline) everywhere the value appears, including `show` output, history events and leaves, and shall not add any character that does not belong to the folded value.
+9. If a configuration file uses an anchor (`&name`), an alias (`*name`) or a merge key (`<<`), then the troupe CLI shall exit with code 4 and write a stderr message that names the file and, where it is known, the key path at which the anchor, alias or merge key appears.
 
 ### Requirement 4: File includes
 **Objective:** As a developer, I want to split my configuration across files with `file:` includes, so that large or shared settings can live in their own files.
@@ -170,7 +183,7 @@ positions, to the downstream `set` command (spec config-set-writeback).
 6. When PATH resolves to a text include, the troupe CLI shall print the included file's exact text as a string under criterion 1.
 7. If PATH resolves to a mapping or a list, then the troupe CLI shall exit with code 5 and write a stderr message that names PATH and the file that holds it.
 8. If PATH is not found, then the troupe CLI shall exit with code 5 and write a stderr message that names PATH and the file holding the deepest part of PATH that exists.
-9. When a configuration file has been edited by hand since the history was imported, the troupe CLI shall show the value currently in the files, not the value recorded in the history.
+9. When a configuration file has been edited by hand since the history was imported, the troupe CLI shall show the value currently in the files as read from disk by this command, not the value recorded in the history, and shall record no history event for the hand edit.
 
 ### Requirement 7: Configuration history import
 **Objective:** As a developer, I want the first use of troupe on a theatre to record the configuration as it was found, so that later history has a starting point.
@@ -181,9 +194,10 @@ positions, to the downstream `set` command (spec config-set-writeback).
 3. While a theatre's history has already been imported, the troupe CLI shall not record import events again, and shall not record events for differences between the files and the history (importing is not reconciling).
 4. If the configuration cannot be loaded, then the troupe CLI shall not record any events and shall not create any history state.
 5. When a theatre with no leaves is imported, the troupe CLI shall mark the theatre as imported with no events, so that later commands do not import it again.
-6. The troupe CLI shall store all history state only under `<theatre>/.troupe/` and shall not create or modify any other file.
+6. The troupe CLI shall store all history state only under `<theatre>/.troupe/` and shall not create, modify, rename or delete any file or directory outside `<theatre>/.troupe/` (including in directories that hold included files), whether the command succeeds or fails.
 7. If the import is interrupted, then the troupe CLI shall leave either the complete import or no import recorded, never a partial one.
 8. If the stored history cannot be read, then the troupe CLI shall exit with code 4 and write a stderr message that names the history store location.
+9. When a `troupe config` command that opened the history store finishes, whether it succeeds or fails, the troupe CLI shall close the history store before the command exits.
 
 ### Requirement 8: History listing
 **Objective:** As a developer, I want `troupe config history [PATH]` to list configuration changes as JSON Lines, so that I can review and process them with standard tools.
