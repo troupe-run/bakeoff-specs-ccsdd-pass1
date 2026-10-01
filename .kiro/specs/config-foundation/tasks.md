@@ -125,7 +125,7 @@
   - _Depends: 4.2_
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 8.2, 8.6, 8.7_
 
-- [ ] 5.3 Wire the CLI: parsing, dispatch, error mapping and buffered output
+- [x] 5.3 Wire the CLI: parsing, dispatch, error mapping and buffered output
   - Build the `troupe config` parser with `show PATH` and `history [PATH]`, a shared `--theatre DIR` option defaulting to the current directory, and a parser whose errors raise the usage error
   - Create the leaf module `src/troupe/cli/shell.py` holding `TroupeArgumentParser`, the `Handler` protocol, `SubcommandRegistrar` and `theatre_option_parent`; it imports nothing from other `troupe.cli` modules. `main.py` and any subcommand module import these names from `shell.py` (direction `shell ← subcommand modules ← main`), never shell-level names from `main.py`
   - Define the handler protocol (a callable taking the parsed arguments and an in-memory bytes buffer), register the show and history subparsers through the `SUBCOMMAND_REGISTRARS` tuple (the clearly marked registration point that config-set-writeback extends with one entry), each setting its handler via `set_defaults(handler=...)`
@@ -182,3 +182,4 @@
 - 3.3: Includes: any string scalar value style (not keys) starting with `file:`; suffix check case-sensitive; files cached by real_path (diamond OK). Edge: a YAML include whose whole content is another `file:` string keeps only the OUTER IncludeRef (node origin is in the innermost file) — the writer should treat such nodes as whole-include (exit 3 on replace).
 - 4.2: `to_history_record` takes `DomainEventProtocol[UUID]` (not `ConfigHistory.Event`) so store events pass without casts. 4.3 should add a persisted round-trip test with bool/int/float(inf,nan,-0.0)/None/unicode values (reviewer verified the JSONTranscoder preserves exact types).
 - 4.3: `HistoryStore.close()` uses `sys.exception()` to avoid masking an in-flight error; inside `__exit__` no exception is active, so `Theatre.__exit__` (5.1) must check `exc_type` and not let a close error replace the body's error. Store settings come only from an explicit dict (`construct_env` override ignores os.environ). Import is one `app.save()` (atomic).
+- 5.3: `--theatre` is accepted only after the subcommand. DOWNSTREAM (config-set-writeback CliSet): argparse treats VALUEs/PATHs starting with `-` such as `-1e3`, `-.inf`, `-x` as options (exit 2); `-1`/`-0.5` work. `set` must handle these (e.g. parse its positionals itself / pre-scan argv) and test them.
