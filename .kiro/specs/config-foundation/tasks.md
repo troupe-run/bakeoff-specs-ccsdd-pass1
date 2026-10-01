@@ -26,7 +26,7 @@
   - _Boundary: Scalars_
   - _Requirements: 3.1_
 
-- [ ] 2.2 (P) Implement dotted path parsing, formatting and history prefix matching
+- [x] 2.2 (P) Implement dotted path parsing, formatting and history prefix matching
   - Parse PATH into segments, rejecting an empty PATH or any empty segment with a usage error that names PATH
   - Recognise digit-only segments as list indices; format paths back to dotted text; build child paths from keys and indices
   - Provide the textual prefix test used by `history`: equal to PATH or starting with PATH followed by `.`
