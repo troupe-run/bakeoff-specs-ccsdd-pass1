@@ -44,7 +44,7 @@
   - _Requirements: 4.2, 4.3, 6.6_
 
 - [ ] 3. File layer: locating and loading the user's files
-- [ ] 3.1 (P) Locate the root configuration file
+- [x] 3.1 (P) Locate the root configuration file
   - Return the single existing `troupe.yml` or `troupe.yaml` under `<theatre>/.troupe/`; raise a load error naming the expected file when neither exists or the theatre directory is missing or not a directory; raise a load error naming both files when both exist
   - Never create directories or files while checking
   - Done when tests on real temporary theatres cover `.yml` only, `.yaml` only, neither, both and a missing theatre directory, asserting the returned path or the named files in the error
