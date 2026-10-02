@@ -28,7 +28,7 @@ new runtime dependency is added.
   - _Boundary: RecordedConfiguration_
   - _Requirements: 2.1, 2.2, 2.3, 2.6_
 
-- [ ] 2.2 (P) Provide the exclusive per-theatre lock
+- [x] 2.2 (P) Provide the exclusive per-theatre lock
   - Take a blocking exclusive lock on the theatre's existing `.troupe/` directory itself, so no file is created; release on request and on process exit
   - Refuse a second acquire for the same directory within one process with a programming error rather than deadlocking; report an OS failure while locking as a load error naming the `.troupe/` directory
   - Done when tests prove a child process trying to take the lock waits until the parent releases it (observed through timestamps), the directory listing of `.troupe/` is identical before, during and after holding the lock, a nested acquire raises, release is idempotent, and a missing directory gives a load error naming it
@@ -170,3 +170,7 @@ new runtime dependency is added.
   - Mark config-file-sync complete in the roadmap's spec list
   - Done when all four commands pass with their output shown, and the traceability check lists no requirement without a test and no test without a requirement
   - _Requirements: 1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 7.1_
+
+## Implementation Notes
+- 2.2: `TheatreLock.acquire` closes its fd only on `OSError`; a `KeyboardInterrupt` raised while blocked in `flock` (Ctrl-C on an ordinary command) leaks the fd until process exit — harmless today; `watch` must keep its signal handlers flag-only so nothing raises inside the lock wait.
+- 2.2: the lock does not use `O_DIRECTORY`; `open_theatre` must keep locating the config file (which proves `.troupe/` is a directory) before acquiring.
