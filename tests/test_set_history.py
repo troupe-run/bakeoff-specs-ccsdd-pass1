@@ -228,11 +228,12 @@ def test_new_text_include_records_one_string_leaf(make_theatre: MakeTheatre) -> 
 # --- files are the truth (product-owner decision A) ------------------------------------------
 
 
-def test_old_value_is_the_hand_edited_value_not_the_imported_one(
+def test_set_after_hand_edit_records_the_reconcile_set_first_then_its_own_with_old_chained(
     make_theatre: MakeTheatre,
 ) -> None:
-    """Req 15.1 (product-owner decision A): a hand edit after the import records no event; the
-    next set records exactly one `set a` with `old` 5 (from the file), not the imported 1."""
+    """Req 1.7, 1.3 (config-file-sync), 15.1: a hand edit after the import is not recorded by
+    `history`; the next set first records the reconcile `set a` (old 1, new 5), then its own
+    `set a` with `old` 5 (the hand-edited value), not the imported 1."""
     theatre = make_theatre("a: 1\n")
     _assert_events(_events(theatre), [(1, "import", "a", None, 1)])
 
@@ -244,7 +245,7 @@ def test_old_value_is_the_hand_edited_value_not_the_imported_one(
     assert_file_bytes(theatre / ROOT, "a: 7\n")
     _assert_events(
         _events(theatre),
-        [(1, "import", "a", None, 1), (2, "set", "a", 5, 7)],
+        [(1, "import", "a", None, 1), (2, "set", "a", 1, 5), (3, "set", "a", 5, 7)],
     )
 
 

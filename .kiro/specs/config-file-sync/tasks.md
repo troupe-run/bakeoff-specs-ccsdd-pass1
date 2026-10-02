@@ -47,7 +47,7 @@ new runtime dependency is added.
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 3.1, 3.2, 3.3, 5.5_
 
 - [ ] 3. Integration: reconcile first in every command except history
-- [ ] 3.1 Open every theatre under the lock, reconcile by default, and keep history reconcile-free
+- [x] 3.1 Open every theatre under the lock, reconcile by default, and keep history reconcile-free
   - Order the opening as: locate the config file, take the lock on its directory, load, open the store, import when never imported, otherwise reconcile unless the caller opted out
   - A theatre that was just imported records no reconcile events in the same command
   - On close, close the store and then release the lock; on any failure while opening, release what was acquired in reverse order and re-raise the original error; a load failure records nothing
@@ -175,3 +175,4 @@ new runtime dependency is added.
 - 2.2: `TheatreLock.acquire` closes its fd only on `OSError`; a `KeyboardInterrupt` raised while blocked in `flock` (Ctrl-C on an ordinary command) leaks the fd until process exit — harmless today; `watch` must keep its signal handlers flag-only so nothing raises inside the lock wait.
 - 2.2: the lock does not use `O_DIRECTORY`; `open_theatre` must keep locating the config file (which proves `.troupe/` is a directory) before acquiring.
 - 2.3: stored history paths are turned back into `ConfigPath`s without `ConfigPath.parse` (the loader accepts empty keys and keys ending in `.`, which PATH syntax rejects); reuse `reconcile`'s helper rather than parsing stored paths elsewhere.
+- 3.1: `Theatre.__exit__` suppresses only `ConfigLoadError` from `close()`; an `OSError` from releasing the lock while a block's error is in flight would replace that error (very unlikely; candidate hardening). Also, `tests/test_e2e_history.py::test_theatre_without_leaves_is_imported_with_no_events_and_never_reimported` was a sixth step 1 test with the superseded expectation.

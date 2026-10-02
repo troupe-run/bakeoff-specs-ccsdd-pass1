@@ -4,8 +4,8 @@ Covers the printing rules for every scalar kind (6.1-6.5) under the YAML 1.2 cor
 folded block scalars printed with no added character (3.8), list items by index (5.1-5.3), path
 errors for mapping/list targets and missing paths (5.5, 6.7, 6.8) with exit 5, empty stdout and a
 stderr message naming the file and PATH, malformed PATH syntax (1.5) with exit 2, and the
-product-owner decision A: files are the truth, so a hand edit after the import is shown and adds
-no history event (6.9, 7.3).
+product-owner decision A: files are the truth, so a hand edit after the import is shown (6.9) and,
+since step 2, recorded by the reconcile that ``show`` runs first (config-file-sync 1.1, 1.6).
 """
 
 from pathlib import Path
@@ -268,12 +268,15 @@ def test_show_malformed_path_exits_2_naming_path_without_creating_state(
     assert not list((theatre / ".troupe").glob("history.sqlite*"))
 
 
-# ---- 6.9, 7.3: files are the truth (product-owner decision A) ----
+# ---- 6.9, 7.3 superseded by config-file-sync 1.1, 1.6: files are the truth, show reconciles ----
 
 
-def test_show_after_hand_edit_prints_new_value_and_records_no_event(
+def test_show_after_hand_edit_prints_new_value_and_records_one_reconcile_set(
     make_theatre: MakeTheatre, run_cli: RunCli
 ) -> None:
+    """Req 1.1, 1.3, 1.6 (config-file-sync): ``show`` after a hand edit prints the value in the
+    file and records one reconcile ``set`` (old = imported value, new = edited value); ``history``
+    before that ``show`` records nothing."""
     theatre = make_theatre("a: 1\n")
     config = theatre / ".troupe" / "troupe.yml"
 
@@ -286,7 +289,11 @@ def test_show_after_hand_edit_prints_new_value_and_records_no_event(
 
     config.write_bytes(b"a: 2\n")
 
+    assert _history(run_cli, theatre).stdout == first_history.stdout
     _assert_shows(_show(run_cli, theatre, "a"), b"2\n")
     second_history = _history(run_cli, theatre)
     assert (second_history.exit_code, second_history.stderr) == (0, "")
-    assert second_history.stdout == first_history.stdout
+    assert second_history.stdout == first_history.stdout + (
+        b'{"seq": 2, "op": "set", "path": "a", "old": 1, "new": 2}\n'
+    )
+    assert config.read_bytes() == b"a: 2\n"

@@ -288,9 +288,11 @@ def test_show_value_reports_a_missing_path(theatre_dir: Path) -> None:
     assert caught.value.file == theatre_dir / CONFIG_DIR_NAME / "agents.yml"
 
 
-def test_hand_edit_after_import_shows_in_show_but_adds_no_history(
+def test_hand_edit_after_import_is_shown_and_recorded_by_the_reconcile_on_open(
     make_theatre: MakeTheatre,
 ) -> None:
+    """Req 1.1, 1.6 (config-file-sync): the next open reconciles a hand edit (a changed and a
+    created leaf) while ``show_value`` still reads the files as loaded."""
     theatre_dir = make_theatre("a: 1\n")
     with open_theatre(theatre_dir) as theatre:
         assert show_value(theatre, ConfigPath.parse("a")) == 1
@@ -304,7 +306,11 @@ def test_hand_edit_after_import_shows_in_show_but_adds_no_history(
         after = list_history(theatre, None)
 
     assert before == (HistoryRecord(seq=1, op="import", path="a", old=None, new=1),)
-    assert after == before
+    assert after == (
+        *before,
+        HistoryRecord(seq=2, op="set", path="a", old=1, new=2),
+        HistoryRecord(seq=3, op="set", path="b", old=None, new="x"),
+    )
 
 
 # --- list_history -----------------------------------------------------------------------------

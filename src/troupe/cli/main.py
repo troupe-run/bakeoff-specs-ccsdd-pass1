@@ -32,9 +32,13 @@ def handle_show(args: argparse.Namespace, buffer: io.BytesIO) -> None:
 
 
 def handle_history(args: argparse.Namespace, buffer: io.BytesIO) -> None:
-    """Handler of ``troupe config history [PATH]``: print one JSON line per history record."""
+    """Handler of ``troupe config history [PATH]``: print one JSON line per history record.
+
+    ``history`` never reconciles (config-file-sync 1.3): it prints what has been recorded, after
+    importing a never-imported theatre.
+    """
     prefix = None if args.path is None else ConfigPath.parse(args.path)
-    with open_theatre(args.theatre) as theatre:
+    with open_theatre(args.theatre, reconcile=False) as theatre:
         for record in list_history(theatre, prefix):
             buffer.write(format_history_line(record))
 

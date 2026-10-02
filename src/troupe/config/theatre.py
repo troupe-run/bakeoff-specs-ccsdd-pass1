@@ -1,25 +1,35 @@
 """The theatre session: use cases shared by every subcommand (6.1-6.9, 7.4, 7.9, 8.3-8.5).
 
 A command opens its theatre with ``with open_theatre(directory) as theatre:``. Opening follows a
-fixed order: locate the configuration file, load it from disk, open the history store, import the
-configuration once. Nothing is created when locating or loading fails (7.4). Leaving the ``with``
-block closes the history store, whether the block succeeded or failed (7.9).
+fixed order: locate the configuration file, take the theatre lock on its directory, load it from
+disk, open the history store, then import the configuration when it was never imported, or
+otherwise reconcile the history with the files unless the caller opted out (config-file-sync 1.1,
+1.3, 1.4). Nothing is created when locating or loading fails (7.4), and a load failure records
+nothing and leaves the lock free (config-file-sync 1.5). Leaving the ``with`` block closes the
+history store and then releases the lock, whether the block succeeded or failed (7.9;
+config-file-sync 7.3). The lock is held from load to close, so the events of two commands on one
+theatre never interleave (config-file-sync 1.7, 6.1-6.4).
 
 Files are the truth (product-owner decision A): ``theatre.document`` is the configuration as read
-from disk by this command, :func:`show_value` reads only that document, and the history is change
-history only. A hand edit made since the import is shown and never recorded (6.9, 7.3).
+from disk by this command, and :func:`show_value` reads only that document. Step 2 supersedes the
+step 1 rule that hand edits are never recorded (6.9, 7.3): every command except ``history``
+reconciles first, so a hand edit is recorded as ``set``/``remove`` events before the command's own
+work; ``history`` opens with ``reconcile=False`` and only imports a never-imported theatre.
 """
 
-from contextlib import suppress
+from collections.abc import Callable
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 from typing import Self
 
+from troupe.config import reconcile as reconciler
 from troupe.config.errors import ConfigLoadError, WrongNodeKindError
 from troupe.config.history import HistoryRecord
 from troupe.config.loader import load_config
 from troupe.config.locate import find_config_file
+from troupe.config.lock import TheatreLock
 from troupe.config.model import ConfigDocument, ConfigMapping, ConfigScalar
 from troupe.config.paths import ConfigPath, path_has_prefix
 from troupe.config.resolve import flatten_leaves, resolve_path
@@ -29,16 +39,23 @@ from troupe.config.store import HistoryStore
 
 @dataclass(frozen=True)
 class Theatre:
-    """An opened theatre: its configuration as on disk and its (imported) history store."""
+    """An opened theatre: its configuration as on disk, its history store and its held lock."""
 
     directory: Path
     config_file: Path
     document: ConfigDocument  # the files as on disk when the command opened the theatre
     history: HistoryStore
+    lock: TheatreLock
 
     def close(self) -> None:
-        """Close the history store; calling it again does nothing."""
-        self.history.close()
+        """Close the history store, then release the lock; calling it again does nothing.
+
+        The lock is released even when closing the store fails.
+        """
+        try:
+            self.history.close()
+        finally:
+            self.lock.release()
 
     def __enter__(self) -> Self:
         return self
@@ -60,22 +77,39 @@ class Theatre:
             self.close()
 
 
-def open_theatre(directory: Path) -> Theatre:
-    """Open the theatre in ``directory``: locate, load, open the store, import once.
+def open_theatre(directory: Path, *, reconcile: bool = True) -> Theatre:
+    """Open the theatre in ``directory``: locate, lock, load, open the store, import or reconcile.
+
+    A never-imported theatre is imported and records no reconcile events; an imported one is
+    reconciled with the files unless ``reconcile`` is false (``history``). The reconcile events
+    are committed before this returns, so they stay when the command then fails.
 
     Raises :class:`ConfigLoadError` when the configuration cannot be located or loaded (no history
-    state is created then) or when the history store fails (the store is closed before the error
-    is re-raised).
+    state is created then) or when the lock or the history store fails. On any failure everything
+    already acquired is released in reverse order (store, then lock) and the original error is
+    re-raised; a failure to release never replaces it. Raises :class:`RuntimeError` when this
+    process already holds the theatre open.
     """
     config_file = find_config_file(directory)
-    document = load_config(config_file)
-    history = HistoryStore.open(config_file.parent)
-    try:
-        history.ensure_imported(flatten_leaves(document.root))
-    except BaseException:
-        history.close()  # never masks the error being raised
-        raise
-    return Theatre(directory=directory, config_file=config_file, document=document, history=history)
+    with ExitStack() as acquired:
+        lock = TheatreLock.acquire(config_file.parent)
+        acquired.callback(_quietly, lock.release)
+        document = load_config(config_file)
+        history = HistoryStore.open(config_file.parent)
+        acquired.callback(_quietly, history.close)
+        imported_now = history.ensure_imported(flatten_leaves(document.root))
+        if reconcile and not imported_now:
+            reconciler.reconcile(document, history)
+        acquired.pop_all()  # success: the theatre owns the store and the lock now
+    return Theatre(
+        directory=directory, config_file=config_file, document=document, history=history, lock=lock
+    )
+
+
+def _quietly(release: Callable[[], None]) -> None:
+    """Release a resource while an opening failure propagates; never mask that failure."""
+    with suppress(Exception):
+        release()
 
 
 def show_value(theatre: Theatre, path: ConfigPath) -> ScalarValue:

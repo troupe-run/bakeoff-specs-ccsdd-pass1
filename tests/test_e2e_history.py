@@ -1,7 +1,8 @@
 """``troupe config history`` and the history import, end to end through the real console script.
 
 Covers the import on the first command (7.1, 8.5) with one ``import`` event per leaf (7.2), no
-re-import and no reconciling (6.9, 7.3), an empty theatre marked imported (7.5), the JSON Lines
+re-import (7.3) and no reconciling by ``history`` itself (config-file-sync 1.3; ``show`` now
+reconciles, config-file-sync 1.1), an empty theatre marked imported (7.5), the JSON Lines
 format with strict JSON values (8.1, 8.2, 8.6, 8.7), prefix filtering (8.3, 8.4), folded block
 scalars in history events (3.8), and ``set``/``remove`` events appended through the recording API
 used by the set command (9.1-9.3). Every line is parsed with a strict JSON parser that rejects the
@@ -175,12 +176,15 @@ def test_later_commands_import_nothing_again(make_theatre: MakeTheatre, run_cli:
     assert second.stdout == first.stdout
 
 
-# ---- 6.9, 7.3: importing is not reconciling ----
+# ---- 7.3 superseded by config-file-sync 1.1, 1.3: history never reconciles, show does ----
 
 
-def test_hand_edits_add_no_events_while_show_reflects_them(
+def test_history_records_no_hand_edit_while_the_next_show_reconciles_them_once(
     make_theatre: MakeTheatre, run_cli: RunCli
 ) -> None:
+    """Req 1.1, 1.3, 1.6 (config-file-sync): after hand edits, ``history`` records nothing; the
+    next ``show`` prints the edited value and records one reconcile event per changed leaf (sets in
+    document order, then the remove); later commands record nothing more."""
     theatre = make_theatre(CONFIG, files=FILES)
     before = _history(run_cli, theatre)
 
@@ -189,13 +193,20 @@ def test_hand_edits_add_no_events_while_show_reflects_them(
     config_file.write_text(edited + "added: new\n", encoding="utf-8")
     (theatre / CONFIG_DIR_NAME / "team.yaml").write_text("lead: dave\nsize: 2\n", encoding="utf-8")
 
+    assert _history(run_cli, theatre).stdout == before.stdout
     assert _show(run_cli, theatre, "name").stdout == b"edited\n"
     assert _show(run_cli, theatre, "added").stdout == b"new\n"
     assert _show(run_cli, theatre, "team.lead").stdout == b"dave\n"
     after = _history(run_cli, theatre)
 
-    assert after.stdout == before.stdout
-    assert _events(after) == IMPORTED
+    assert _events(before) == IMPORTED
+    assert _events(after) == [
+        *IMPORTED,
+        (16, "set", "name", "demo", "edited"),
+        (17, "set", "team.lead", "carol", "dave"),
+        (18, "set", "added", None, "new"),
+        (19, "remove", "retries", 3, None),
+    ]
 
 
 # ---- 7.5: a theatre with no leaves is marked imported with no events ----
@@ -204,6 +215,9 @@ def test_hand_edits_add_no_events_while_show_reflects_them(
 def test_theatre_without_leaves_is_imported_with_no_events_and_never_reimported(
     make_theatre: MakeTheatre, run_cli: RunCli
 ) -> None:
+    """Req 7.5; 1.3, 1.1 (config-file-sync): an empty theatre is marked imported with no events;
+    a leaf added later is never imported, ``history`` records nothing for it, and the next
+    ``show`` records it as a reconcile ``set`` (old null)."""
     theatre = make_theatre("# nothing yet\nempty: {}\nnone: []\n")
 
     first = _history(run_cli, theatre)
@@ -211,9 +225,10 @@ def test_theatre_without_leaves_is_imported_with_no_events_and_never_reimported(
     assert _store_file(theatre).is_file()
 
     (theatre / CONFIG_DIR_NAME / "troupe.yml").write_text("late: 1\n", encoding="utf-8")
+    assert _events(_history(run_cli, theatre)) == []
     assert _show(run_cli, theatre, "late").stdout == b"1\n"
 
-    assert _events(_history(run_cli, theatre)) == []
+    assert _events(_history(run_cli, theatre)) == [(1, "set", "late", None, 1)]
 
 
 # ---- 8.3, 8.4: prefix filtering keeps the original seq numbers ----

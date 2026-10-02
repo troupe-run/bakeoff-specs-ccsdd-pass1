@@ -139,11 +139,12 @@ def test_two_file_set_writes_both_files_and_records_both_leaves(
     assert _listing(config_dir) == listing
 
 
-def test_old_values_come_from_the_files_on_disk_not_the_history(
+def test_set_after_hand_edit_follows_the_reconcile_and_takes_old_values_from_the_files(
     make_theatre: MakeTheatre,
 ) -> None:
-    """Req 15.1, 15.2, 15.5 (decision A): after a hand edit since the import, the recorded old value
-    is the hand-edited value, not the history's; the removed leaf is recorded after the set leaf."""
+    """Req 1.7 (config-file-sync), 15.1, 15.2, 15.5 (decision A): opening after a hand edit records
+    the reconcile events first; the set's old values are the hand-edited values from the files,
+    which now chain from the reconcile events; the removed leaf is recorded after the set leaf."""
     directory = make_theatre("a: 1\n")
     config = directory / ".troupe" / "troupe.yml"
     with _opened(directory):
@@ -157,9 +158,13 @@ def test_old_values_come_from_the_files_on_disk_not_the_history(
         SetChange(ConfigPath.parse("a.x"), 5, 7),
         RemoveChange(ConfigPath.parse("a.y"), 6),
     )
-    assert records[-2:] == (
-        HistoryRecord(records[-2].seq, "set", "a.x", 5, 7),
-        HistoryRecord(records[-2].seq + 1, "remove", "a.y", 6, None),
+    assert records == (
+        HistoryRecord(1, "import", "a", None, 1),
+        HistoryRecord(2, "set", "a.x", None, 5),
+        HistoryRecord(3, "set", "a.y", None, 6),
+        HistoryRecord(4, "remove", "a", 1, None),
+        HistoryRecord(5, "set", "a.x", 5, 7),
+        HistoryRecord(6, "remove", "a.y", 6, None),
     )
     assert_file_bytes(config, "a:\n  x: 7\n")
 
