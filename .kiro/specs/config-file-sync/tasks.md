@@ -114,7 +114,7 @@ new runtime dependency is added.
   - _Depends: 3.1_
   - _Requirements: 3.4, 3.5, 4.2, 4.4, 4.9, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7_
 
-- [ ] 4.2 (P) Let subcommands stream output and see the theatre as typed
+- [x] 4.2 (P) Let subcommands stream output and see the theatre as typed
   - Make the `--theatre` option also keep the directory text as given (the argument as typed, else `$TROUPE_THEATRE` as set, else the current directory), without changing the parsed path the other commands use
   - Let a subcommand register a streaming handler that receives stdout and stderr and returns the exit code; troupe errors raised by it keep the shared exit-code and stderr conventions with empty stdout; the buffered path stays unchanged for `show`, `set` and `history`
   - Done when tests prove the raw text is kept for `./t/`, for `$TROUPE_THEATRE` and for the default; a test-only streaming subcommand can write to stdout and return its code; a troupe error raised from it yields its exit code, empty stdout and the formatted stderr message; and all existing CLI tests pass

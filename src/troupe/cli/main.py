@@ -1,13 +1,15 @@
 """Entry point of the ``troupe`` console script: the ``troupe config`` command group.
 
 ``run`` parses the command line, dispatches to the subcommand's handler with an in-memory bytes
-buffer and copies the buffer to stdout only when the handler succeeded. Every
+buffer and copies the buffer to stdout only when the handler succeeded. A subcommand whose output
+must stream (``watch``) sets a ``stream_handler`` instead: ``run`` passes it the real stdout and
+stderr and returns its exit code (config-file-sync 4.3). Every
 :class:`~troupe.config.errors.TroupeError` (including usage errors raised by the parser) is written
 to stderr as its formatted message and its exit code is returned; stdout stays empty (10.1-10.3).
 ``run`` never opens the theatre: each handler validates its own arguments first and then opens the
 theatre in a ``with`` block, so usage errors create no state and the store is closed at the end
-of every command (1.5, 7.4, 7.9). Unexpected exceptions are not caught (traceback, exit 1); stdout
-is still empty because output is buffered.
+of every command (1.5, 7.4, 7.9). Unexpected exceptions are not caught (traceback, exit 1); for
+buffered handlers stdout is still empty because output is buffered.
 """
 
 import argparse
@@ -18,7 +20,12 @@ from typing import BinaryIO, Final, NoReturn, TextIO
 
 from troupe.cli.render import format_history_line, format_show_output
 from troupe.cli.set_command import add_set_subparser
-from troupe.cli.shell import SubcommandRegistrar, TroupeArgumentParser, theatre_option_parent
+from troupe.cli.shell import (
+    StreamHandler,
+    SubcommandRegistrar,
+    TroupeArgumentParser,
+    theatre_option_parent,
+)
 from troupe.config.errors import TroupeError
 from troupe.config.paths import ConfigPath
 from troupe.config.theatre import list_history, open_theatre, show_value
@@ -97,10 +104,19 @@ def build_parser() -> TroupeArgumentParser:
 
 
 def run(argv: Sequence[str], stdout: BinaryIO, stderr: TextIO) -> int:
-    """Run one command; return its exit code. stdout is written only on success."""
+    """Run one command; return its exit code.
+
+    A buffered ``handler``'s output reaches stdout only on success. A ``stream_handler`` writes to
+    stdout and stderr itself and its return value is the exit code. For both, a ``TroupeError``
+    (including a usage error from the parser) is written to stderr as its formatted message and its
+    exit code returned; a streaming handler raising it before writing to stdout leaves stdout empty.
+    """
     buffer = io.BytesIO()
     try:
         args = build_parser().parse_args(argv)
+        stream_handler: StreamHandler | None = getattr(args, "stream_handler", None)
+        if stream_handler is not None:
+            return stream_handler(args, stdout, stderr)
         args.handler(args, buffer)
     except TroupeError as error:
         stderr.write(f"{error}\n")
