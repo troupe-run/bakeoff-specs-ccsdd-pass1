@@ -287,6 +287,7 @@ in Shared Seams; U6 empty root style `BLOCK` and documented span semantics). Tas
   - Typed changes `a, '"1"'` then `a, '1.0'` on `'a: 1\n'` each record a set event with JSON-typed values; `x, '[]': 'x: {}\n'` changes the file and records nothing; a no-op and a refused set record nothing
   - New includes: `b, 'file:inc.yaml'` on `'b: x\n'` with inc.yaml `'k: 1\nl: [p]\n'` records `set b.k` (old null, new 1), `set b.l.0` (new "p"), then `remove b` (old "x"); `c, 'file:notes.txt'` with notes.txt `'hi\n'` records one `set c` with new `"hi\n"`
   - Files are the truth (product-owner decision A): on `'a: 1\n'`, a first command imports; then hand-edit the file to `'a: 5\n'`; `history` shows no event for the hand edit; `a, '7'` then records exactly one `set a` event with `old` 5 (the hand-edited value, not the imported 1) and `new` 7
+    - *Superseded by step 2 (spec config-file-sync 1.1–1.3, 1.7): the set now records a reconcile `set a` (old 1, new 5) first; `history` alone still records no event for the hand edit.*
   - Using the in-process runner from 1.1, a store failure injected at the SQLite boundary while recording (the recorder's insert raises) restores the file byte-identically, exits 4 naming `history.sqlite`, leaves stdout empty and leaves the directory listing unchanged (no temporary file, product-owner decision E)
   - Done when each JSON line is parsed and asserted for seq, op, path, old and new
   - _Boundary: tests for set history_

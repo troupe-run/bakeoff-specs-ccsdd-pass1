@@ -18,7 +18,8 @@ proposes a layout (`src/troupe/`, CLI → core → file layer) that the first de
   config-set-writeback builds on this model.
 - An `eventsourcing`-based aggregate/projection persisted under `<theatre>/.troupe/`. The first command run
   against a theatre imports it as one `import` event per leaf (`old` null). Later commands do not reconcile
-  hand edits.
+  hand edits. *(Superseded by step 2 (spec config-file-sync, requirements 1.1–1.3, 1.7): every command except
+  `history` now reconciles hand edits into the history first.)*
 - Exit codes and error messages behave as the contract says (2 usage, 4 load, 5 path), with empty stdout on
   any failure.
 
@@ -73,6 +74,10 @@ Approach Decision). The CLI uses a standard argument parser, with usage errors m
 - **history [PATH]**: prints events as JSON Lines, oldest first; with PATH, only events whose path equals PATH or starts with `PATH.`. Each line at least `{"seq": int from 1, "op": "import"|"set"|"remove", "path": dotted, "old": json, "new": json}`. Events per leaf (scalar incl. text-include string; list items `list.0`, `list.1`...). First command run against a theatre imports it: one import event per leaf, old null. `history` also imports a never-imported theatre; importing is not reconciling. A set emits one set event per leaf changed/created and one remove event (new null) per leaf no longer existing; a no-op set emits nothing.
 - `set PATH VALUE` belongs to the downstream spec config-set-writeback.
 
+> **Note (step 2):** the contract above is kept verbatim. Its "importing is not reconciling" is superseded by
+> step 2 (spec config-file-sync, requirements 1.1–1.3, 1.7) for every command except `history`, which still
+> imports a never-imported theatre and never reconciles.
+
 ## Introduction
 This specification covers the read side of the troupe configuration subsystem (contract step 1): the
 `troupe config` command group with `show PATH` and `history [PATH]`, locating a theatre's configuration file,
@@ -94,7 +99,8 @@ positions, to the downstream `set` command (spec config-set-writeback).
   exact file and position of every value, (b) resolve paths with the same rules as `show`, (c) append `set` and
   `remove` events to the same history that `history` prints, and (d) report failures with the same exit codes
   and message conventions. Hand edits made after the import are not added to the history by this feature
-  ("importing is not reconciling").
+  ("importing is not reconciling"). *(Superseded by step 2 (spec config-file-sync, requirements 1.1–1.3,
+  1.7): every command except `history` reconciles hand edits into the history before its own work.)*
 - **Choices made where the contract is silent** (conservative; rationale in `research.md`): a non-mapping
   top-level node and an unreadable history store are load failures (3.4, 7.8); an empty root file is an empty
   configuration (3.5); import order is document order and an empty configuration still counts as imported
@@ -102,7 +108,9 @@ positions, to the downstream `set` command (spec config-set-writeback).
 - **Product owner decisions (2026-10-01)** (records in `research.md`, "Product Owner Decisions"):
   - A, confirmed by the product owner: the files are the truth. `show` (and the downstream `set`) always read the
     files as they are on disk; the history is only change history, so a hand edit shows in `show` but produces no
-    history event (6.9, 7.3).
+    history event (6.9, 7.3). *(The "produces no history event" part is superseded by step 2 (spec
+    config-file-sync, requirements 1.1–1.3, 1.7) for every command except `history`; "files are the truth"
+    stands.)*
   - E, confirmed with a condition: state files only under `<theatre>/.troupe/`, the history store is closed at the
     end of every command, and no file or directory is created anywhere else in the theatre (7.6, 7.9).
   - F, PO delegated (safest assumption kept): non-finite floats appear in history as the JSON strings `".inf"`,
@@ -184,6 +192,7 @@ positions, to the downstream `set` command (spec config-set-writeback).
 7. If PATH resolves to a mapping or a list, then the troupe CLI shall exit with code 5 and write a stderr message that names PATH and the file that holds it.
 8. If PATH is not found, then the troupe CLI shall exit with code 5 and write a stderr message that names PATH and the file holding the deepest part of PATH that exists.
 9. When a configuration file has been edited by hand since the history was imported, the troupe CLI shall show the value currently in the files as read from disk by this command, not the value recorded in the history, and shall record no history event for the hand edit.
+   *Note (step 2): the "record no history event for the hand edit" part is superseded by spec config-file-sync (requirements 1.1–1.3, 1.7) for every command except `history`: `show` and `set` reconcile the hand edit into the history first; `show` still prints the value in the files as read from disk.*
 
 ### Requirement 7: Configuration history import
 **Objective:** As a developer, I want the first use of troupe on a theatre to record the configuration as it was found, so that later history has a starting point.
@@ -192,6 +201,7 @@ positions, to the downstream `set` command (spec config-set-writeback).
 1. When any `troupe config` command first runs against a theatre whose history has never been imported and the configuration loads successfully, the troupe CLI shall record one `import` event per leaf of the configuration, with `old` null and `new` the leaf's value, in document order.
 2. The troupe CLI shall treat as leaves every scalar value (including a text-include string) at its full dotted path, with list items addressed by index (`list.0`, `list.1`, …); empty mappings and empty lists contribute no leaves.
 3. While a theatre's history has already been imported, the troupe CLI shall not record import events again, and shall not record events for differences between the files and the history (importing is not reconciling).
+   *Note (step 2): the "shall not record events for differences between the files and the history" part is superseded by spec config-file-sync (requirements 1.1–1.3, 1.7) for every command except `history`; import events are still never recorded again, and `history` never reconciles.*
 4. If the configuration cannot be loaded, then the troupe CLI shall not record any events and shall not create any history state.
 5. When a theatre with no leaves is imported, the troupe CLI shall mark the theatre as imported with no events, so that later commands do not import it again.
 6. The troupe CLI shall store all history state only under `<theatre>/.troupe/` and shall not create, modify, rename or delete any file or directory outside `<theatre>/.troupe/` (including in directories that hold included files), whether the command succeeds or fails.

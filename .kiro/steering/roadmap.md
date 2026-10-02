@@ -52,7 +52,7 @@ rules). The write side carries most of the risk and rules, so it gets its own sp
     config-set-writeback computes leaf diffs and records `set`/`remove` events through the foundation's API.
   - **Authority between files and event store** (open design decision for config-foundation; record it in
     design.md/research.md). Hand edits after import are not reconciled into history ("importing is not
-    reconciling"). The design must say whether `show` reads files or the projection, and why.
+    reconciling"; superseded by step 2, config-file-sync, for every command except `history`). The design must say whether `show` reads files or the projection, and why.
   - Error types and exit-code mapping live in one place (foundation). The set spec reuses them.
 
 ## Specs (dependency order)
@@ -62,7 +62,7 @@ rules). The write side carries most of the risk and rules, so it gets its own sp
 
 ## Product owner decisions (2026-10-01)
 Full records (decision, alternatives, why, revisit trigger, status) are in each spec's `research.md`.
-- **A** (confirmed): files are the truth; `show`/`set` read the files as on disk; history is change history only (hand edits add no event; a later `set` records the on-disk value as `old`).
+- **A** (confirmed): files are the truth; `show`/`set` read the files as on disk; history is change history only (hand edits add no event; a later `set` records the on-disk value as `old`). The "hand edits add no event" part is superseded by step 2 (config-file-sync) for every command except `history`.
 - **B** (PO delegated → changed): a `set` that must change several files is carried out: all patches verified in memory first, each file written atomically, already-written files restored on a write failure (exit 3); 14.2 refusals unchanged.
 - **C** (confirmed): exit 3 with no file changed when the in-memory read-back is not the intended configuration.
 - **D** (PO delegated → kept): a `file:` VALUE is written as a plain string; missing/cyclic/unloadable target → exit 3, no file changed.
@@ -96,8 +96,8 @@ read the files) still holds.
   previous file snapshot (misses offline edits, double-counts write-back).
 
 ### Existing Spec Updates
-- [ ] config-foundation -- supersede 6.9's "record no history event for the hand edit" and 7.3's "shall not record events for differences between the files and the history" for every command except `history`; `history` still imports a never-imported theatre and never reconciles. Dependencies: none
-- [ ] config-set-writeback -- 15.1 unchanged as worded; update the decision-A notes and the example so a hand edit before a `set` now appears as a preceding reconcile `set` event; `set` runs reconcile-first under the shared lock. Dependencies: config-file-sync
+- [x] config-foundation -- supersede 6.9's "record no history event for the hand edit" and 7.3's "shall not record events for differences between the files and the history" for every command except `history`; `history` still imports a never-imported theatre and never reconciles. Dependencies: none
+- [x] config-set-writeback -- 15.1 unchanged as worded; update the decision-A notes and the example so a hand edit before a `set` now appears as a preceding reconcile `set` event; `set` runs reconcile-first under the shared lock. Dependencies: config-file-sync
 
 ### Direct Implementation Candidates
 - (none) -- the step-1 tests that assert "hand edits add no events" are updated inside config-file-sync's tasks, in the same change as the behaviour (collaboration.md: spec, code and tests change together).

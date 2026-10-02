@@ -10,12 +10,14 @@ def diff_leaves(before: ConfigDocument, after: ConfigDocument) -> tuple[LeafChan
     """Return the history changes that turn ``before`` into ``after`` (15.1-15.5, 15.7).
 
     ``before`` is the configuration loaded from disk for this command (never the history), so every
-    ``old`` is the value currently in the files. Leaves are compared by dotted path and typed value
-    (:func:`scalar_equal`). The result lists one :class:`SetChange` per leaf of ``after`` that is
-    new (``old`` ``None``) or changed, in ``after`` document order, then one :class:`RemoveChange`
-    per leaf of ``before`` whose path is gone, in ``before`` document order. Empty collections have
-    no leaves, so ``{}`` -> ``[]`` yields nothing. Since ``after`` is the verified read-back, the
-    leaves of a newly written YAML include are set changes and a text include is one string leaf.
+    ``old`` is the value currently in the files. The theatre reconciled before the set
+    (config-file-sync 1.1, 1.7), so a hand edit is already recorded and ``old`` chains onto it.
+    Leaves are compared by dotted path and typed value (:func:`scalar_equal`). The result lists one
+    :class:`SetChange` per leaf of ``after`` that is new (``old`` ``None``) or changed, in ``after``
+    document order, then one :class:`RemoveChange` per leaf of ``before`` whose path is gone, in
+    ``before`` document order. Empty collections have no leaves, so ``{}`` -> ``[]`` yields nothing.
+    Since ``after`` is the verified read-back, the leaves of a newly written YAML include are set
+    changes and a text include is one string leaf.
     """
     old_leaves = {str(leaf.path): leaf for leaf in flatten_leaves(before.root)}
     new_leaves = flatten_leaves(after.root)

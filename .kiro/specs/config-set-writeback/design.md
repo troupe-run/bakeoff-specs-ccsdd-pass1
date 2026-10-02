@@ -829,6 +829,8 @@ def diff_leaves(before: ConfigDocument, after: ConfigDocument) -> tuple[LeafChan
 - `before` is always `theatre.document`, the configuration that `open_theatre` loaded from disk for this command
   (PO decision A). Every `old` is therefore the value currently in the files, including a hand edit made since
   the import; the history is never consulted, and the hand edit itself produces no event (15.1, 15.2).
+  *Step 2 (spec config-file-sync 1.1–1.3, 1.7): the theatre now reconciles before the set, so the hand edit is
+  recorded as a preceding reconcile event; `before` and `old` still come from the files.*
 - `flatten_leaves` of both; keyed by `str(leaf.path)`. `SetChange(path, old or None, new)` for each after-leaf
   that is new or not `scalar_equal`, in after-document order; then `RemoveChange(path, old)` for each
   before-leaf whose path is gone, in before-document order.
@@ -1021,5 +1023,6 @@ file exists (`set_support.snapshot_tree`).
   after a successful set and after each failure path — verification refusal, write failure (incl. rollback) and
   history failure — and must be unchanged apart from file contents (14.4).
 - Files are the truth (PO decision A): import, hand-edit `a` from `1` to `5`, `set a 7` → the `set` event has
-  `old` 5, and no event exists for the hand edit (15.1).
+  `old` 5, and no event exists for the hand edit (15.1). *Superseded by step 2 (spec config-file-sync 1.1–1.3,
+  1.7): a reconcile `set a` (old 1, new 5) now precedes the set's own `set a` (old 5, new 7).*
 - Every non-zero exit asserts `stdout == b""` and the named file/PATH (16.x).

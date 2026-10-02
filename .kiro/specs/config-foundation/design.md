@@ -50,7 +50,8 @@ resolution, history API and error types.
 - Any write to user files (atomic writes, patching, rendering of written values) — config-set-writeback.
 - The `set` subcommand's argument handling beyond the shared `--theatre` option and error shell.
 - Computing set/remove leaf diffs and deciding no-op sets — config-set-writeback (it calls `record_changes`).
-- Reconciling hand edits into history (explicitly not done: "importing is not reconciling").
+- Reconciling hand edits into history (explicitly not done: "importing is not reconciling"). *Superseded by step 2
+  (spec config-file-sync, requirements 1.1–1.3, 1.7): every command except `history` now reconciles first.*
 
 ### Allowed Dependencies
 - Python 3.12 standard library; `ruamel.yaml>=0.19.1,<0.20` (compose only, never dump); `eventsourcing>=9.5.5,<10`
@@ -230,7 +231,9 @@ sequenceDiagram
   when the command ends, on success and on every error (7.9). `open_theatre` itself closes the store before
   re-raising if the import fails.
 - Files are the truth (decision A, confirmed by the product owner): every command loads the files from disk;
-  `show` reads only that freshly loaded document; the history is change history only.
+  `show` reads only that freshly loaded document; the history is change history only. *(Step 2, spec
+  config-file-sync 1.1–1.3, 1.7: hand edits are now reconciled into the history by every command except
+  `history`; `show` still reads only the files.)*
 
 ### Include resolution
 ```mermaid
@@ -266,7 +269,7 @@ flowchart TD
 | 5.1–5.5 | Path addressing | Paths, Resolve | `ConfigPath`, `walk_path`, `resolve_path` | — |
 | 6.1–6.6 | Scalar printing | CliRender, Theatre | `format_show_output`, `show_value` | Command execution |
 | 6.7, 6.8 | Mapping/list or missing → 5 naming file and path | Resolve, Errors | `WrongNodeKindError`, `PathNotFoundError` | — |
-| 6.9 | Show reads files as on disk, not history; hand edit adds no event | Theatre, Store | `show_value` uses `ConfigDocument` only; `ensure_imported` never reconciles | Command execution |
+| 6.9 | Show reads files as on disk, not history; hand edit adds no event (superseded by config-file-sync 1.1–1.3, 1.7 except for `history`) | Theatre, Store | `show_value` uses `ConfigDocument` only; `ensure_imported` never reconciles | Command execution |
 | 7.1, 7.2 | One import event per leaf, document order | Resolve, Store, HistoryAggregate | `flatten_leaves`, `ensure_imported` | Command execution |
 | 7.3, 7.5 | Import once; no reconcile; empty config imported | Store, HistoryAggregate | `HistoryStarted`, `is_imported` | — |
 | 7.4 | No state on load failure | Theatre | `open_theatre` ordering | Command execution |
@@ -933,7 +936,8 @@ used only for the scalar typing table and model spans.
   booleans print as JSON `true`, and `.inf`/`-.inf`/`.nan` leaves appear as `".inf"`/`"-.inf"`/`".nan"` in lines
   that a strict JSON parser accepts (7.x, 8.x).
 - No reconcile and file authority (decision A): import, hand-edit a value, `show` prints the new value, `history`
-  output byte-identical to before (no event for the hand edit) (6.9, 7.3).
+  output byte-identical to before (no event for the hand edit) (6.9, 7.3). *Superseded by step 2 (spec
+  config-file-sync 1.1–1.3, 1.7): `show` now records one reconcile `set`; `history` alone records nothing.*
 - Record changes: `record_changes` with set/remove/empty against a real store in `tmp_path`, then the CLI
   `history` shows the appended lines with consecutive `seq` (9.x).
 

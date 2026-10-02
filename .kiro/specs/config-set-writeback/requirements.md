@@ -113,7 +113,9 @@ shared error conventions are provided by config-foundation and are used unchange
     configuration, is refused with exit 3 and no file changed (14.1, 14.2).
   - A, confirmed by the product owner: files are the truth. `set` reads the files as they are on disk; a value
     edited by hand since the import is the `old` value of the next `set` event, and the hand edit itself is
-    not recorded (15.1, 15.2).
+    not recorded (15.1, 15.2). *(The "hand edit itself is not recorded" part is superseded by step 2 (spec
+    config-file-sync, requirements 1.1–1.3, 1.7) for every command except `history`: `set` first records the hand
+    edit as a reconcile `set` event, then its own events, whose `old` is still the value in the files.)*
   - E, confirmed with a condition: files are written through a temporary file that is renamed over the target,
     and no extra file is left behind once the command finishes, whether it succeeds or fails (14.3, 14.4).
   - Set events are recorded in the new configuration's document order, followed by remove events in the
@@ -286,6 +288,7 @@ shared error conventions are provided by config-foundation and are used unchange
 
 #### Acceptance Criteria
 1. When a set succeeds, the troupe CLI shall record one `set` event per leaf whose value it changed or created, with the leaf's previous value as `old` (null for a created leaf) and its new value as `new`, where the previous value is the value in the configuration loaded from disk for this command (including any hand edit made since the import), never a value taken from the history.
+   *Note (step 2): 15.1 stands as worded. Since spec config-file-sync (requirements 1.1–1.3, 1.7), a hand edit made since the import is first recorded by the reconcile that `set` runs before its own work, so in the example of decision A the history gains a reconcile `set` (old 1, new 5) before the set's own `set` (old 5); only `history` still records no event for the hand edit.*
 2. When a set succeeds, the troupe CLI shall record one `remove` event per leaf that no longer exists, with its previous value, taken from the configuration loaded from disk for this command, as `old` and null as `new`.
 3. The troupe CLI shall compare leaves by dotted path and by typed value, so that `1`, `1.0`, `true` and `"1"` are different values and a leaf whose type changes counts as changed.
 4. When a set changes no leaf (including a no-op set and a change between an empty mapping and an empty list), the troupe CLI shall record no event.

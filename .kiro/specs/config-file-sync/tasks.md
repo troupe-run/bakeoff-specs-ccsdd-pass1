@@ -69,7 +69,7 @@ new runtime dependency is added.
   - _Depends: 2.2, 2.3_
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 6.1, 6.2, 6.3, 6.4, 7.3_
 
-- [ ] 3.2 Align docstrings and the step 1 specs with step 2
+- [x] 3.2 Align docstrings and the step 1 specs with step 2
   - Clarify the store-level "second import records nothing" test and the docstrings of the store, the history events, the leaf diff and the theatre module (set and remove events now also come from reconcile; import stays import-only; the leaf diff's `old` values still come from the files)
   - Add a note to config-foundation requirements 6.9 and 7.3, and to the config-set-writeback 15.1 example, that step 2 (this spec) supersedes them
   - In the roadmap, tick the two "Existing Spec Updates" entries and mark decision A's "hand edits add no event" as superseded by step 2 for every command except `history`

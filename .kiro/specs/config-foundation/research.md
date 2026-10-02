@@ -125,6 +125,8 @@
   which is wrong under the contract and misleading for a developer who just edited the file. The files are
   what troupe and the downstream `set` act on; showing anything else could cause a developer to make wrong
   decisions (Product Principle 2). The "importing is not reconciling" rule constrains history only.
+  *(Step 2, spec config-file-sync 1.1–1.3, 1.7, supersedes "importing is not reconciling" for every command
+  except `history`.)*
 - **Trade-offs**: History and `show` can disagree after hand edits; this is the contract's intent. A
   current-value projection is not built (no consumer needs it).
 - **Follow-up**: Test: import, hand-edit file, `show` prints the new value and `history` has no new events
@@ -214,6 +216,8 @@ make us revisit it, and its status.
   not reconciling" constrains history only.
 - **Revisit when**: a later contract step makes the event store authoritative or asks for reconciliation of hand
   edits.
+- **Revisited (step 2)**: spec config-file-sync (requirements 1.1–1.3, 1.7) supersedes "a hand edit produces no
+  history event" for every command except `history`; "files are the truth" stands.
 - **Spec impact**: 6.9 (wording sharpened), 7.3; tests in tasks 5.1, 6.3 (new hand-edit case) and 6.4.
 
 ### E. State only under `.troupe/`; store closed; nothing created elsewhere

@@ -155,12 +155,14 @@
   - Cover a mapping or list target, a missing key, an out-of-range index, a non-digit segment on a list, a segment below a scalar and malformed PATH syntax (in the show test module, complementing the usage tests owned by 5.3)
   - Show a folded (`>`) value and assert stdout is the folded text with no `\x07` byte
   - Files are the truth (product-owner decision A): run `show a` on `'a: 1\n'` (imports), capture `history` output, hand-edit the file to `'a: 2\n'`, then `show a` prints `2\n` and a second `history` output is byte-identical to the first (no event for the hand edit)
+    - *Superseded by step 2 (spec config-file-sync 1.1–1.3, 1.7): `show` now records one reconcile `set` for the hand edit; only `history` still adds no event.*
   - Done when stdout bytes match the printing rules exactly, the hand-edit case passes, and every error case asserts its exit code (5 or 2), empty stdout and a stderr message naming PATH and the file
   - _Boundary: tests for show_
   - _Requirements: 1.5, 3.1, 3.8, 5.1, 5.2, 5.3, 5.4, 5.5, 6.1, 6.2, 6.3, 6.4, 6.5, 6.7, 6.8, 6.9, 7.3_
 
 - [x] 6.4 (P) Validate history and import behaviour end to end
   - Through the console script, prove the first `show` imports and a later `history` lists one import line per leaf with seq from 1 and `old` null; the first `history` on a fresh theatre imports; a second command imports nothing; a hand edit adds no events while `show` reflects it; prefix filtering includes `PATH` and `PATH.` descendants only; a non-matching PATH prints nothing with exit 0
+    - *Superseded by step 2 (spec config-file-sync 1.1–1.3, 1.7): `show` now records one reconcile `set` for the hand edit; only `history` still adds no event.*
   - Append set and remove changes through the recording API and prove `history` shows them with consecutive seq numbers
   - Prove the import event for a folded (`>`) leaf has `new` equal to the folded text with no `\x07`, and that `.inf`, `-.inf` and `.nan` leaves appear as `".inf"`, `"-.inf"`, `".nan"`
   - Done when each JSON line is parsed by a strict JSON parser (rejecting `Infinity`/`NaN` tokens) and asserted for seq, op, path, old and new, and boolean leaves appear as JSON booleans

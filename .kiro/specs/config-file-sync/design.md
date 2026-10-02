@@ -181,7 +181,7 @@ tests/
   `tests/test_e2e_show.py::test_show_after_hand_edit_prints_new_value_and_records_no_event`,
   `tests/test_theatre.py::test_hand_edit_after_import_shows_in_show_but_adds_no_history`,
   `tests/test_set_history.py::test_old_value_is_the_hand_edited_value_not_the_imported_one`, and
-  `tests/writeback/test_setter.py::test_old_values_come_from_the_files_on_disk_not_the_history`. `tests/test_store.py::test_second_import_records_nothing_and_never_reconciles`
+  `tests/writeback/test_setter.py::test_old_values_come_from_the_files_on_disk_not_the_history`. `tests/test_store.py::test_second_import_records_nothing_and_never_reconciles` (renamed `..._and_ensure_imported_never_reconciles`)
   stays (`ensure_imported` is still import-only); its docstring is clarified.
 - `.kiro/specs/config-foundation/requirements.md` (6.9, 7.3) and `.kiro/specs/config-set-writeback/requirements.md`
   (the 15.1 example note): each gains a note that step 2 supersedes it, pointing to this spec.

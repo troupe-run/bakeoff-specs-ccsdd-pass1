@@ -89,9 +89,14 @@ def test_import_records_one_event_per_leaf_in_document_order(
     assert store.records() == EXPECTED_IMPORT
 
 
-def test_second_import_records_nothing_and_never_reconciles(
+def test_second_import_records_nothing_and_ensure_imported_never_reconciles(
     theatre: Path, store: HistoryStore
 ) -> None:
+    """Req 7.3: once imported, ``ensure_imported`` records nothing, even for different leaves.
+
+    ``ensure_imported`` is import-only; recording hand edits is the separate reconcile step that
+    the theatre runs on open (config-file-sync 1.1, 2.1-2.3), covered in ``test_reconcile.py``.
+    """
     store.ensure_imported(_leaves(theatre))
     changed = (Leaf(path=ConfigPath.parse("name"), value="other", node=_leaves(theatre)[0].node),)
 

@@ -17,7 +17,8 @@ proposes a layout (`src/troupe/`, CLI → core → file layer) that the first de
   config-set-writeback builds on this model.
 - An `eventsourcing`-based aggregate/projection persisted under `<theatre>/.troupe/`. The first command run
   against a theatre imports it as one `import` event per leaf (`old` null). Later commands do not reconcile
-  hand edits.
+  hand edits. *(Superseded by step 2 (spec config-file-sync, requirements 1.1–1.3, 1.7): every command except
+  `history` now reconciles hand edits into the history first.)*
 - Exit codes and error messages behave as the contract says (2 usage, 4 load, 5 path), with empty stdout on
   any failure.
 

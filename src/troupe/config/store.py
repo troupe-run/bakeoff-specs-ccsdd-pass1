@@ -101,7 +101,9 @@ class HistoryStore:
 
         An import is the history-start event plus one leaf-imported event per leaf, in the given
         order, saved in one transaction. An empty sequence still counts as an import. When the
-        history already exists nothing is recorded (importing is not reconciling).
+        history already exists nothing is recorded: importing is import-only. Reconciling the
+        history with the files is a separate step (``troupe.config.reconcile``, config-file-sync
+        Requirement 2) that the theatre runs after this returns ``False``.
         """
         if self.is_imported():
             return False
@@ -112,7 +114,7 @@ class HistoryStore:
         return True
 
     def record_changes(self, changes: Sequence[LeafChange]) -> None:
-        """Append the changes reported by one ``set`` invocation (9.1-9.4).
+        """Append the changes reported by one ``set`` invocation or one reconcile (9.1-9.4).
 
         Precondition: :meth:`is_imported`. One leaf-value-set event per :class:`SetChange` and one
         leaf-removed event per :class:`RemoveChange`, in the given order, saved in one transaction

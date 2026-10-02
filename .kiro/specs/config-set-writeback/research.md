@@ -288,6 +288,9 @@ config-foundation's `research.md`; G (malformed PATH → exit 2) is inherited fr
 - **Why**: The files are what the user edits and reviews; the event must describe the change actually made to
   them.
 - **Revisit when**: a later contract step makes the event store authoritative or asks for reconciliation.
+- **Revisited (step 2)**: spec config-file-sync (requirements 1.1–1.3, 1.7) asks for reconciliation: every command
+  except `history` reconciles hand edits into the history first, so "a hand edit produces no event" is
+  superseded; `old` still comes from the files, which reconcile has just recorded.
 - **Spec impact**: 15.1, 15.2 (wording); design LeafDiff/SetCommand; tests in tasks 4.2 and 5.10.
 
 ### B. A set that must change more than one file is carried out

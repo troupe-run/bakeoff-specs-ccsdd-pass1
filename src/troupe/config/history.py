@@ -7,7 +7,9 @@ history line), and every later event is one history line whose ``seq`` is its ve
 so ``seq`` starts at 1 and has no gaps.
 
 The aggregate holds no derived leaf state: the files are the truth for current values, and the
-history is change history only. Persistence lives in ``troupe.config.store``, which projects stored
+history records their changes. Set and remove events come from ``set`` and, since step 2, from
+reconcile, which records hand edits before every command except ``history`` (config-file-sync 1.1,
+1.3, 2.1-2.3). Persistence lives in ``troupe.config.store``, which projects stored
 events through :func:`to_history_record`, the single home of the event-to-record mapping.
 """
 
@@ -43,14 +45,14 @@ class ConfigHistory(Aggregate):
         new: ScalarValue
 
     class LeafValueSet(Aggregate.Event):
-        """A leaf changed or created by ``set``: op ``set`` (``old`` null when created)."""
+        """A leaf changed or created by ``set`` or reconcile: op ``set``, ``old`` null if new."""
 
         path: str
         old: ScalarValue
         new: ScalarValue
 
     class LeafRemoved(Aggregate.Event):
-        """A leaf that no longer exists after ``set``: op ``remove``, ``new`` null."""
+        """A leaf gone after ``set`` or found gone by reconcile: op ``remove``, ``new`` null."""
 
         path: str
         old: ScalarValue
