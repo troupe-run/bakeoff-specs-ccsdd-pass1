@@ -58,6 +58,7 @@ rules). The write side carries most of the risk and rules, so it gets its own sp
 ## Specs (dependency order)
 - [x] config-foundation -- CLI scaffold, theatre/config-file location, YAML loading with recursive includes into a source-mapped model, path addressing, event-sourced projection with import, `show PATH`, `history [PATH]`, error/exit-code conventions. Dependencies: none
 - [x] config-set-writeback -- `set PATH VALUE`: YAML 1.2 flow-node value parsing, target-file resolution, byte-surgical write-back rules, leaf-level set/remove events. Dependencies: config-foundation
+- [ ] config-file-sync -- (step 2) reconcile files against the recorded configuration (set/remove per differing leaf), reconcile-first for every command except `history`, `troupe config watch` (polling, readiness line, include following, SIGINT/SIGTERM → 0), inter-process lock so a `set`'s write-back is never re-recorded. Dependencies: config-foundation, config-set-writeback
 
 ## Product owner decisions (2026-10-01)
 Full records (decision, alternatives, why, revisit trigger, status) are in each spec's `research.md`.
@@ -70,3 +71,38 @@ Full records (decision, alternatives, why, revisit trigger, status) are in each 
 - **G** (PO delegated → kept): malformed PATH (empty, empty segment, leading/trailing dot) → exit 2.
 - **H** (our choice): anchors, aliases and merge keys → exit 4 naming the file (and key path where known).
 - **I** (PO delegated → kept): duplicate keys, explicit tags and non-UTF-8 files → exit 4 naming the file (and key path where known).
+
+## Step 2 — Sync with files (2026-10-02)
+
+### Overview
+People edit `.troupe/` files in their editor while troupe runs. Step 2 adds the contract section "Sync with
+files": `troupe config watch --theatre <dir>` reconciles hand edits within 2 s, every command except `history`
+reconciles first, and troupe's own write-back is never recorded a second time. This supersedes step 1's
+"importing is not reconciling" for every command except `history`. Decision A (files are the truth; show/set
+read the files) still holds.
+
+### Approach Decision
+- **Chosen**: reconcile = diff the loaded files' leaves against a projection of the *recorded* configuration
+  (fold of import/set/remove), recorded as `set`/`remove` events in one transaction. `watch` polls the watched
+  files' contents with the stdlib (watch set = `ConfigDocument.files` + config file candidates, recomputed
+  after each load). An exclusive inter-process lock (no leftover file, e.g. `flock` on `.troupe/`) serialises
+  each reconcile and each `set` (reconcile + write + record).
+- **Why**: diffing against what was recorded is idempotent. Edits made while nothing ran are found, and a
+  `set`'s write-back finds nothing new, with no self-write bookkeeping. The lock closes the gap between a
+  `set`'s file write and its event record. Polling needs no new dependency, handles editors that save by
+  renaming, and makes the "watching" readiness promise easy to keep.
+- **Rejected alternatives**: watchfiles/watchdog (new dependency, readiness and coalescing subtleties, needs
+  directory watches for includes); remembering own writes to suppress them (racy); diffing against the
+  previous file snapshot (misses offline edits, double-counts write-back).
+
+### Existing Spec Updates
+- [ ] config-foundation -- supersede 6.9's "record no history event for the hand edit" and 7.3's "shall not record events for differences between the files and the history" for every command except `history`; `history` still imports a never-imported theatre and never reconciles. Dependencies: none
+- [ ] config-set-writeback -- 15.1 unchanged as worded; update the decision-A notes and the example so a hand edit before a `set` now appears as a preceding reconcile `set` event; `set` runs reconcile-first under the shared lock. Dependencies: config-file-sync
+
+### Direct Implementation Candidates
+- (none) -- the step-1 tests that assert "hand edits add no events" are updated inside config-file-sync's tasks, in the same change as the behaviour (collaboration.md: spec, code and tests change together).
+
+### Constraints (step 2 additions)
+- No extra file may remain after any command, including `watch` and its lock (PO decision E). State only under `.troupe/`.
+- A load error during `watch` must never be read as "every leaf removed". Record nothing and keep watching
+  (conservative default; to be confirmed in requirements).
