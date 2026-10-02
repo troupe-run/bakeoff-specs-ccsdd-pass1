@@ -158,3 +158,101 @@ Existing tests that encode the superseded step 1 behaviour and must change in th
 - Keep `set`'s pipeline unchanged apart from running inside the lock that `open_theatre` takes.
 - Record the requirement choices made where the contract is silent (5.3, 5.4, 5.5, 4.3, 2.6) as decision
   records here, in the collaboration.md format.
+
+---
+
+## Design Discovery & Decisions (2026-10-02)
+
+### Summary
+- **Feature**: `config-file-sync`
+- **Discovery Scope**: Extension (light discovery). No new external dependency; integration-focused.
+- **Key Findings**:
+  - Concurrent appends from two processes fail with `IntegrityError`, so a theatre lock is required for 6.x
+    and for the `set` write-back window.
+  - The loader exposes every file read (`ConfigDocument.files`, display `path` + exact `text`), so the watch set
+    comes for free after each successful load.
+  - Typed values round-trip through the store, so a fold of `records()` gives a recorded configuration that
+    compares correctly with `scalar_equal`.
+- **Skills consulted**: kiro-spec-design rules (principles, light discovery, synthesis, review gate). No other
+  domain skill applies (CLI and data, no UI).
+
+### Decision: Reconcile runs inside `open_theatre` (opt-out for `history`)
+- **Context**: 1.1–1.5 require every command except `history` to reconcile first; `watch` must reconcile the same
+  way.
+- **Alternatives**: (1) each handler calls reconcile explicitly; (2) a separate opener per mode;
+  (3) a default-on flag in `open_theatre`.
+- **Selected**: (3). `open_theatre(directory, *, reconcile=True)`; only `handle_history` passes `False`.
+  `watch` syncs are `with open_theatre(dir)` blocks.
+- **Rationale**: safe by default, so a new command cannot forget to reconcile, and there is one code path for
+  every reconcile.
+- **Revisit when**: a command appears that must neither import nor reconcile.
+
+### Decision: Diff against the recorded configuration, not against previous file contents
+- **Alternatives**: remember what troupe wrote (hashes) and ignore it; diff against the previous snapshot.
+- **Selected**: fold the history into `path → (value, created_seq)` and diff the files' leaves against it.
+- **Rationale**: idempotent. It picks up offline edits and naturally ignores a `set`'s write-back (6.1) once the
+  set has recorded it. Repeated or overlapping reconciles are harmless (5.5, 6.3).
+
+### Decision: Theatre lock = `fcntl.flock` on the `.troupe/` directory fd
+- **Alternatives**: (1) a lock file `.troupe/lock`, which leaves an extra file and violates decision E (7.2);
+  (2) flock on `history.sqlite`, which does not exist before the first import and mixes with SQLite's own
+  locking; (3) rely on eventsourcing's version conflict and retry, which still lets `watch` record a `set`'s
+  write-back between write and record.
+- **Selected**: blocking exclusive flock on an `O_RDONLY` fd of the directory, held from after locate until
+  the theatre is closed, and taken by every command including `history` (its import also writes).
+- **Rationale**: no file is created, the lock is released by the kernel if a process dies, and it is supported
+  on Linux and macOS (verified on Linux).
+- **Trade-offs**: blocking with no timeout, so a hung troupe process blocks others; acceptable for small
+  configurations. Not reentrant, so a nested acquire in one process raises instead of deadlocking.
+- **Revisit when**: NFS-hosted theatres or Windows come into scope.
+
+### Decision: Observe by polling byte snapshots (stdlib), 0.2 s tick
+- **Alternatives**: watchfiles/watchdog (native notifications); reconcile unconditionally on every tick.
+- **Selected**: snapshot `{path: bytes | None}` for the watch set (the display paths of `document.files` plus
+  both root names); sync when the snapshot differs from the baseline or a retry is pending.
+- **Rationale**: no dependency. Rename-safe, because files are read by path. Readiness is provable: the
+  baseline is taken before the load it describes, so no change after the line is missed. A sync repeats until
+  the watch set is stable, which places a newly added include under the baseline. 0.2 s plus a sync is well
+  inside 2 s.
+- **Trade-offs**: a few small file reads per tick; repeated loads while the files are broken (one per tick).
+
+### Decision: Failures while watching are retried every tick and reported once per distinct message
+- Covers 5.3 (load) and 5.4 (store) with one rule. Retrying every tick, rather than only on change, means a
+  missing include target that appears, or a store that becomes readable, is picked up without needing to know
+  which file to watch. Deduplicating the message keeps stderr readable. No events are recorded on failure, so a
+  broken file is never read as "removed".
+
+### Decision: Signals only set a flag
+- **Alternatives**: let SIGINT raise `KeyboardInterrupt`, or raise from a SIGTERM handler.
+- **Selected**: handlers set a flag; the loop checks it between ticks and while sleeping. A sync in progress
+  completes (one transaction), the `with` block closes the store and releases the lock, and the handler returns 0.
+- **Rationale**: 2.7 (never partial) and 4.6 (exit 0, no traceback) hold without reasoning about exceptions
+  inside eventsourcing/SQLite code. Stop latency is at most one tick plus the current sync.
+
+### Decision: `<dir>` is the raw `--theatre` text (4.3)
+- `--theatre` is parsed into a `Path`, which normalises (`./t/` becomes `t`). A custom argparse action also
+  stores `theatre_text`: the argument as typed, else `$TROUPE_THEATRE` as set, else `str(Path.cwd())`.
+
+### Decision: `scalar_equal` moves to `troupe.config.scalars`
+- Lets core reconcile compare values exactly as `set` does without importing `writeback` (dependency direction).
+  `writeback/compare.py` re-imports it, so there is no behaviour change.
+
+### Decision: Remove-event order by creation seq (2.6)
+- The files no longer contain removed leaves, so "previous document order" (as `set` uses) is unavailable. The
+  creation `seq` of the live leaf is the closest stable equivalent: imported leaves keep import (document)
+  order, and leaves added later follow in the order they were added.
+
+### Synthesis outcomes
+- **Generalisation**: the step 1 "import" and the step 2 "reconcile" are both "make the history match the files
+  at open". They stay separate operations (import is not reconcile for `history`), but they share one opener.
+- **Build vs adopt**: adopt the stdlib (`fcntl`, `signal`, polling) over watchfiles/watchdog; reuse the existing
+  store, events, loader and `scalar_equal`. Build only the projection, the diff, the lock and the loop.
+- **Simplification**: no separate "self-write suppression" component, because the idempotent diff plus the lock
+  covers it. One retry rule for load and store failures. No persisted projection (computed per sync).
+
+### Risks & Mitigations
+- Flaky timing tests under `pytest -n auto`: use deadline polling for positive checks, 2.5 s waits for negative
+  ones, and a helper that always kills the child.
+- A nested `open_theatre` in tests would deadlock: the lock raises on a nested acquire, and the existing tests
+  open sequentially (checked).
+- A lock held by a crashed process: impossible with flock, which the kernel releases on exit.
