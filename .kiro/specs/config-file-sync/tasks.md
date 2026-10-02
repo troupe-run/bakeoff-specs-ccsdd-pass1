@@ -93,7 +93,7 @@ new runtime dependency is added.
   - _Depends: 3.1_
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 2.4, 2.8, 2.9, 3.1, 3.2, 3.3_
 
-- [ ] 4. Watch
+- [x] 4. Watch
 - [x] 4.1 Build the watcher loop
   - The watch set is every file the last successful load read, plus both root file names
   - A snapshot holds each watched file's bytes read by path, or "missing"
@@ -122,7 +122,7 @@ new runtime dependency is added.
   - _Depends: 3.1_ (only because both edit the CLI main module; independent of 4.1)
   - _Requirements: 4.1, 4.3_
 
-- [ ] 4.3 Add the `watch` subcommand and the watch-process test helper
+- [x] 4.3 Add the `watch` subcommand and the watch-process test helper
   - Register `watch` with the shared theatre option and no positional arguments, so a surplus argument is a usage error
   - Update `tests/test_cli_usage.py::test_registration_point_holds_show_and_history`, which pins the exact list of registered subcommands
   - Install SIGINT and SIGTERM handlers that only request a stop; start the watcher; unless a stop was already requested, print exactly `watching <dir>` with the directory as given and a newline, and flush; run the watcher, reporting each message on stderr; restore the previous signal handlers in a `finally`, so they are restored on every exit path, including a start-up failure; return 0 after a stop

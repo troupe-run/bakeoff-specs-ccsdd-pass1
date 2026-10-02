@@ -279,11 +279,13 @@ def test_main_registers_set_after_show_and_history() -> None:
     from troupe.cli.set_command import add_set_subparser, handle_set
 
     registrars = cli_main.SUBCOMMAND_REGISTRARS
-    assert registrars == (
+    # Later specs (config-file-sync's `watch`) append their registrars after `set`.
+    assert registrars[:3] == (
         cli_main.add_show_subparser,
         cli_main.add_history_subparser,
         add_set_subparser,
     )
+    assert registrars.count(add_set_subparser) == 1
     args = cli_main.build_parser().parse_args(["config", "set", "a", "-1e3"])
     assert (args.path, args.value, args.handler) == ("a", "-1e3", handle_set)
 

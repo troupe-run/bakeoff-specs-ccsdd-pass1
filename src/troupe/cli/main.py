@@ -26,6 +26,7 @@ from troupe.cli.shell import (
     TroupeArgumentParser,
     theatre_option_parent,
 )
+from troupe.cli.watch_command import add_watch_subparser
 from troupe.config.errors import TroupeError
 from troupe.config.paths import ConfigPath
 from troupe.config.theatre import list_history, open_theatre, show_value
@@ -81,10 +82,12 @@ def add_history_subparser(
 # ---- REGISTRATION POINT ----
 # Each entry adds one `troupe config` subcommand. config-set-writeback extends this tuple with
 # exactly one entry (its `set` registrar, imported from its own module); nothing else changes.
+# config-file-sync appends its streaming `watch` registrar the same way.
 SUBCOMMAND_REGISTRARS: Final[tuple[SubcommandRegistrar, ...]] = (
     add_show_subparser,
     add_history_subparser,
     add_set_subparser,
+    add_watch_subparser,
 )
 
 
