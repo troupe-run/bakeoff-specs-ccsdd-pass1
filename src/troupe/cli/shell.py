@@ -8,6 +8,7 @@ direction is therefore ``shell <- subcommand modules <- main`` and has no cycle.
 
 import argparse
 import io
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import NoReturn
@@ -37,13 +38,20 @@ type SubcommandRegistrar = Callable[[argparse._SubParsersAction[TroupeArgumentPa
 
 
 def theatre_option_parent() -> TroupeArgumentParser:
-    """Return a parent parser adding ``--theatre DIR`` (default: the current directory)."""
+    """Return a parent parser adding ``--theatre DIR``.
+
+    The default is ``$TROUPE_THEATRE`` when it is set and not empty, else the current directory.
+    """
+    env_theatre = os.environ.get("TROUPE_THEATRE")
     parent = TroupeArgumentParser(add_help=False)
     parent.add_argument(
         "--theatre",
         metavar="DIR",
         type=Path,
-        default=Path.cwd(),
-        help="theatre directory holding .troupe/ (default: the current directory)",
+        default=Path(env_theatre) if env_theatre else Path.cwd(),
+        help=(
+            "theatre directory holding .troupe/ "
+            "(default: $TROUPE_THEATRE if set, else the current directory)"
+        ),
     )
     return parent

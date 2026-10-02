@@ -129,6 +129,23 @@ def test_history_defaults_to_the_current_directory(
     }
 
 
+def test_theatre_env_var_is_the_default_and_option_wins(
+    make_theatre: MakeTheatre, run_cli: RunCli, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    theatre = make_theatre(CONFIG)
+    other = make_theatre("name: other\n", name="other")
+    monkeypatch.setenv("TROUPE_THEATRE", str(theatre))
+
+    from_env = run_cli("config", "show", "name", cwd=other)
+    from_option = run_cli("config", "show", "name", "--theatre", str(other), cwd=other)
+    monkeypatch.setenv("TROUPE_THEATRE", "")
+    empty_env = run_cli("config", "show", "name", cwd=other)
+
+    assert (from_env.exit_code, from_env.stdout) == (0, b"demo\n")
+    assert (from_option.exit_code, from_option.stdout) == (0, b"other\n")
+    assert (empty_env.exit_code, empty_env.stdout) == (0, b"other\n")
+
+
 def test_default_theatre_without_config_is_a_load_error(run_cli: RunCli, tmp_path: Path) -> None:
     result = run_cli("config", "show", "a", cwd=tmp_path)
 
