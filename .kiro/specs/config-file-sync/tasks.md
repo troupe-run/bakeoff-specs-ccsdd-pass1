@@ -20,7 +20,7 @@ new runtime dependency is added.
   - _Requirements: 2.5_
 
 - [ ] 2. Core: recorded configuration, lock and reconcile
-- [ ] 2.1 (P) Fold the history into the recorded configuration
+- [x] 2.1 (P) Fold the history into the recorded configuration
   - Fold history records in `seq` order: an import creates a leaf; a set either creates a leaf (when its path is absent from the fold) or updates its value and keeps its creation `seq`; a remove deletes the leaf
   - Decide "absent" by the path's presence in the fold, never by `old` being null (a leaf can hold null)
   - Return the live leaves ordered by creation `seq`, oldest first
