@@ -338,7 +338,9 @@ def recorded_leaves(records: Sequence[HistoryRecord]) -> tuple[RecordedLeaf, ...
   - a recorded value that is not `scalar_equal` to the file value gives `SetChange(path, recorded, value)`.
 
   Then, for each recorded leaf whose path is not in the files, in `created_seq` order, it gives
-  `RemoveChange(ConfigPath.parse(path), recorded)`.
+  `RemoveChange(path, recorded)`. The stored path text is split on the separator **without** `ConfigPath.parse`
+  validation, because the loader accepts keys that PATH syntax rejects (an empty key, or a key ending in `.`). With
+  validation, such a removed leaf would make every later reconcile fail. The split reproduces the stored text exactly.
 - `reconcile` reads `store.records()`, computes the changes and calls `store.record_changes(changes)` once, which
   is one transaction (2.7). An empty diff records nothing.
 - Never touches user files (4.9). Never imports `writeback` or `cli`.

@@ -19,7 +19,7 @@ new runtime dependency is added.
   - Done when the existing comparison tests pass unchanged against the new home, a new test imports the comparison from the core module and proves `1`, `1.0`, `True` and `"1"` are pairwise different and `nan` equals `nan`, no core module imports the write-back package, and `uv run pytest -n auto`, `uv run mypy --strict .` and ruff (lint and format) pass
   - _Requirements: 2.5_
 
-- [ ] 2. Core: recorded configuration, lock and reconcile
+- [x] 2. Core: recorded configuration, lock and reconcile
 - [x] 2.1 (P) Fold the history into the recorded configuration
   - Fold history records in `seq` order: an import creates a leaf; a set either creates a leaf (when its path is absent from the fold) or updates its value and keeps its creation `seq`; a remove deletes the leaf
   - Decide "absent" by the path's presence in the fold, never by `old` being null (a leaf can hold null)
@@ -35,7 +35,7 @@ new runtime dependency is added.
   - _Boundary: TheatreLock_
   - _Requirements: 6.4, 7.1, 7.2_
 
-- [ ] 2.3 Compute and record the reconcile changes
+- [x] 2.3 Compute and record the reconcile changes
   - Diff the loaded files' leaves against the recorded configuration with the typed comparison:
     - a changed leaf gives a `set` (old = recorded value, new = file value);
     - a leaf missing from the record gives a `set` with old null;
@@ -174,3 +174,4 @@ new runtime dependency is added.
 ## Implementation Notes
 - 2.2: `TheatreLock.acquire` closes its fd only on `OSError`; a `KeyboardInterrupt` raised while blocked in `flock` (Ctrl-C on an ordinary command) leaks the fd until process exit — harmless today; `watch` must keep its signal handlers flag-only so nothing raises inside the lock wait.
 - 2.2: the lock does not use `O_DIRECTORY`; `open_theatre` must keep locating the config file (which proves `.troupe/` is a directory) before acquiring.
+- 2.3: stored history paths are turned back into `ConfigPath`s without `ConfigPath.parse` (the loader accepts empty keys and keys ending in `.`, which PATH syntax rejects); reuse `reconcile`'s helper rather than parsing stored paths elsewhere.
