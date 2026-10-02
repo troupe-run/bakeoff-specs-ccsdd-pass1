@@ -94,7 +94,7 @@ new runtime dependency is added.
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 2.4, 2.8, 2.9, 3.1, 3.2, 3.3_
 
 - [ ] 4. Watch
-- [ ] 4.1 Build the watcher loop
+- [x] 4.1 Build the watcher loop
   - The watch set is every file the last successful load read, plus both root file names
   - A snapshot holds each watched file's bytes read by path, or "missing"
   - A sync repeats "snapshot the watch set, then open the theatre (which reconciles), then recompute the watch set" until the watch set is stable, and then keeps that snapshot as the baseline
@@ -176,3 +176,4 @@ new runtime dependency is added.
 - 2.2: the lock does not use `O_DIRECTORY`; `open_theatre` must keep locating the config file (which proves `.troupe/` is a directory) before acquiring.
 - 2.3: stored history paths are turned back into `ConfigPath`s without `ConfigPath.parse` (the loader accepts empty keys and keys ending in `.`, which PATH syntax rejects); reuse `reconcile`'s helper rather than parsing stored paths elsewhere.
 - 3.1: `Theatre.__exit__` suppresses only `ConfigLoadError` from `close()`; an `OSError` from releasing the lock while a block's error is in flight would replace that error (very unlikely; candidate hardening). Also, `tests/test_e2e_history.py::test_theatre_without_leaves_is_imported_with_no_events_and_never_reimported` was a sixth step 1 test with the superseded expectation.
+- 4.1: the watcher's baseline must be the bytes each load actually read, not the pre-load snapshot; otherwise an X → transient → X in-place save leaves phantom events unrepaired (found in review, regression test in tests/test_watch_loop.py). In-process tests read history while a watcher runs by taking the lock on their own fd and reading the store directly, because `open_theatre` refuses a nested open in one process.

@@ -236,9 +236,12 @@ stateDiagram-v2
     Stopped --> [*]: exit 0
 ```
 - **Sync** repeats `S = snapshot(W)`, then `with open_theatre(dir) as t: W' = watch_paths(t.document)`, until
-  `W' == W`; then `baseline = S`. Because the snapshot of exactly the files later loaded is taken *before* the
-  load, any write after the snapshot shows up as a difference at the next tick. Nothing that happens after the
-  readiness line can be missed (4.3, 4.4, 5.1). A newly added include enlarges `W'`, which forces one more
+  `W' == W`. The baseline is then the bytes the load actually read (`SourceFile.text`, re-encoded exactly) for every
+  loaded file, plus `S` for watched paths the load did not read (the absent root name). A write that the load did
+  not see differs from the baseline at the next tick. A transient state that the load did see (for example an
+  empty file in the middle of an in-place save) also differs once the file settles, so the history is repaired.
+  Using `S` itself as the baseline would miss an X → transient → X save, a defect found in review of task 4.1.
+  Nothing that happens after the readiness line can be missed (4.3, 4.4, 5.1, 5.5). A newly added include enlarges `W'`, which forces one more
   iteration that puts the new file under the baseline (3.4). A removed include shrinks `W`, so its file is
   never looked at again (3.5).
 - **Retry**: any `TroupeError` during sync (a load failure, 5.3, or a store failure, 5.4) leaves `pending =
