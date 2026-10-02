@@ -46,7 +46,7 @@ new runtime dependency is added.
   - _Depends: 1.1, 2.1_
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 3.1, 3.2, 3.3, 5.5_
 
-- [ ] 3. Integration: reconcile first in every command except history
+- [x] 3. Integration: reconcile first in every command except history
 - [x] 3.1 Open every theatre under the lock, reconcile by default, and keep history reconcile-free
   - Order the opening as: locate the config file, take the lock on its directory, load, open the store, import when never imported, otherwise reconcile unless the caller opted out
   - A theatre that was just imported records no reconcile events in the same command
@@ -76,7 +76,7 @@ new runtime dependency is added.
   - Done when a search of `src/`, `tests/` and `.kiro/` finds no text still claiming that commands other than `history` never record hand edits, and the full suite passes
   - _Requirements: 1.3, 1.7, 2.9_
 
-- [ ] 3.3 Validate reconcile-first through the real CLI
+- [x] 3.3 Validate reconcile-first through the real CLI
   - Cover, through `troupe config` subprocesses on real theatres:
     - a hand edit then `history` (nothing recorded), then `show` (one `set`), then `history` (the event printed in the usual line format);
     - a hand edit then `set` (reconcile event first, then the set's events);
