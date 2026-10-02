@@ -26,3 +26,9 @@ HISTORY_STORE_NAME: Final = "history.sqlite"
 
 PATH_SEPARATOR: Final = "."
 """Separator between segments of a dotted configuration PATH."""
+
+WATCH_POLL_SECONDS: Final = 0.2
+"""Interval in seconds at which ``troupe config watch`` checks the watched files for changes."""
+
+WATCHING_LINE_PREFIX: Final = "watching "
+"""Start of the readiness line ``watching <dir>`` that ``troupe config watch`` prints once."""

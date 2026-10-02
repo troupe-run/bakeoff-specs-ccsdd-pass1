@@ -9,6 +9,10 @@ reads ``1_0`` as an integer and ``2001-12-14`` as a timestamp; both are strings 
 schema).
 
 Quoted and block scalars are never passed here; they are always strings.
+
+It is also the single home of typed value comparison (:func:`scalar_equal`), used by both
+config-set-writeback and the reconcile of config-file-sync, so core code never imports the
+write-back package to compare values.
 """
 
 import math
@@ -57,3 +61,16 @@ def resolve_plain_scalar(text: str) -> ScalarValue:
     if _NOT_A_NUMBER.fullmatch(text):
         return math.nan
     return text
+
+
+def scalar_equal(a: ScalarValue, b: ScalarValue) -> bool:
+    """Return whether two scalars have the same type and value (floats compared by ``repr``).
+
+    So ``1``, ``1.0``, ``True`` and ``"1"`` are pairwise different, ``nan`` equals ``nan`` and
+    ``0.0`` differs from ``-0.0``.
+    """
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, float):
+        return repr(a) == repr(b)
+    return a == b

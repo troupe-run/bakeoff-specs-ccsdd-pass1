@@ -7,7 +7,8 @@ decisions, verification and the leaf diff:
   is an :class:`IncludeDirective` carrying its ``file:`` text and its expanded content;
 * :func:`new_to_plain` turns a parsed VALUE into a plain tree in which every string starting with
   :data:`~troupe.config.constants.INCLUDE_PREFIX` is a directive without content;
-* :func:`scalar_equal` and :func:`plain_equal` compare by type and value (floats by ``repr``);
+* :func:`plain_equal` compares by type and value (floats by ``repr``), using
+  :func:`~troupe.config.scalars.scalar_equal` (re-exported here) for scalars;
 * :func:`splice` builds the intended configuration: the value at a path replaced, with mappings and
   lists merged entry-wise and strings placed over text includes kept as the include.
 """
@@ -19,6 +20,7 @@ from troupe.config.constants import INCLUDE_PREFIX
 from troupe.config.model import ConfigMapping, ConfigNode, ConfigScalar, IncludeKind
 from troupe.config.paths import ConfigPath, is_index_segment
 from troupe.config.scalars import ScalarValue
+from troupe.config.scalars import scalar_equal as scalar_equal  # re-exported for existing imports
 from troupe.config.writeback.value import NewMapping, NewScalar, NewValue
 
 
@@ -79,19 +81,6 @@ def new_to_plain(value: NewValue) -> PlainValue:
     if isinstance(value, NewMapping):
         return {key: new_to_plain(item) for key, item in value.entries}
     return [new_to_plain(item) for item in value.items]
-
-
-def scalar_equal(a: ScalarValue, b: ScalarValue) -> bool:
-    """Return whether two scalars have the same type and value (floats compared by ``repr``).
-
-    So ``1``, ``1.0``, ``True`` and ``"1"`` are pairwise different, ``nan`` equals ``nan`` and
-    ``0.0`` differs from ``-0.0``.
-    """
-    if type(a) is not type(b):
-        return False
-    if isinstance(a, float):
-        return repr(a) == repr(b)
-    return a == b
 
 
 def plain_equal(a: PlainValue, b: PlainValue, *, ordered: bool) -> bool:

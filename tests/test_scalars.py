@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from troupe.config.scalars import ScalarValue, resolve_plain_scalar
+from troupe.config.scalars import ScalarValue, resolve_plain_scalar, scalar_equal
 
 NAN = float("nan")
 
@@ -119,3 +119,23 @@ def test_string_result_is_the_text_unchanged() -> None:
     text = "  spaced text  "
 
     assert resolve_plain_scalar(text) == text
+
+
+# --- scalar_equal (typed comparison, config-file-sync) ----------------------------------------
+
+DIFFERENT_TYPES_OF_ONE: list[ScalarValue] = [1, 1.0, True, "1"]
+
+
+@pytest.mark.parametrize("left", DIFFERENT_TYPES_OF_ONE)
+@pytest.mark.parametrize("right", DIFFERENT_TYPES_OF_ONE)
+def test_core_scalar_equal_tells_one_one_point_zero_true_and_string_one_apart(
+    left: ScalarValue, right: ScalarValue
+) -> None:
+    """Req 2.5: ``1``, ``1.0``, ``True`` and ``"1"`` are pairwise different; each equals itself."""
+    assert scalar_equal(left, right) is (left is right)
+
+
+def test_core_scalar_equal_treats_nan_as_equal_to_nan() -> None:
+    """Req 2.5: floats compare by ``repr``: ``nan`` equals ``nan``; ``0.0`` and ``-0.0`` differ."""
+    assert scalar_equal(math.nan, float("nan"))
+    assert not scalar_equal(0.0, -0.0)

@@ -12,8 +12,8 @@ A watch test polls `history` no more often than every 100 ms, because each poll 
 **External prerequisites.** config-foundation and config-set-writeback are complete (all their tasks `[x]`). No
 new runtime dependency is added.
 
-- [ ] 1. Foundation: shared comparison and constants
-- [ ] 1.1 Make typed value comparison and the watch constants available to core code
+- [x] 1. Foundation: shared comparison and constants
+- [x] 1.1 Make typed value comparison and the watch constants available to core code
   - Move the typed scalar comparison (same type and value, floats by `repr`) from the write-back package into the core scalar-typing module, and keep it importable from its old location so `set` behaves identically
   - Add the watch poll interval (0.2 s) and the readiness line prefix as single-place constants
   - Done when the existing comparison tests pass unchanged against the new home, a new test imports the comparison from the core module and proves `1`, `1.0`, `True` and `"1"` are pairwise different and `nan` equals `nan`, no core module imports the write-back package, and `uv run pytest -n auto`, `uv run mypy --strict .` and ruff (lint and format) pass
