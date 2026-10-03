@@ -140,7 +140,7 @@ new runtime dependency is added.
   - _Depends: 4.1, 4.2_
   - _Requirements: 2.7, 4.1, 4.3, 4.5, 4.6, 4.7, 4.8_
 
-- [ ] 5. Validation: watch end to end
+- [x] 5. Validation: watch end to end
 - [x] 5.1 Validate observation end to end
   - Using the watch-process helper from 4.3, cover end to end:
     - the readiness line appears before any edit, and an edit made immediately after it is recorded within 2 s;
@@ -164,7 +164,7 @@ new runtime dependency is added.
   - _Depends: 5.1_
   - _Requirements: 2.7, 4.5, 4.6, 4.9, 5.3, 6.1, 6.2, 6.3, 6.4, 7.1, 7.2, 7.3_
 
-- [ ] 5.3 Run the full quality gate and check traceability
+- [x] 5.3 Run the full quality gate and check traceability
   - Run `uv run pytest -n auto`, `uv run mypy --strict .`, `uv run ruff check .` and `uv run ruff format --check .`
   - Check that every requirement ID of this spec is named by at least one test docstring, that every new test names at least one ID, and that no test still asserts the superseded step 1 behaviour
   - Mark config-file-sync complete in the roadmap's spec list

@@ -29,7 +29,7 @@ def _parse_theatre(*argv: str) -> argparse.Namespace:
 
 
 def test_theatre_text_keeps_the_option_as_typed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """4.3: ``--theatre ./t/`` keeps the text ``./t/``; the parsed path is unchanged (4.1)."""
+    """Req 4.3: ``--theatre ./t/`` keeps the text ``./t/``; the parsed path is unchanged (4.1)."""
     monkeypatch.delenv("TROUPE_THEATRE", raising=False)
 
     args = _parse_theatre("--theatre", "./t/")
@@ -40,7 +40,7 @@ def test_theatre_text_keeps_the_option_as_typed(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_theatre_text_keeps_the_env_value_as_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    """4.1, 4.3: the ``$TROUPE_THEATRE`` default keeps its text as set; the path is unchanged."""
+    """Req 4.1, 4.3: the ``$TROUPE_THEATRE`` default keeps its text as set; path unchanged."""
     monkeypatch.setenv("TROUPE_THEATRE", "./env-t/")
 
     args = _parse_theatre()
@@ -50,7 +50,7 @@ def test_theatre_text_keeps_the_env_value_as_set(monkeypatch: pytest.MonkeyPatch
 
 
 def test_theatre_option_wins_over_the_env_value(monkeypatch: pytest.MonkeyPatch) -> None:
-    """4.1, 4.3: an explicit ``--theatre`` wins over ``$TROUPE_THEATRE`` for both attributes."""
+    """Req 4.1, 4.3: an explicit ``--theatre`` wins over ``$TROUPE_THEATRE`` for both attributes."""
     monkeypatch.setenv("TROUPE_THEATRE", "/from/env")
 
     args = _parse_theatre("--theatre", "other/")
@@ -62,7 +62,7 @@ def test_theatre_option_wins_over_the_env_value(monkeypatch: pytest.MonkeyPatch)
 def test_theatre_text_defaults_to_the_current_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, env: str | None
 ) -> None:
-    """4.1, 4.3: without ``--theatre`` and a non-empty ``$TROUPE_THEATRE``, the text is the cwd."""
+    """Req 4.1, 4.3: no ``--theatre``, ``$TROUPE_THEATRE`` unset or empty: the text is the cwd."""
     if env is None:
         monkeypatch.delenv("TROUPE_THEATRE", raising=False)
     else:
@@ -76,7 +76,7 @@ def test_theatre_text_defaults_to_the_current_directory(
 
 
 def test_registered_subcommands_get_the_theatre_text(monkeypatch: pytest.MonkeyPatch) -> None:
-    """4.1, 4.3: the real parser gives every subcommand both attributes."""
+    """Req 4.1, 4.3: the real parser gives every subcommand both attributes."""
     monkeypatch.delenv("TROUPE_THEATRE", raising=False)
 
     args = cli_main.build_parser().parse_args(["config", "show", "a", "--theatre", "./t/"])
@@ -101,7 +101,7 @@ def _register_stream_handler(monkeypatch: pytest.MonkeyPatch, handler: StreamHan
 def test_streaming_handler_writes_to_stdout_and_returns_its_code(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """4.3: a streaming handler writes straight to stdout/stderr and its code is the exit code."""
+    """Req 4.3: a streaming handler writes to stdout/stderr and its code is the exit code."""
     seen: list[tuple[BinaryIO, TextIO]] = []
 
     def probe(args: argparse.Namespace, stdout: BinaryIO, stderr: TextIO) -> int:
@@ -122,7 +122,7 @@ def test_streaming_handler_writes_to_stdout_and_returns_its_code(
 def test_streaming_handler_troupe_error_keeps_the_conventions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """4.8 (config-foundation 10.2, 10.3, 10.5): exit code, empty stdout, formatted stderr."""
+    """Req 4.8 (config-foundation 10.2, 10.3, 10.5): exit code, empty stdout, formatted stderr."""
 
     def probe(args: argparse.Namespace, stdout: BinaryIO, stderr: TextIO) -> int:
         raise PathNotFoundError("does not exist", file=Path("f.yml"), path="x.y")
@@ -138,7 +138,7 @@ def test_streaming_handler_troupe_error_keeps_the_conventions(
 
 
 def test_streaming_subcommand_usage_error_exits_2(monkeypatch: pytest.MonkeyPatch) -> None:
-    """4.7: a malformed command line never reaches the streaming handler (exit 2, empty stdout)."""
+    """Req 4.7: a malformed command line never reaches the streaming handler (exit 2, no stdout)."""
     calls: list[argparse.Namespace] = []
 
     def probe(args: argparse.Namespace, stdout: BinaryIO, stderr: TextIO) -> int:
