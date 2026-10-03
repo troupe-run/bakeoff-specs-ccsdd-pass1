@@ -141,7 +141,7 @@ new runtime dependency is added.
   - _Requirements: 2.7, 4.1, 4.3, 4.5, 4.6, 4.7, 4.8_
 
 - [ ] 5. Validation: watch end to end
-- [ ] 5.1 Validate observation end to end
+- [x] 5.1 Validate observation end to end
   - Using the watch-process helper from 4.3, cover end to end:
     - the readiness line appears before any edit, and an edit made immediately after it is recorded within 2 s;
     - edits to the root file, a YAML include, a nested include and a text include are each recorded within 2 s;
@@ -177,3 +177,4 @@ new runtime dependency is added.
 - 2.3: stored history paths are turned back into `ConfigPath`s without `ConfigPath.parse` (the loader accepts empty keys and keys ending in `.`, which PATH syntax rejects); reuse `reconcile`'s helper rather than parsing stored paths elsewhere.
 - 3.1: `Theatre.__exit__` suppresses only `ConfigLoadError` from `close()`; an `OSError` from releasing the lock while a block's error is in flight would replace that error (very unlikely; candidate hardening). Also, `tests/test_e2e_history.py::test_theatre_without_leaves_is_imported_with_no_events_and_never_reimported` was a sixth step 1 test with the superseded expectation.
 - 4.1: the watcher's baseline must be the bytes each load actually read, not the pre-load snapshot; otherwise an X → transient → X in-place save leaves phantom events unrepaired (found in review, regression test in tests/test_watch_loop.py). In-process tests read history while a watcher runs by taking the lock on their own fd and reading the store directly, because `open_theatre` refuses a nested open in one process.
+- 5.1: watch timing tests must edit straight after the readiness line (no `history` call first) and sweep idle times across the poll cycle; otherwise readiness races and too-slow polling go undetected (found in review).
