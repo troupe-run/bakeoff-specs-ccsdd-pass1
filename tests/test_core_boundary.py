@@ -12,6 +12,7 @@ from troupe.config.writeback import compare
 
 CONFIG_PACKAGE = Path(troupe.config.__file__).parent
 WRITEBACK_PACKAGE = "troupe.config.writeback"
+CLI_PACKAGE = "troupe.cli"
 
 
 def _imported_modules(source: Path) -> list[str]:
@@ -34,6 +35,21 @@ def test_no_core_config_module_imports_the_writeback_package() -> None:
         for module in core_modules
         for imported in _imported_modules(module)
         if imported == WRITEBACK_PACKAGE or imported.startswith(WRITEBACK_PACKAGE + ".")
+    }
+
+    assert offenders == {}
+
+
+def test_no_core_config_module_imports_the_cli_package() -> None:
+    """Req 2.5, 4.1: core configuration code (reconcile, lock, watcher) never depends on the CLI."""
+    core_modules = sorted(CONFIG_PACKAGE.glob("*.py"))
+    assert core_modules
+
+    offenders = {
+        module.name: imported
+        for module in core_modules
+        for imported in _imported_modules(module)
+        if imported == CLI_PACKAGE or imported.startswith(CLI_PACKAGE + ".")
     }
 
     assert offenders == {}

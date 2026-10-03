@@ -110,6 +110,19 @@ def test_surplus_argument_is_a_usage_error_without_a_line(tmp_path: Path) -> Non
     assert not (theatre / CONFIG_DIR_NAME / HISTORY_STORE_NAME).exists()
 
 
+def test_unknown_option_is_a_usage_error_without_a_line(tmp_path: Path) -> None:
+    """Req 4.7: an unknown option exits 2 under the usage rules and prints no ``watching`` line."""
+    theatre = _theatre(tmp_path)
+
+    with WatchProcess(str(theatre), cwd=tmp_path, extra_args=["--no-such-option"]) as watch:
+        assert watch.wait() == 2
+
+    assert watch.stdout == b""
+    assert "--no-such-option" in watch.stderr
+    assert "Traceback" not in watch.stderr
+    assert not (theatre / CONFIG_DIR_NAME / HISTORY_STORE_NAME).exists()
+
+
 def test_missing_config_exits_4_naming_the_expected_file(tmp_path: Path) -> None:
     """Req 4.8: no configuration file exits 4, empty stdout, stderr naming ``troupe.yml``."""
     theatre = tmp_path / "theatre"
