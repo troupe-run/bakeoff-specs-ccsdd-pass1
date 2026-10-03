@@ -104,9 +104,13 @@ Terms used below:
      form. This keeps the comment separate from the value, including for multi-line text (2.6).
   2. A literal block's source comment goes on its header line. Its content lines carry no comment, because text
      there would become part of the value (5.2).
-  3. The YAML output must read back as exactly the same values (4.1). A string that a literal block cannot
-     reproduce exactly, such as a text include with CRLF line endings, is printed double-quoted with escapes
-     instead (4.5). The value is never altered to fit the requested style.
+  3. Every text include is printed as a literal block, with no exception, as the contract requires (4.4). The
+     block's content lines are the included file's text, character for character, including its own line breaks
+     (CRLF stays CRLF) and any character that YAML would not otherwise accept there (4.5). So the output shows the
+     file's exact text. Where a literal block cannot reproduce the text when read back (a carriage return, or a
+     character a YAML reader rejects), that one text include is excused from the read-back promise (4.1); its
+     text is not altered. Other multi-line strings (not text includes) that a literal block cannot reproduce are
+     printed double-quoted with escapes, so they still read back exactly (4.5).
   4. Empty mappings and lists print as `{}` and `[]`, since block style has no empty form. An empty
      configuration prints `{}` (3.5).
   5. Layout: two spaces per nesting level; list items indented under their key; no document markers (3.2–3.4,
@@ -156,12 +160,12 @@ Terms used below:
 **Objective:** As a developer, I want every value in the YAML output to mean exactly what it means in my configuration, so that I can trust what `show` prints and paste it back.
 
 #### Acceptance Criteria
-1. The troupe CLI shall print YAML output that reads back to exactly the printed node: the same keys (as text), in the same order, with the same value types, the same strings character for character, and the same numbers.
+1. The troupe CLI shall print YAML output that reads back to exactly the printed node: the same keys (as text), in the same order, with the same value types, the same strings character for character, and the same numbers. The only exception is a text include whose text a literal block cannot reproduce (criterion 5).
 2. The troupe CLI shall print booleans as `true`/`false`, null as `null`, integers in decimal, finite floats in Python `repr()` form, and infinite and not-a-number floats as `.inf`, `-.inf` and `.nan`.
 3. When a string contains no line break, the troupe CLI shall print it plain if the plain text reads back as that same string. Otherwise it shall print it single-quoted if single quotes can represent it, and otherwise double-quoted with escapes. For example, the strings `true`, `5`, `null`, an empty string and `a: b` are quoted.
-4. When a string is a text include, or any other string that contains a line break, the troupe CLI shall print it as a literal block scalar (`|`). The block shall use the chomping indicator that reproduces the string's trailing line breaks (`|-` for none, `|` for exactly one, `|+` for more), an indentation indicator when the text's first line starts with a space, and content indented two spaces more than the line that holds the block's header.
-5. If a string that criterion 4 would print as a literal block cannot be reproduced exactly by a literal block (for example, it contains a carriage return, as a text include with CRLF line endings does, or another character that a literal block cannot hold), then the troupe CLI shall print it double-quoted with escapes so that it still reads back exactly.
-6. The troupe CLI shall print non-ASCII printable characters as UTF-8 text without escaping, and shall print non-printable characters only as escapes inside double-quoted strings.
+4. When a string is a text include (always, whatever its text) or any other string that contains a line break, the troupe CLI shall print it as a literal block scalar (`|`). The block shall use the chomping indicator that reproduces the string's trailing line breaks (`|-` for none, `|` for exactly one, `|+` for more), an indentation indicator when the text's first line starts with a space, and content indented two spaces more than the line that holds the block's header.
+5. If a string that criterion 4 prints as a literal block cannot be reproduced exactly by a literal block (for example, it contains a carriage return, as a text include with CRLF line endings does, or another character that a literal block cannot hold), then the troupe CLI shall: for a text include, still print it as a literal block whose content lines hold the included file's text character for character, including its own line breaks; and for any other string, print it double-quoted with escapes so that it still reads back exactly.
+6. The troupe CLI shall print non-ASCII printable characters as UTF-8 text without escaping. Outside text includes, it shall print non-printable characters only as escapes inside double-quoted strings. In a text include they appear unescaped under criterion 5.
 7. The troupe CLI shall not wrap any scalar across lines, except for the lines of a literal block.
 8. The troupe CLI shall print a mapping key plain if the plain text reads back as the same string key, and otherwise quoted under criterion 3.
 
