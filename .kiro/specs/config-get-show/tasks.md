@@ -27,7 +27,7 @@ tasks `[x]`). No new runtime dependency is added.
   - Done when tests prove `--- a`, `...`, `%x`, `true`, `5` and an empty string are not plain in that context while `hello` and `café` are, and that every chosen style reads back as the original string
   - _Requirements: 2.6, 4.3_
 
-- [ ] 2. Core: read use cases, source labels and the YAML emitter
+- [x] 2. Core: read use cases, source labels and the YAML emitter
 - [x] 2.1 (P) Turn the scalar read into `get`'s use case and add the node lookup
   - Rename the scalar read use case for `get`; its refusal of a mapping or list keeps exit 5 and the `<file>: <path>: <problem>` shape and adds a hint to print it with `troupe config show <PATH>`
   - Add the lookup of the node at an optional PATH: the top-level mapping when PATH is omitted, otherwise the resolved node (missing PATH → the existing not-found error naming the deepest existing file)
@@ -60,7 +60,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Boundary: YamlOutput_
   - _Requirements: 3.4, 4.1, 4.4, 4.5, 4.6_
 
-- [ ] 2.5 Annotate scalar lines with their source file
+- [x] 2.5 Annotate scalar lines with their source file
   - Every line that holds a scalar (a `key: value` line, a `- value` line, a scalar alone, a literal block's header) optionally ends with ` # from <label>` of the scalar's source file: the root file, the YAML include it is written in, or the included text file for a text include
   - Lines holding no scalar (`key:` before a nested collection, `{}`/`[]` lines, literal content lines) never get a comment
   - Print a scalar alone (for `show PATH --sources`) as a one-document YAML scalar using the document-root context, a literal block for a text include with the comment on its header

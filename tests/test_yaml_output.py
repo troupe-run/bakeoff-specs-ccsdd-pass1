@@ -1,4 +1,5 @@
-"""Unit tests of YamlOutput (``troupe.cli.yaml_output``): block YAML for mappings and lists.
+"""Unit tests of YamlOutput (``troupe.cli.yaml_output``): block YAML for mappings, lists and a
+scalar alone, optionally annotated with each scalar's source file.
 
 Every node comes from a real theatre written to disk and loaded with ``load_config`` (the root
 mapping, or a node reached with ``resolve_path``); expected outputs are exact bytes. Read-back
@@ -7,14 +8,17 @@ tests write the output as a fresh theatre's ``troupe.yml`` and load it with the 
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
 
+import re
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from support import MakeTheatre
+from troupe.cli.render import source_label
 from troupe.cli.yaml_output import render_yaml
 from troupe.config.loader import load_config
-from troupe.config.model import ConfigDocument
+from troupe.config.model import ConfigDocument, SourceFile
 from troupe.config.paths import ConfigPath
 from troupe.config.resolve import flatten_leaves, resolve_path
 from troupe.config.scalars import scalar_equal
@@ -509,3 +513,206 @@ def test_rich_output_reads_back_to_the_same_leaves(make_theatre: MakeTheatre) ->
     assert [leaf.path for leaf in after] == [leaf.path for leaf in before]
     assert all(scalar_equal(a.value, b.value) for a, b in zip(after, before, strict=True))
     assert render_yaml(reread.root, label=None) == out
+
+
+# --- source comments ----------------------------------------------------------------------------
+
+_SOURCED_ROOT = """\
+name: demo
+count: 5
+agents: file:agents/team.yml
+prompt: file:p.txt
+empty_map: {}
+lists:
+  - x
+  - []
+  - - nested
+  - - []
+  - inner: {a: 1}
+  - k: v
+    m: file:p.txt
+greeting: file:agents/greeting.yml
+"""
+
+_SOURCED_FILES: dict[str, str | bytes] = {
+    ".troupe/p.txt": "hello",
+    ".troupe/agents/team.yml": (
+        "# the team\nlead:\n  role: lead\n  tags: [a, b]\n  none: []\nnote: file:note.txt\n"
+    ),
+    ".troupe/agents/note.txt": "line one\nline two\n",
+    ".troupe/agents/greeting.yml": "'hi'\n",
+}
+
+_SOURCED_LABELLED = (
+    b"name: demo # from .troupe/troupe.yml\n"
+    b"count: 5 # from .troupe/troupe.yml\n"
+    b"agents:\n"
+    b"  lead:\n"
+    b"    role: lead # from .troupe/agents/team.yml\n"
+    b"    tags:\n"
+    b"      - a # from .troupe/agents/team.yml\n"
+    b"      - b # from .troupe/agents/team.yml\n"
+    b"    none: []\n"
+    b"  note: | # from .troupe/agents/note.txt\n"
+    b"    line one\n"
+    b"    line two\n"
+    b"prompt: |- # from .troupe/p.txt\n"
+    b"  hello\n"
+    b"empty_map: {}\n"
+    b"lists:\n"
+    b"  - x # from .troupe/troupe.yml\n"
+    b"  - []\n"
+    b"  - - nested # from .troupe/troupe.yml\n"
+    b"  - - []\n"
+    b"  - inner:\n"
+    b"      a: 1 # from .troupe/troupe.yml\n"
+    b"  - k: v # from .troupe/troupe.yml\n"
+    b"    m: |- # from .troupe/p.txt\n"
+    b"      hello\n"
+    b"greeting: hi # from .troupe/agents/greeting.yml\n"
+)
+
+
+def _labeler(theatre: Path) -> Callable[[SourceFile], str]:
+    return lambda file: source_label(file, theatre)
+
+
+def test_scalar_lines_end_with_the_file_their_value_is_written_in(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 5.1, 5.2, 5.3: ``key: value``, ``- value`` and literal header lines end with
+    `` # from <file>``: the root file, the YAML include holding the scalar (including a scalar
+    YAML include), or the included text file for a text include (not the file holding
+    ``file:``); ``key:`` lines, ``{}``/``[]`` lines, a compact dash line opening a nested
+    collection and literal content lines carry no comment."""
+    theatre = make_theatre(_SOURCED_ROOT, files=_SOURCED_FILES)
+    document = _load(theatre)
+
+    out = render_yaml(document.root, label=_labeler(theatre))
+
+    assert out == _SOURCED_LABELLED
+
+
+_SOURCE_SUFFIX = re.compile(r" # from [^\n]*$", re.MULTILINE)
+
+
+@pytest.mark.parametrize(
+    ("config", "files"),
+    [(_SOURCED_ROOT, _SOURCED_FILES), (_RICH, {})],
+    ids=["includes", "rich"],
+)
+def test_removing_the_source_comments_gives_the_unlabelled_output(
+    make_theatre: MakeTheatre, config: str, files: dict[str, str | bytes]
+) -> None:
+    """Req 5.5: deleting every `` # from <label>`` suffix from the labelled output gives the
+    output without labels, byte for byte; every scalar line had one."""
+    theatre = make_theatre(config, files=files)
+    document = _load(theatre)
+
+    labelled = render_yaml(document.root, label=_labeler(theatre)).decode()
+    plain = render_yaml(document.root, label=None).decode()
+
+    stripped, count = _SOURCE_SUFFIX.subn("", labelled)
+    assert stripped == plain
+    assert count == len(flatten_leaves(document.root))
+
+
+def _show_scalar(
+    make_theatre: MakeTheatre,
+    config: str,
+    path: str,
+    files: dict[str, str | bytes] | None = None,
+    *,
+    labelled: bool = True,
+) -> bytes:
+    """Render the scalar at ``path`` alone, labelled relative to the theatre unless told not to."""
+    theatre = make_theatre(config, files=files)
+    node = resolve_path(_load(theatre), ConfigPath.parse(path))
+    return render_yaml(node, label=_labeler(theatre) if labelled else None)
+
+
+@pytest.mark.parametrize(
+    ("written", "expected"),
+    [
+        ("5", b"5 # from .troupe/troupe.yml\n"),
+        ("'true'", b"'true' # from .troupe/troupe.yml\n"),
+        ("'--- a'", b"'--- a' # from .troupe/troupe.yml\n"),
+        ("'...'", b"'...' # from .troupe/troupe.yml\n"),
+        ("hello", b"hello # from .troupe/troupe.yml\n"),
+        ("true", b"true # from .troupe/troupe.yml\n"),
+        ("~", b"null # from .troupe/troupe.yml\n"),
+        ("0o17", b"15 # from .troupe/troupe.yml\n"),
+        ("1e16", b"1e+16 # from .troupe/troupe.yml\n"),
+        ("-.inf", b"-.inf # from .troupe/troupe.yml\n"),
+        ("''", b"'' # from .troupe/troupe.yml\n"),
+        ('"b\\a"', b'"b\\a" # from .troupe/troupe.yml\n'),
+    ],
+    ids=[
+        "int",
+        "true-string",
+        "document-marker",
+        "document-end",
+        "plain",
+        "bool",
+        "null",
+        "octal",
+        "float",
+        "inf",
+        "empty",
+        "control",
+    ],
+)
+def test_a_scalar_alone_is_a_one_line_document_with_its_source(
+    make_theatre: MakeTheatre, written: str, expected: bytes
+) -> None:
+    """Req 2.6, 5.1: a scalar printed alone is a YAML scalar in the document-root context (a
+    document marker such as ``--- a`` is quoted) followed by its source comment."""
+    assert _show_scalar(make_theatre, f"v: {written}\n", "v") == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("hello", b"|- # from .troupe/p.txt\n  hello\n"),
+        ("hello\n", b"| # from .troupe/p.txt\n  hello\n"),
+        ("a\n\n", b"|+ # from .troupe/p.txt\n  a\n\n"),
+        ("  a\nb\n", b"|2 # from .troupe/p.txt\n    a\n  b\n"),
+        ("", b"|- # from .troupe/p.txt\n"),
+        (b"one\r\ntwo\r\n", b"| # from .troupe/p.txt\n  one\r\n  two\r\n"),
+    ],
+    ids=["strip", "clip", "keep", "indicator", "empty", "crlf"],
+)
+def test_a_text_include_alone_is_a_root_literal_block_sourced_on_its_header(
+    make_theatre: MakeTheatre, text: str | bytes, expected: bytes
+) -> None:
+    """Req 2.6, 5.2, 4.4: a text include printed alone is a literal block at the root, content
+    indented two spaces, the included file's comment on the header only; a CRLF include keeps
+    its ``\\r\\n``."""
+    files: dict[str, str | bytes] = {".troupe/p.txt": text}
+
+    assert _show_scalar(make_theatre, "p: file:p.txt\n", "p", files) == expected
+
+
+def test_a_scalar_alone_in_a_yaml_include_names_that_include(make_theatre: MakeTheatre) -> None:
+    """Req 2.6, 5.3: a scalar alone written in a YAML include is labelled with that include."""
+    out = _show_scalar(make_theatre, _SOURCED_ROOT, "agents.lead.role", _SOURCED_FILES)
+
+    assert out == b"lead # from .troupe/agents/team.yml\n"
+
+
+def test_multi_line_strings_alone_are_literal_or_double_quoted(make_theatre: MakeTheatre) -> None:
+    """Req 2.6, 4.4, 4.5: a non-include multi-line string alone is a root literal block when a
+    literal block can hold it, otherwise double-quoted on one line with the comment after it."""
+    config = 'a: "x\\ny"\nb: "x\\r\\ny"\n'
+
+    assert _show_scalar(make_theatre, config, "a") == b"|- # from .troupe/troupe.yml\n  x\n  y\n"
+    assert _show_scalar(make_theatre, config, "b") == b'"x\\r\\ny" # from .troupe/troupe.yml\n'
+
+
+def test_a_scalar_alone_without_labels_is_a_plain_document(make_theatre: MakeTheatre) -> None:
+    """Req 2.6, 4.1: without a labeler a scalar alone is printed with no comment, and the output
+    reads back as a document whose root is the same value."""
+    assert _show_scalar(make_theatre, "v: '--- a'\n", "v", labelled=False) == b"'--- a'\n"
+    files: dict[str, str | bytes] = {".troupe/p.txt": "a\nb\n"}
+    out = _show_scalar(make_theatre, "p: file:p.txt\n", "p", files, labelled=False)
+    assert out == b"|\n  a\n  b\n"
