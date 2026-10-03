@@ -1,14 +1,18 @@
-"""Pure formatting of command output as UTF-8 bytes (6.1-6.6, 8.2, 8.6, 8.7).
+"""Pure formatting of command output (6.1-6.6, 8.2, 8.6, 8.7; config-get-show 5.4).
 
 ``show`` prints one scalar per :func:`format_show_output`; ``history`` prints one JSON line per
 record per :func:`format_history_line`. Both return bytes so handlers can write them into the
 binary output buffer without newline translation (a CRLF in a text include is kept).
+:func:`source_label` names a loaded file relative to the theatre directory for ``--sources``.
 """
 
 import json
 import math
+import os
+from pathlib import Path
 
 from troupe.config.history import HistoryRecord
+from troupe.config.model import SourceFile
 from troupe.config.scalars import ScalarValue
 
 
@@ -59,3 +63,14 @@ def _json_safe(value: ScalarValue) -> ScalarValue:
         if math.isinf(value):
             return ".inf" if value > 0 else "-.inf"
     return value
+
+
+def source_label(file: SourceFile, theatre_dir: Path) -> str:
+    """Return ``file``'s path relative to ``theatre_dir`` with ``/`` separators (5.4).
+
+    Lexical, like error messages: ``abspath`` normalises ``.`` and ``..`` without resolving
+    symbolic links, so the label shows the path the user wrote. A file outside the theatre
+    directory gets leading ``..`` components (e.g. ``../shared/prompt.md``), and only there.
+    """
+    relative = os.path.relpath(os.path.abspath(file.path), os.path.abspath(theatre_dir))
+    return Path(relative).as_posix()

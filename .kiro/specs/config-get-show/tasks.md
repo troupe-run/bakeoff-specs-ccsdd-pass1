@@ -36,7 +36,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Boundary: TheatreReads_
   - _Requirements: 1.1, 1.2, 1.3, 2.3, 2.4, 6.4_
 
-- [ ] 2.2 (P) Provide the source label of a file
+- [x] 2.2 (P) Provide the source label of a file
   - Compute a file's label relative to the theatre directory as given, lexically (normalising `.` and `..` without resolving symbolic links), with `/` separators and `..` only at the start
   - Done when tests prove the labels `.troupe/troupe.yml`, `.troupe/agents/lead.yml` for a nested include, a `sub/../x.yml` include spec normalised, `../shared/p.md` for a file outside the theatre, identical labels for a relative and an absolute theatre argument, and a symlinked directory kept unresolved
   - _Boundary: SourceLabel_
