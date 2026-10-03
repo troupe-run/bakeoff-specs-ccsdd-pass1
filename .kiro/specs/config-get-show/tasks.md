@@ -42,7 +42,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Boundary: SourceLabel_
   - _Requirements: 5.4_
 
-- [ ] 2.3 (P) Render mappings, lists and one-line scalars as block YAML
+- [x] 2.3 (P) Render mappings, lists and one-line scalars as block YAML
   - Handles a printed mapping or list (and the whole configuration); a scalar printed alone at the document root is added in 2.5
   - Lay out mappings and lists in block style: `key: value` in document order, nested collections on the following lines two spaces deeper, list items indented under their key (column 0 for a printed list), collections inside list items in compact form on the dash line, `{}`/`[]` for empty collections and `{}` for an empty configuration
   - Print booleans, null, integers, finite floats in `repr()` form and `.inf`/`-.inf`/`.nan`; one-line strings plain when they read back as the same string, otherwise single- then double-quoted; never wrap; non-ASCII printable characters unescaped
@@ -131,3 +131,7 @@ tasks `[x]`). No new runtime dependency is added.
   - Check every requirement ID 1.1–6.8 is named in at least one test docstring and every new test names an existing ID; tick the step 3 items in the roadmap
   - Done when the traceability check finds no gap, and `uv run pytest -n auto`, `uv run mypy --strict .`, `uv run ruff check .` and `uv run ruff format --check .` pass with their output shown
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 5.1, 5.2, 5.3, 5.4, 5.5, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8_
+
+## Implementation Notes
+- 2.3: Under requirement 4.3's minimal chain, a string containing a TAB is single-quoted (`'x<TAB>y'`), not double-quoted. Double quotes are only for characters single quotes cannot hold.
+- 2.3 (review): `yaml_style` (shared with `set`) writes a string containing U+FEFF plain or single-quoted. Our loader and ruamel read it back exactly, but strict YAML 1.2 excludes the BOM from `nb-char`. This is pre-existing write-back behaviour; changing it would change `set`'s bytes, which this spec must not do. Revisit in write-back if a strict parser rejects it.
