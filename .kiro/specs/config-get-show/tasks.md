@@ -114,7 +114,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Boundary: e2e tests for show_
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 3.4, 3.5, 4.4, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8_
 
-- [ ] 4.3 (P) Validate that the YAML output reads back exactly
+- [x] 4.3 (P) Validate that the YAML output reads back exactly
   - For fixtures covering every scalar kind, quoting edge cases (strings that look like other types, `: `, ` #`, leading/trailing spaces, quotes, control characters, non-ASCII), awkward keys, nested collections, YAML includes and LF text includes (leading spaces, no final newline, several final newlines), run `show` and reload its output as a fresh theatre
   - Lives in its own test module, separate from 4.2's, so 4.2 and 4.3 can run concurrently (a small refinement of the design's test file list)
   - Done when leaf paths, order and typed values of the reloaded output equal the original's for every fixture
