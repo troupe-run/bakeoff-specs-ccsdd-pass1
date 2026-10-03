@@ -121,7 +121,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Boundary: read-back tests_
   - _Requirements: 3.4, 4.1, 4.2, 4.3, 4.4, 4.8_
 
-- [ ] 4.4 (P) Validate `--sources` end to end
+- [x] 4.4 (P) Validate `--sources` end to end
   - The whole configuration with a root file, a YAML include in a subdirectory, a text include (labelled with the included file, comment on the `|` header) and an include outside the theatre directory (`../…`) gives exact expected bytes; `--sources` before and after PATH gives the same bytes; a scalar with `--sources` and a text include scalar with `--sources`; a CRLF text include emitted literal with `\r\n` content lines and the comment on the header
   - Done when the new e2e test module passes
   - _Boundary: e2e tests for sources_
