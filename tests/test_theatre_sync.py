@@ -28,7 +28,7 @@ from troupe.config.history import HistoryRecord, LeafChange
 from troupe.config.model import ConfigDocument
 from troupe.config.paths import ConfigPath
 from troupe.config.store import HistoryStore
-from troupe.config.theatre import open_theatre, show_value
+from troupe.config.theatre import get_value, open_theatre
 
 CHILD_TIMEOUT_SECONDS = 60.0
 HOLD_SECONDS = 0.5
@@ -121,7 +121,7 @@ def test_open_of_an_imported_theatre_reconciles_a_hand_edit_before_returning(
     make_theatre: MakeTheatre, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Req 1.1, 1.6: an imported theatre is reconciled on open (the events are committed before
-    the caller runs), while ``document`` and ``show_value`` stay the files as read from disk and
+    the caller runs), while ``document`` and ``get_value`` stay the files as read from disk and
     no file is written."""
     theatre_dir = _imported(make_theatre)
     _config(theatre_dir).write_bytes(b"a: 2   # edited\n")
@@ -133,7 +133,7 @@ def test_open_of_an_imported_theatre_reconciles_a_hand_edit_before_returning(
             HistoryRecord(seq=2, op="set", path="a", old=1, new=2),
         )
         assert calls == [theatre.document]
-        assert show_value(theatre, ConfigPath.parse("a")) == 2
+        assert get_value(theatre, ConfigPath.parse("a")) == 2
 
     assert _config(theatre_dir).read_bytes() == b"a: 2   # edited\n"
 
@@ -149,7 +149,7 @@ def test_opt_out_records_nothing_and_a_later_default_open_reconciles(
 
     with open_theatre(theatre_dir, reconcile=False) as theatre:
         assert theatre.history.records() == (IMPORTED_A,)
-        assert show_value(theatre, ConfigPath.parse("a")) == 2
+        assert get_value(theatre, ConfigPath.parse("a")) == 2
     assert calls == []
 
     with open_theatre(theatre_dir):
@@ -256,13 +256,13 @@ def test_store_close_failure_still_releases_the_lock(
 
 
 def test_reconcile_events_remain_when_the_block_fails(make_theatre: MakeTheatre) -> None:
-    """Req 1.2: the reconcile events are committed on open, so they remain when ``show_value``
+    """Req 1.2: the reconcile events are committed on open, so they remain when ``get_value``
     then fails inside the block."""
     theatre_dir = _imported(make_theatre)
     _config(theatre_dir).write_bytes(b"a: 2\n")
 
     with pytest.raises(PathNotFoundError), open_theatre(theatre_dir) as theatre:
-        show_value(theatre, ConfigPath.parse("missing"))
+        get_value(theatre, ConfigPath.parse("missing"))
 
     _assert_lock_free(theatre_dir)
     assert _recorded(theatre_dir) == (

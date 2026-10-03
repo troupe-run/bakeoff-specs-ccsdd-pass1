@@ -29,14 +29,14 @@ from troupe.cli.shell import (
 from troupe.cli.watch_command import add_watch_subparser
 from troupe.config.errors import TroupeError
 from troupe.config.paths import ConfigPath
-from troupe.config.theatre import list_history, open_theatre, show_value
+from troupe.config.theatre import get_value, list_history, open_theatre
 
 
 def handle_show(args: argparse.Namespace, buffer: io.BytesIO) -> None:
     """Handler of ``troupe config show PATH``: print the scalar at PATH."""
     path = ConfigPath.parse(args.path)
     with open_theatre(args.theatre) as theatre:
-        buffer.write(format_show_output(show_value(theatre, path)))
+        buffer.write(format_show_output(get_value(theatre, path)))
 
 
 def handle_history(args: argparse.Namespace, buffer: io.BytesIO) -> None:

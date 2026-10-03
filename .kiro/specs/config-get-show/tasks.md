@@ -28,7 +28,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Requirements: 2.6, 4.3_
 
 - [ ] 2. Core: read use cases, source labels and the YAML emitter
-- [ ] 2.1 (P) Turn the scalar read into `get`'s use case and add the node lookup
+- [x] 2.1 (P) Turn the scalar read into `get`'s use case and add the node lookup
   - Rename the scalar read use case for `get`; its refusal of a mapping or list keeps exit 5 and the `<file>: <path>: <problem>` shape and adds a hint to print it with `troupe config show <PATH>`
   - Add the lookup of the node at an optional PATH: the top-level mapping when PATH is omitted, otherwise the resolved node (missing PATH → the existing not-found error naming the deepest existing file)
   - Update the existing callers of the old name in the same change: the step 1 `show` handler in the CLI entry module, `tests/test_theatre.py` and `tests/test_theatre_sync.py`. The step 1 `show` keeps working on scalars; until 3.2 replaces it, its mapping/list refusal carries the new hint pointing at `config show` (harmless and expected)

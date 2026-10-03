@@ -1,4 +1,4 @@
-"""Theatre session use cases: open, show, history, close (6.7, 6.9, 7.4, 7.9, 8.3-8.5)."""
+"""Theatre use cases: open, get, node_at, history, close (6.7, 6.9, 7.4, 7.9, 8.3-8.5)."""
 
 import sqlite3
 from pathlib import Path
@@ -17,8 +17,9 @@ from troupe.config.errors import (
     WrongNodeKindError,
 )
 from troupe.config.history import HistoryRecord
+from troupe.config.model import ConfigMapping, ConfigScalar, ConfigSequence
 from troupe.config.paths import ConfigPath
-from troupe.config.theatre import Theatre, list_history, open_theatre, show_value
+from troupe.config.theatre import Theatre, get_value, list_history, node_at, open_theatre
 
 CONFIG = """\
 name: demo
@@ -98,7 +99,7 @@ def test_open_theatre_finds_a_troupe_yaml_config(make_theatre: MakeTheatre) -> N
 
     with open_theatre(theatre_dir) as theatre:
         assert theatre.config_file == theatre_dir / CONFIG_DIR_NAME / "troupe.yaml"
-        assert show_value(theatre, ConfigPath.parse("a")) == 1
+        assert get_value(theatre, ConfigPath.parse("a")) == 1
 
 
 def test_failed_load_creates_no_history_state(make_theatre: MakeTheatre) -> None:
@@ -174,7 +175,7 @@ def test_leaving_the_with_block_by_an_exception_closes_the_store_and_propagates(
     theatre_dir: Path,
 ) -> None:
     with pytest.raises(PathNotFoundError), open_theatre(theatre_dir) as theatre:
-        show_value(theatre, ConfigPath.parse("missing"))
+        get_value(theatre, ConfigPath.parse("missing"))
 
     assert _store_files(theatre_dir) == [HISTORY_STORE_NAME]
     with pytest.raises(ConfigLoadError, match="closed"):
@@ -208,7 +209,7 @@ def test_close_failure_never_replaces_the_error_of_the_body(
     _failing_application_close(monkeypatch)
 
     with pytest.raises(PathNotFoundError) as caught, theatre:
-        show_value(theatre, ConfigPath.parse("missing"))
+        get_value(theatre, ConfigPath.parse("missing"))
 
     assert caught.value.path == "missing"
 
@@ -237,7 +238,7 @@ def test_exit_with_exception_info_never_raises_a_close_error_even_with_no_active
     assert _store_files(theatre_dir) == [HISTORY_STORE_NAME]
 
 
-# --- show_value -------------------------------------------------------------------------------
+# --- get_value ------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -250,59 +251,131 @@ def test_exit_with_exception_info_never_raises_a_close_error_even_with_no_active
         ("notes", None),
     ],
 )
-def test_show_value_returns_the_scalar_at_path(
+def test_get_value_returns_the_scalar_at_path_unchanged(
     theatre_dir: Path, text: str, expected: object
 ) -> None:
+    """Req 1.1, 6.4: ``get_value`` returns the scalar at PATH as read from the files, keeping its
+    type."""
     with open_theatre(theatre_dir) as theatre:
-        value = show_value(theatre, ConfigPath.parse(text))
+        value = get_value(theatre, ConfigPath.parse(text))
 
     assert value == expected
     assert type(value) is type(expected)
 
 
 @pytest.mark.parametrize(
-    ("text", "file"),
+    ("text", "file", "kind"),
     [
-        ("agents", "agents.yml"),
-        ("agents.alice", "agents.yml"),
-        ("tools", "troupe.yml"),
+        ("agents", "agents.yml", "a mapping"),
+        ("agents.alice", "agents.yml", "a mapping"),
+        ("tools", "troupe.yml", "a list"),
     ],
 )
-def test_show_value_refuses_mappings_and_lists_naming_path_and_file(
-    theatre_dir: Path, text: str, file: str
+def test_get_value_refuses_mappings_and_lists_with_a_config_show_hint(
+    theatre_dir: Path, text: str, file: str, kind: str
 ) -> None:
+    """Req 1.2: a mapping or list is refused with exit 5, naming the node's file and PATH, and the
+    problem points at ``troupe config show <PATH>``."""
     with open_theatre(theatre_dir) as theatre, pytest.raises(WrongNodeKindError) as caught:
-        show_value(theatre, ConfigPath.parse(text))
+        get_value(theatre, ConfigPath.parse(text))
 
     assert caught.value.exit_code == ExitCode.PATH
     assert caught.value.path == text
     assert caught.value.file == theatre_dir / CONFIG_DIR_NAME / file
-    assert str(caught.value).startswith(f"{theatre_dir / CONFIG_DIR_NAME / file}: {text}: ")
+    assert str(caught.value) == (
+        f"{theatre_dir / CONFIG_DIR_NAME / file}: {text}: "
+        f"is {kind}, not a value; print it with `troupe config show {text}`"
+    )
 
 
-def test_show_value_reports_a_missing_path(theatre_dir: Path) -> None:
+def test_get_value_reports_a_missing_path_naming_the_deepest_existing_file(
+    theatre_dir: Path,
+) -> None:
+    """Req 1.3: a missing PATH is a not-found error (exit 5) naming the deepest existing file."""
     with open_theatre(theatre_dir) as theatre, pytest.raises(PathNotFoundError) as caught:
-        show_value(theatre, ConfigPath.parse("agents.bob"))
+        get_value(theatre, ConfigPath.parse("agents.bob"))
 
+    assert caught.value.exit_code == ExitCode.PATH
     assert caught.value.path == "agents.bob"
     assert caught.value.file == theatre_dir / CONFIG_DIR_NAME / "agents.yml"
 
 
-def test_hand_edit_after_import_is_shown_and_recorded_by_the_reconcile_on_open(
+# --- node_at --------------------------------------------------------------------------------
+
+
+def test_node_at_without_a_path_is_the_root_mapping(theatre_dir: Path) -> None:
+    """Req 2.3, 6.4: with PATH omitted, ``node_at`` returns the loaded document's root mapping."""
+    with open_theatre(theatre_dir) as theatre:
+        node = node_at(theatre, None)
+
+        assert node is theatre.document.root
+    assert isinstance(node, ConfigMapping)
+    assert [entry.key for entry in node.entries] == ["name", "agents", "tools", "notes"]
+
+
+@pytest.mark.parametrize(
+    ("text", "node_type", "file"),
+    [
+        ("agents", ConfigMapping, "agents.yml"),
+        ("agents.alice", ConfigMapping, "agents.yml"),
+        ("tools", ConfigSequence, "troupe.yml"),
+        ("agents.alice.temperature", ConfigScalar, "agents.yml"),
+        ("name", ConfigScalar, "troupe.yml"),
+    ],
+)
+def test_node_at_returns_the_mapping_list_or_scalar_at_path(
+    theatre_dir: Path, text: str, node_type: type, file: str
+) -> None:
+    """Req 2.3, 6.4: ``node_at`` returns the node at PATH from the files as read, whatever its
+    kind, with includes resolved in place."""
+    with open_theatre(theatre_dir) as theatre:
+        node = node_at(theatre, ConfigPath.parse(text))
+
+    assert isinstance(node, node_type)
+    assert node.origin.file.path == theatre_dir / CONFIG_DIR_NAME / file
+
+
+def test_node_at_reports_a_missing_path_naming_the_deepest_existing_file(
+    theatre_dir: Path,
+) -> None:
+    """Req 2.4: a missing PATH is a not-found error (exit 5) naming the deepest existing file."""
+    with open_theatre(theatre_dir) as theatre, pytest.raises(PathNotFoundError) as caught:
+        node_at(theatre, ConfigPath.parse("agents.alice.missing"))
+
+    assert caught.value.exit_code == ExitCode.PATH
+    assert caught.value.path == "agents.alice.missing"
+    assert caught.value.file == theatre_dir / CONFIG_DIR_NAME / "agents.yml"
+
+
+def test_node_at_reads_a_hand_edit_from_the_files(make_theatre: MakeTheatre) -> None:
+    """Req 6.4: after a hand edit, ``node_at`` returns the node as now written in the file."""
+    theatre_dir = make_theatre("a:\n  x: 1\n")
+    with open_theatre(theatre_dir):
+        pass
+    (theatre_dir / CONFIG_DIR_NAME / "troupe.yml").write_text("a:\n  y: 2\n", encoding="utf-8")
+
+    with open_theatre(theatre_dir) as theatre:
+        node = node_at(theatre, ConfigPath.parse("a"))
+
+    assert isinstance(node, ConfigMapping)
+    assert [entry.key for entry in node.entries] == ["y"]
+
+
+def test_hand_edit_is_returned_by_get_value_and_recorded_by_the_reconcile_on_open(
     make_theatre: MakeTheatre,
 ) -> None:
-    """Req 1.1, 1.6 (config-file-sync): the next open reconciles a hand edit (a changed and a
-    created leaf) while ``show_value`` still reads the files as loaded."""
+    """Req 6.4; config-file-sync 1.1, 1.6: the next open reconciles a hand edit (a changed and a
+    created leaf) while ``get_value`` still reads the files as loaded."""
     theatre_dir = make_theatre("a: 1\n")
     with open_theatre(theatre_dir) as theatre:
-        assert show_value(theatre, ConfigPath.parse("a")) == 1
+        assert get_value(theatre, ConfigPath.parse("a")) == 1
         before = list_history(theatre, None)
 
     (theatre_dir / CONFIG_DIR_NAME / "troupe.yml").write_text("a: 2\nb: x\n", encoding="utf-8")
 
     with open_theatre(theatre_dir) as theatre:
-        assert show_value(theatre, ConfigPath.parse("a")) == 2
-        assert show_value(theatre, ConfigPath.parse("b")) == "x"
+        assert get_value(theatre, ConfigPath.parse("a")) == 2
+        assert get_value(theatre, ConfigPath.parse("b")) == "x"
         after = list_history(theatre, None)
 
     assert before == (HistoryRecord(seq=1, op="import", path="a", old=None, new=1),)
