@@ -70,7 +70,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Requirements: 2.6, 5.1, 5.2, 5.3, 5.5_
 
 - [ ] 3. Integration: the `get` and `show` commands
-- [ ] 3.1 Add the `get` command
+- [x] 3.1 Add the `get` command
   - `get PATH` (PATH required; any other option, including `--sources`, is a usage error) prints a scalar exactly as step 1's `show` and refuses mappings and lists with the `config show` hint
   - Parse PATH before opening the theatre, open it the default way (import a never-imported theatre, otherwise reconcile first), buffer the output and close the store at the end; never write a file
   - Put it in the new read-command module and register it in the entry module; the step 1 `show` stays as it is for now

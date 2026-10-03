@@ -10,6 +10,9 @@ to stderr as its formatted message and its exit code is returned; stdout stays e
 theatre in a ``with`` block, so usage errors create no state and the store is closed at the end
 of every command (1.5, 7.4, 7.9). Unexpected exceptions are not caught (traceback, exit 1); for
 buffered handlers stdout is still empty because output is buffered.
+
+Step 3 (config-get-show) adds ``get PATH``, registered first from its read-command module
+:mod:`troupe.cli.get_show_command` (config-get-show 1.1-1.5).
 """
 
 import argparse
@@ -18,6 +21,7 @@ import sys
 from collections.abc import Sequence
 from typing import BinaryIO, Final, NoReturn, TextIO
 
+from troupe.cli.get_show_command import add_get_subparser
 from troupe.cli.render import format_history_line, format_show_output
 from troupe.cli.set_command import add_set_subparser
 from troupe.cli.shell import (
@@ -83,7 +87,9 @@ def add_history_subparser(
 # Each entry adds one `troupe config` subcommand. config-set-writeback extends this tuple with
 # exactly one entry (its `set` registrar, imported from its own module); nothing else changes.
 # config-file-sync appends its streaming `watch` registrar the same way.
+# config-get-show (step 3) puts its `get` registrar first, from its read-command module.
 SUBCOMMAND_REGISTRARS: Final[tuple[SubcommandRegistrar, ...]] = (
+    add_get_subparser,
     add_show_subparser,
     add_history_subparser,
     add_set_subparser,

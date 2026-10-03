@@ -372,14 +372,16 @@ def test_run_does_not_catch_unexpected_exceptions(monkeypatch: pytest.MonkeyPatc
 
 
 def test_registration_point_holds_show_and_history() -> None:
-    """config-file-sync 4.1: ``watch`` is registered after config-set-writeback's ``set``."""
+    """config-file-sync 4.1, config-get-show 1.1: ``get`` first, ``watch`` after ``set``."""
     # config-set-writeback appends its `set` registrar (its only change to main.py);
-    # config-file-sync appends its `watch` registrar.
+    # config-file-sync appends its `watch` registrar; config-get-show puts `get` first.
+    from troupe.cli.get_show_command import add_get_subparser
     from troupe.cli.set_command import add_set_subparser
     from troupe.cli.watch_command import add_watch_subparser
 
     registrars = cli_main.SUBCOMMAND_REGISTRARS
     assert registrars == (
+        add_get_subparser,
         cli_main.add_show_subparser,
         cli_main.add_history_subparser,
         add_set_subparser,
