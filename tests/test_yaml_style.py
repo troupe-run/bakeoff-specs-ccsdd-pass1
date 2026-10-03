@@ -16,12 +16,21 @@ from pathlib import Path
 from typing import Final
 
 import pytest
+from ruamel.yaml import YAML
+from ruamel.yaml.nodes import ScalarNode
 
 from troupe.config import yaml_style
 from troupe.config.loader import load_config
 from troupe.config.model import ConfigScalar, ScalarStyle
+from troupe.config.scalars import resolve_plain_scalar
 from troupe.config.writeback import block_scalar, scalar_render
-from troupe.config.yaml_style import QuoteStyle, literal_characters_fit, quote
+from troupe.config.yaml_style import (
+    Context,
+    QuoteStyle,
+    choose_style,
+    literal_characters_fit,
+    quote,
+)
 
 PLAIN: Final = ScalarStyle.PLAIN
 SINGLE: Final = ScalarStyle.SINGLE_QUOTED
@@ -127,6 +136,50 @@ def test_quote_double_escapes_a_lone_surrogate_without_refusing() -> None:
     """Req 4.6: the core quoting never refuses; a lone surrogate is escaped (the write refusal
     stays in write-back)."""
     assert quote("a\ud800b", DOUBLE) == '"a\\uD800b"'
+
+
+# --- the document-root context ------------------------------------------------------------------
+
+
+def _document_root_reads_back(rendered: str, style: QuoteStyle, text: str) -> bool:
+    """Whether ``rendered``, parsed as a whole YAML document, is a root scalar reading as ``text``.
+
+    The document is composed with the ruamel.yaml composer the module's probes use; a plain root
+    must also stay a string under the core schema (``resolve_plain_scalar``).
+    """
+    root = YAML(typ="rt").compose(f"{rendered}\n")
+    if not isinstance(root, ScalarNode) or str(root.value) != text:
+        return False
+    if style is ScalarStyle.PLAIN:
+        return root.style is None and resolve_plain_scalar(str(root.value)) == text
+    return str(root.style) == ("'" if style is SINGLE else '"')
+
+
+@pytest.mark.parametrize("text", ["--- a", "...", "%x", "true", "5", ""])
+def test_document_context_quotes_text_that_is_not_the_same_string_at_the_root(text: str) -> None:
+    """Req 2.6, 4.3: a scalar printed alone as a document is not plain when it would not read back
+    as the same string at the document root (a document marker, a directive, a typed form, the
+    empty string), and the quoted form chosen reads back as the original string."""
+    style = choose_style(text, Context.DOCUMENT, None)
+    assert style is not PLAIN
+    assert _document_root_reads_back(quote(text, style), style, text)
+
+
+@pytest.mark.parametrize("text", ["hello", "café"])
+def test_document_context_keeps_plain_text_that_reads_back_at_the_root(text: str) -> None:
+    """Req 2.6, 4.3: text that reads back as the same string at the document root stays plain,
+    with non-ASCII characters unescaped."""
+    style = choose_style(text, Context.DOCUMENT, None)
+    assert style is PLAIN
+    assert quote(text, style) == text
+    assert _document_root_reads_back(text, style, text)
+
+
+@pytest.mark.parametrize("text", ["--- a", "..."])
+def test_block_value_context_is_unchanged_by_the_document_context(text: str) -> None:
+    """Req 4.3: the document-root rule applies only to the new context; as a block value (the
+    context write-back uses) document markers stay plain as before."""
+    assert choose_style(text, Context.BLOCK_VALUE, None) is PLAIN
 
 
 # --- literal_characters_fit ----------------------------------------------------------------------

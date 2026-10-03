@@ -10,7 +10,7 @@ auto`, `uv run mypy --strict .`, `uv run ruff check .` and `uv run ruff format -
 **External prerequisites.** config-foundation, config-set-writeback and config-file-sync are complete (all their
 tasks `[x]`). No new runtime dependency is added.
 
-- [ ] 1. Foundation: shared YAML scalar presentation
+- [x] 1. Foundation: shared YAML scalar presentation
 - [x] 1.1 Move the write-neutral scalar presentation rules from write-back into a core module
   - Move the quoting contexts, quote styles, representability check, minimal style choice, quoting and escaping (made public) and the plain-scalar probes, plus the chomping kinds, required chomping and the "characters a literal block can hold" check, into the new core presentation module
   - Leave the refusals (lone surrogates, the first-line-starts-with-a-space rule of the write-back literal check), the literal renderer and the block rewriting in write-back, importing the moved definitions; keep every name other write-back modules already import available from its old place
@@ -20,7 +20,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Boundary: YamlStyle_
   - _Requirements: 4.3, 4.6, 4.7_
 
-- [ ] 1.2 Add the document-root quoting context
+- [x] 1.2 Add the document-root quoting context
   - Add a context for a scalar printed alone as a whole document; plain is allowed only when the text also reads back as the same string at the document root
   - Write-back does not use the new context
   - _Boundary: YamlStyle_

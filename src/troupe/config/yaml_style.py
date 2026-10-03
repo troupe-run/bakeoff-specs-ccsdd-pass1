@@ -11,7 +11,8 @@ if possible, otherwise single-quoted, otherwise double-quoted, which can represe
 (characters YAML cannot hold literally are escaped by :func:`quote`). No style folds or wraps.
 
 Plain representability is decided by a cheap syntactic check followed by a parse probe: the text is
-placed in a tiny document of the exact context (block value, flow value, block key, flow key),
+placed in a tiny document of the exact context (block value, flow value, block key, flow key, or
+alone as the whole document, a context only ``show`` uses),
 composed with the same ruamel.yaml composer the loader uses, and must come back as a plain scalar
 with exactly the same text, and, for values, typed as that same string by the shared
 :func:`~troupe.config.scalars.resolve_plain_scalar` (so ``0.2`` or ``true`` are never written plain
@@ -36,12 +37,14 @@ from troupe.config.scalars import resolve_plain_scalar
 
 
 class Context(Enum):
-    """Where a scalar is written: as a value or a key, in a block or a flow collection."""
+    """Where a scalar is written: as a value or a key, in a block or a flow collection, or alone."""
 
     BLOCK_VALUE = "block-value"
     FLOW_VALUE = "flow-value"
     BLOCK_KEY = "block-key"
     FLOW_KEY = "flow-key"
+    DOCUMENT = "document"
+    """A scalar alone as a whole document (``show PATH --sources``); not used by write-back."""
 
 
 # A runtime alias (not a ``type`` statement) so it can be used in ``Literal`` narrowing at runtime.
@@ -174,9 +177,16 @@ _Pick: TypeAlias = Callable[[Node], Node | None]  # noqa: UP040
 
 
 def _probes(text: str, context: Context) -> tuple[tuple[str, _Pick], ...]:
-    """The probe documents placing ``text`` at ``context`` (a value: as mapping value and item)."""
+    """The probe documents placing ``text`` at ``context`` (a value: as mapping value and item).
+
+    A DOCUMENT scalar must pass the block-value probes and also be the root of the document
+    ``"{text}\\n"``, so a document marker (``--- a``, ``...``) or a directive (``%x``) is quoted
+    (config-get-show Req 2.6, 4.3).
+    """
     if context is Context.BLOCK_VALUE:
         return ((f"k: {text}\n", _mapping_value), (f"- {text}\n", _sequence_item))
+    if context is Context.DOCUMENT:
+        return (*_probes(text, Context.BLOCK_VALUE), (f"{text}\n", _document_root))
     if context is Context.FLOW_VALUE:
         return ((f"[{text}]\n", _sequence_item), (f"{{k: {text}}}\n", _mapping_value))
     if context is Context.BLOCK_KEY:
@@ -217,6 +227,10 @@ def _mapping_key(root: Node) -> Node | None:
         if isinstance(value, ScalarNode) and value.value == _PROBE_VALUE and isinstance(key, Node):
             return key
     return None
+
+
+def _document_root(root: Node) -> Node | None:
+    return root
 
 
 def _sequence_item(root: Node) -> Node | None:
