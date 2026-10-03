@@ -152,7 +152,7 @@ new runtime dependency is added.
   - _Depends: 4.3_
   - _Requirements: 2.4, 2.8, 3.1, 3.2, 3.3, 3.4, 3.5, 4.3, 4.4, 4.5, 5.1, 5.2, 5.6, 5.7_
 
-- [ ] 5.2 Validate concurrency, failures, signals and clean-up end to end
+- [x] 5.2 Validate concurrency, failures, signals and clean-up end to end
   - Cover end to end:
     - a successful `set` while `watch` runs, with a hand edit made before it (the history holds the reconcile event, then exactly the set's own events, and nothing more after 2.5 s);
     - a refused `set` while `watch` runs (no event for the set);
@@ -178,3 +178,4 @@ new runtime dependency is added.
 - 3.1: `Theatre.__exit__` suppresses only `ConfigLoadError` from `close()`; an `OSError` from releasing the lock while a block's error is in flight would replace that error (very unlikely; candidate hardening). Also, `tests/test_e2e_history.py::test_theatre_without_leaves_is_imported_with_no_events_and_never_reimported` was a sixth step 1 test with the superseded expectation.
 - 4.1: the watcher's baseline must be the bytes each load actually read, not the pre-load snapshot; otherwise an X → transient → X in-place save leaves phantom events unrepaired (found in review, regression test in tests/test_watch_loop.py). In-process tests read history while a watcher runs by taking the lock on their own fd and reading the store directly, because `open_theatre` refuses a nested open in one process.
 - 5.1: watch timing tests must edit straight after the readiness line (no `history` call first) and sweep idle times across the poll cycle; otherwise readiness races and too-slow polling go undetected (found in review).
+- 5.2: lock-removal races are only caught when commands run continuously (background `show` loops); a single `set` against `watch` is too narrow a window to detect reliably. Store-closed evidence end to end is the absence of `-wal`/`-shm` while `watch` idles.
