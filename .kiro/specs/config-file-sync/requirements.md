@@ -76,7 +76,8 @@ Terms used below:
   same theatre at the same time.
 - **Out of scope**: how `set` writes values into files (config-set-writeback, unchanged); loading, includes, path
   rules, `show` output, `history` output format, exit-code and message conventions (config-foundation, reused
-  unchanged); new event kinds (reconcile records the existing `set` and `remove` events); any output from `watch`
+  unchanged; *step 3: that scalar output is now `get` output, and the new `show` output is owned by spec
+  config-get-show*); new event kinds (reconcile records the existing `set` and `remove` events); any output from `watch`
   other than its readiness line and error messages; a hand edit made to a file at the same moment a `set` writes
   that same file (concurrent writers to one file stay out of contract, as in step 1); anchors, aliases and merge
   keys (still refused, step 6); Windows.
@@ -108,11 +109,14 @@ Terms used below:
 
 #### Acceptance Criteria
 1. When `troupe config show` or `troupe config set` runs against an imported theatre whose configuration loads, the troupe CLI shall reconcile (Requirement 2) before resolving PATH or changing any file.
+   *Note (step 3): "`show`" now reads "`get` or `show`"; both reconcile first (spec config-get-show, requirement 6.2). `history` still never reconciles.*
 2. When `troupe config show` or `troupe config set` exits with code 3 or 5 after its reconcile, the troupe CLI shall keep the events that reconcile recorded.
+   *Note (step 3): "`show`" now reads "`get` or `show`" (spec config-get-show, requirement 6.2).*
 3. When `troupe config history` runs, the troupe CLI shall not reconcile, and shall print only the events already recorded (plus the import of a never-imported theatre, as in step 1).
 4. When any `troupe config` command runs against a theatre whose history has never been imported, the troupe CLI shall import it (step 1) and shall record no reconcile events in the same command.
 5. If the command line is malformed (exit 2) or the configuration cannot be loaded (exit 4), then the troupe CLI shall not reconcile and shall record no events.
 6. When `show` reconciles, the troupe CLI shall still print the value in the files as read from disk by this command and shall not modify any configuration file.
+   *Note (step 3): "`show`" now reads "`get` or `show`"; both print what is in the files as read from disk by this command (spec config-get-show, requirements 6.2, 6.4 and 6.5).*
 7. When a hand edit was made before a `set` and the `set` then changes the same leaf, the troupe CLI shall record the reconcile event for the hand edit before the `set`'s own events, so that the `set` event's `old` is the hand-edited value.
 
 ### Requirement 2: Reconcile events

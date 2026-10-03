@@ -322,7 +322,7 @@ def test_non_utf8_text_include_names_the_text_file(
     assert "UTF-8" in problem
 
 
-# ---- 10.4, 5.5, 6.7: path errors inside included files name the included file ----
+# ---- 10.4, 5.5, 6.8; config-get-show 1.2: path errors inside included files name the included file
 
 
 @pytest.mark.parametrize(

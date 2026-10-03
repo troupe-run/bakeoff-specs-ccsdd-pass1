@@ -69,7 +69,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Boundary: YamlOutput_
   - _Requirements: 2.6, 5.1, 5.2, 5.3, 5.5_
 
-- [ ] 3. Integration: the `get` and `show` commands
+- [x] 3. Integration: the `get` and `show` commands
 - [x] 3.1 Add the `get` command
   - `get PATH` (PATH required; any other option, including `--sources`, is a usage error) prints a scalar exactly as step 1's `show` and refuses mappings and lists with the `config show` hint
   - Parse PATH before opening the theatre, open it the default way (import a never-imported theatre, otherwise reconcile first), buffer the output and close the store at the end; never write a file
@@ -94,7 +94,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Depends: 2.2, 2.5_
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 6.1, 6.2, 6.3, 6.5, 6.7, 6.8_
 
-- [ ] 3.3 Align docstrings and the earlier specs with step 3
+- [x] 3.3 Align docstrings and the earlier specs with step 3
   - Add step 3 notes to config-foundation's requirements (1.1 names `get`, `show`, `history`; Requirement 6 now describes `get`, and 6.7 gains the `config show` hint) and config-file-sync's (1.1, 1.2, 1.6 read "`get` or `show`"), and update module and test docstrings that describe `show PATH` as a scalar-only command
   - Done when a search for `show PATH` and `show_value` in `src/`, `tests/` and those two requirement files finds only text that is correct for step 3, and the suite passes
   - _Requirements: 1.2, 6.2_

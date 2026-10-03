@@ -1,12 +1,12 @@
 """``troupe config history`` and the history import, end to end through the real console script.
 
 Covers the import on the first command (7.1, 8.5) with one ``import`` event per leaf (7.2), no
-re-import (7.3) and no reconciling by ``history`` itself (config-file-sync 1.3; ``show`` now
-reconciles, config-file-sync 1.1), an empty theatre marked imported (7.5), the JSON Lines
-format with strict JSON values (8.1, 8.2, 8.6, 8.7), prefix filtering (8.3, 8.4), folded block
-scalars in history events (3.8), and ``set``/``remove`` events appended through the recording API
-used by the set command (9.1-9.3). Every line is parsed with a strict JSON parser that rejects the
-``Infinity``/``NaN`` tokens.
+re-import (7.3) and no reconciling by ``history`` itself (config-file-sync 1.3; ``get`` and ``show``
+now reconcile, config-file-sync 1.1, config-get-show 6.2), an empty theatre marked imported
+(7.5), the JSON Lines format with strict JSON values (8.1, 8.2, 8.6, 8.7), prefix filtering (8.3,
+8.4), folded block scalars in history events (3.8), and ``set``/``remove`` events appended through
+the recording API used by the set command (9.1-9.3). Every line is parsed with a strict JSON parser
+that rejects the ``Infinity``/``NaN`` tokens.
 """
 
 import json

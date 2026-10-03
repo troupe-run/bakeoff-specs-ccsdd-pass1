@@ -13,6 +13,8 @@ proposes a layout (`src/troupe/`, CLI → core → file layer) that the first de
 ### Desired Outcome
 - `uv run troupe config show PATH [--theatre DIR]` and `uv run troupe config history [PATH] [--theatre DIR]`
   work from the repository root, following the step 1 contract (General, Includes, show, history).
+  *(Step 3 (spec config-get-show): the scalar command described here is now `troupe config get PATH`; the new
+  `troupe config show [PATH] [--sources]` prints YAML and is owned by config-get-show.)*
 - The configuration is loaded with recursive includes into a model that records, for every node, the file
   and source span it came from, its scalar style, and whether it came from an include (YAML or text).
   config-set-writeback builds on this model.
@@ -34,7 +36,8 @@ Approach Decision). The CLI uses a standard argument parser, with usage errors m
   (`.yml`/`.yaml` embedded, other targets as exact text, relative to the including file, recursive; missing
   target or cycle → 4); dotted path addressing with digit segments as list indices; leaf flattening; scalar
   printing rules (strings exact plus `\n` unless already present, bool, null, int, float `repr`);
-  `show PATH` (mapping/list → 5, missing → 5); event store + projection + import; `history [PATH]` JSON
+  `show PATH` (mapping/list → 5, missing → 5; *step 3: now `get PATH`, see spec config-get-show*); event
+  store + projection + import; `history [PATH]` JSON
   Lines with `seq`, `op`, `path`, `old`, `new` and prefix filtering; central error types and exit-code
   mapping.
 - **Out**: `set` and all write-back rules (config-set-writeback); anchors/aliases/merge keys; multi-document
@@ -77,6 +80,10 @@ Approach Decision). The CLI uses a standard argument parser, with usage errors m
 > **Note (step 2):** the contract above is kept verbatim. Its "importing is not reconciling" is superseded by
 > step 2 (spec config-file-sync, requirements 1.1–1.3, 1.7) for every command except `history`, which still
 > imports a never-imported theatre and never reconciles.
+>
+> **Note (step 3):** the contract's "show PATH" section now describes `get PATH` (spec config-get-show,
+> requirement 1). The new `show [PATH] [--sources]` prints any node as YAML, so `show` applied to a mapping or
+> list no longer exits 5 (config-get-show requirement 2).
 
 ## Introduction
 This specification covers the read side of the troupe configuration subsystem (contract step 1): the
@@ -85,9 +92,12 @@ loading it together with its `file:` includes, addressing values by dotted path,
 the configuration (starting with a one-time import), and the exit-code and error-message conventions shared by
 every `troupe config` subcommand. It also makes the loaded configuration available, with exact source
 positions, to the downstream `set` command (spec config-set-writeback).
+*(Step 3 (spec config-get-show): the scalar command `show PATH` is now `get PATH`; the new `show` prints YAML
+and is owned by config-get-show.)*
 
 ## Boundary Context
-- **In scope**: `troupe config show` and `troupe config history`; `--theatre` handling; locating
+- **In scope**: `troupe config show` (*step 3: now `troupe config get`; the new `show` is owned by spec
+  config-get-show*) and `troupe config history`; `--theatre` handling; locating
   `troupe.yml`/`troupe.yaml`; loading with recursive `file:` includes; dotted path addressing; scalar printing;
   the configuration history (import, storage, listing, filtering); recording of change events on behalf of the
   `set` command; exit codes 2, 4 and 5 and their messages; the shared definition of exit code 3.
@@ -129,6 +139,7 @@ positions, to the downstream `set` command (spec config-set-writeback).
 
 #### Acceptance Criteria
 1. When a developer runs `uv run troupe config show PATH` or `uv run troupe config history [PATH]` from the repository root, the troupe CLI shall execute the requested subcommand.
+   *Note (step 3): the read subcommands are now `get`, `show` and `history` (spec config-get-show, requirements 1 and 2), alongside `set` (config-set-writeback) and `watch` (config-file-sync).*
 2. Where `--theatre DIR` is given, the troupe CLI shall use DIR as the theatre directory.
 3. When `--theatre` is not given, the troupe CLI shall use the current working directory as the theatre directory.
 4. If the command line is malformed (unknown subcommand, missing required argument, unknown option or surplus argument), then the troupe CLI shall exit with code 2, write a message describing the usage problem to stderr, and write nothing to stdout.
@@ -182,6 +193,8 @@ positions, to the downstream `set` command (spec config-set-writeback).
 ### Requirement 6: Show a value
 **Objective:** As a developer, I want `troupe config show PATH` to print one setting, so that I can read it from scripts and the shell.
 
+*Note (step 3): this requirement now describes `troupe config get PATH` (spec config-get-show, requirement 1). Criteria 1–6, 8 and 9 apply to `get` unchanged; criterion 7 gains the `config show` hint. The new `troupe config show [PATH] [--sources]`, which prints any node as YAML, is owned by spec config-get-show.*
+
 #### Acceptance Criteria
 1. When PATH resolves to a string value, the troupe CLI shall print the string exactly, followed by a newline unless the string already ends with a newline, and exit with code 0.
 2. When PATH resolves to a boolean value, the troupe CLI shall print `true` or `false` followed by a newline.
@@ -190,9 +203,11 @@ positions, to the downstream `set` command (spec config-set-writeback).
 5. When PATH resolves to a floating-point value, the troupe CLI shall print it in Python `repr()` form followed by a newline.
 6. When PATH resolves to a text include, the troupe CLI shall print the included file's exact text as a string under criterion 1.
 7. If PATH resolves to a mapping or a list, then the troupe CLI shall exit with code 5 and write a stderr message that names PATH and the file that holds it.
+   *Note (step 3): this now applies to `get`, and the stderr message also mentions `config show` (spec config-get-show, requirement 1.2). `show` applied to a mapping or list prints YAML and exits 0 (config-get-show requirement 2).*
 8. If PATH is not found, then the troupe CLI shall exit with code 5 and write a stderr message that names PATH and the file holding the deepest part of PATH that exists.
 9. When a configuration file has been edited by hand since the history was imported, the troupe CLI shall show the value currently in the files as read from disk by this command, not the value recorded in the history, and shall record no history event for the hand edit.
    *Note (step 2): the "record no history event for the hand edit" part is superseded by spec config-file-sync (requirements 1.1–1.3, 1.7) for every command except `history`: `show` and `set` reconcile the hand edit into the history first; `show` still prints the value in the files as read from disk.*
+   *Note (step 3): "`show`" in this criterion and its step 2 note now reads "`get` or `show`" (spec config-get-show, requirement 6.2).*
 
 ### Requirement 7: Configuration history import
 **Objective:** As a developer, I want the first use of troupe on a theatre to record the configuration as it was found, so that later history has a starting point.

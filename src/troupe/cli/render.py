@@ -1,7 +1,8 @@
 """Pure formatting of command output (6.1-6.6, 8.2, 8.6, 8.7; config-get-show 5.4).
 
-``show`` prints one scalar per :func:`format_show_output`; ``history`` prints one JSON line per
-record per :func:`format_history_line`. Both return bytes so handlers can write them into the
+``get`` (and ``show`` for a scalar without ``--sources``, config-get-show 2.1) prints one scalar
+per :func:`format_show_output`; ``history`` prints one JSON line per record per
+:func:`format_history_line`. Both return bytes so handlers can write them into the
 binary output buffer without newline translation (a CRLF in a text include is kept).
 :func:`source_label` names a loaded file relative to the theatre directory for ``--sources``.
 """
@@ -17,7 +18,9 @@ from troupe.config.scalars import ScalarValue
 
 
 def format_show_output(value: ScalarValue) -> bytes:
-    """Return the ``show`` output for ``value``: its text followed by a newline, as UTF-8.
+    """Return the ``get`` output for ``value``: its text followed by a newline, as UTF-8.
+
+    ``show`` prints a scalar the same way when ``--sources`` is not given (config-get-show 2.1).
 
     A string is printed exactly and gets a newline only when it does not already end with one;
     booleans print as ``true``/``false`` (checked before ``int``, of which ``bool`` is a subclass),

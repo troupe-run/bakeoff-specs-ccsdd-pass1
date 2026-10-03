@@ -1,4 +1,4 @@
-"""Output rendering for ``show`` and ``history`` (6.1-6.6, 8.2, 8.6, 8.7)."""
+"""Output rendering for ``get``/``show`` scalars and ``history`` (6.1-6.6, 8.2, 8.6, 8.7)."""
 
 import json
 import math
