@@ -52,7 +52,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Boundary: YamlOutput_
   - _Requirements: 3.1, 3.2, 3.3, 3.5, 3.6, 3.7, 4.2, 4.3, 4.6, 4.7, 4.8_
 
-- [ ] 2.4 Render text includes and multi-line strings as literal blocks
+- [x] 2.4 Render text includes and multi-line strings as literal blocks
   - Every text include is a literal block whatever its text; any other string with a line break is a literal block when a literal block can hold its characters, otherwise double-quoted with escapes
   - Header: `|`, plus the indentation indicator `2` when the first line that is not empty starts with a space, plus the chomping that reproduces the trailing line breaks (`|-`, `|`, `|+`)
   - Content two spaces past the column of the key or dash owning the header (including `- k: |`), empty lines bare, every other character unchanged, so a CRLF text include reaches the output with its `\r\n`

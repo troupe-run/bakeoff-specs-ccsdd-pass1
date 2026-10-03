@@ -219,6 +219,217 @@ def test_long_strings_are_not_wrapped(make_theatre: MakeTheatre) -> None:
     assert out.count(b"\n") == 2
 
 
+# --- literal blocks ----------------------------------------------------------------------------
+
+
+def _show_include(
+    make_theatre: MakeTheatre, config: str, text: str | bytes, path: str | None = None
+) -> bytes:
+    """Render ``config`` whose ``file:p.txt`` directives read the text include ``text``."""
+    theatre = make_theatre(config, files={".troupe/p.txt": text})
+    document = _load(theatre)
+    node = document.root if path is None else resolve_path(document, ConfigPath.parse(path))
+    return render_yaml(node, label=None)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("line one\nline two\n", b"p: |\n  line one\n  line two\n"),
+        ("line one\nline two", b"p: |-\n  line one\n  line two\n"),
+        ("a\n\n", b"p: |+\n  a\n\n"),
+        ("a\n\n\n", b"p: |+\n  a\n\n\n"),
+        ("\n", b"p: |+\n\n"),
+        ("\n\n", b"p: |+\n\n\n"),
+        ("a\n\nb\n", b"p: |\n  a\n\n  b\n"),
+    ],
+    ids=["clip", "strip", "keep-two", "keep-three", "keep-lf-only", "keep-lfs-only", "inner-empty"],
+)
+def test_a_text_include_is_a_literal_block_with_the_chomping_of_its_trailing_breaks(
+    make_theatre: MakeTheatre, text: str, expected: bytes
+) -> None:
+    """Req 4.4, 3.4: a text include is a literal block; ``|-``, ``|`` or ``|+`` reproduces its
+    trailing line breaks; empty lines are bare and other lines are two spaces past the key."""
+    assert _show_include(make_theatre, "p: file:p.txt\n", text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("  a\nb\n", b"p: |2\n    a\n  b\n"),
+        ("\n  a\nb\n", b"p: |2\n\n    a\n  b\n"),
+        ("   \na\n", b"p: |2\n     \n  a\n"),
+        (" x", b"p: |2-\n   x\n"),
+        ("  a\n\n", b"p: |2+\n    a\n\n"),
+    ],
+    ids=["first-line", "after-empty-line", "spaces-only-line", "strip", "keep"],
+)
+def test_an_indentation_indicator_is_added_when_the_first_non_empty_line_starts_with_a_space(
+    make_theatre: MakeTheatre, text: str, expected: bytes
+) -> None:
+    """Req 4.4: the header gets the indicator ``2`` (before the chomping) when the first line
+    that is not empty starts with a space; a spaces-only line counts as not empty."""
+    assert _show_include(make_theatre, "p: file:p.txt\n", text) == expected
+
+
+def test_literal_content_is_two_spaces_past_a_nested_key(make_theatre: MakeTheatre) -> None:
+    """Req 4.4, 3.2: the content of a block under a key at indent 2 starts at column 4."""
+    config = "outer:\n  p: file:p.txt\n  q: 1\n"
+
+    assert (
+        _show_include(make_theatre, config, "a\n  b\n")
+        == b"outer:\n  p: |\n    a\n      b\n  q: 1\n"
+    )
+
+
+def test_literal_content_is_two_spaces_past_the_dash_of_a_list_item(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 4.4, 3.3: a literal list item ``- |`` has its content two spaces past the dash."""
+    config = "l:\n  - file:p.txt\n  - x\n"
+
+    assert _show_include(make_theatre, config, "a\nb\n") == b"l:\n  - |\n    a\n    b\n  - x\n"
+    assert _show_include(make_theatre, config, "a\nb\n", "l") == b"- |\n  a\n  b\n- x\n"
+
+
+def test_literal_content_is_two_spaces_past_the_key_of_a_mapping_in_a_list_item(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 4.4, 3.3: for ``- k: |`` the content is two spaces past the key, not the dash."""
+    config = "l:\n  - k: file:p.txt\n    m: 1\n"
+
+    assert _show_include(make_theatre, config, "  a\nb\n") == (
+        b"l:\n  - k: |2\n        a\n      b\n    m: 1\n"
+    )
+
+
+def test_a_single_line_include_without_final_newline_is_a_strip_literal_block(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 4.4: a text include with no line break is still a literal block, ``|-`` + one line,
+    even when its text would be plain or quoted on one line."""
+    assert _show_include(make_theatre, "p: file:p.txt\n", "hello") == b"p: |-\n  hello\n"
+    assert _show_include(make_theatre, "p: file:p.txt\n", "true") == b"p: |-\n  true\n"
+
+
+def test_an_empty_include_is_a_strip_literal_block_without_content(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 4.4: an empty text include is the header ``|-`` with no content line."""
+    assert _show_include(make_theatre, "p: file:p.txt\nq: 1\n", "") == b"p: |-\nq: 1\n"
+
+
+def test_a_crlf_include_stays_a_literal_block_with_its_crlf_line_breaks(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 4.4, 4.5, 4.6: a CRLF text include is still a literal block whose content lines hold
+    its text character for character, so each line ends with ``\\r\\n`` in the raw bytes."""
+    out = _show_include(make_theatre, "p: file:p.txt\nq: 1\n", b"one\r\ntwo\r\n")
+
+    assert out == b"p: |\n  one\r\n  two\r\nq: 1\n"
+
+
+def test_an_include_with_unfit_characters_stays_a_literal_block(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 4.5, 4.6: a text include holding a control character is printed literally,
+    unescaped, inside a literal block."""
+    assert _show_include(make_theatre, "p: file:p.txt\n", "bell\a\n") == b"p: |\n  bell\a\n"
+
+
+def test_a_tab_is_kept_inside_a_literal_block(make_theatre: MakeTheatre) -> None:
+    """Req 4.4, 4.6: a TAB in a literal block's line is written as is."""
+    assert _show_include(make_theatre, "p: file:p.txt\n", "a\tb\n\tc\n") == b"p: |\n  a\tb\n  \tc\n"
+
+
+def test_a_multi_line_string_that_is_not_an_include_is_a_literal_block(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 4.4: a double-quoted source string with line feeds is printed as a literal block."""
+    config = 'a: "a\\nb\\n"\nb: "x\\n\\n"\nc: "  y\\nz"\n'
+
+    assert _show(make_theatre, config) == b"a: |\n  a\n  b\nb: |+\n  x\n\nc: |2-\n    y\n  z\n"
+
+
+def test_a_multi_line_string_with_unfit_characters_is_double_quoted(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 4.5, 4.6: a non-include string a literal block cannot hold (a carriage return, a
+    control character) is printed double-quoted with escapes."""
+    config = 'a: "a\\r\\nb"\nb: "x\\ny\\a"\nc: "one\\r"\n'
+
+    assert _show(make_theatre, config) == b'a: "a\\r\\nb"\nb: "x\\ny\\a"\nc: "one\\r"\n'
+
+
+def test_only_the_header_line_of_a_literal_block_holds_the_scalar_source(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 4.4 (with 5.2): the header line carries the text include's file as its source and the
+    content lines carry none."""
+    theatre = make_theatre("p: file:p.txt\n", files={".troupe/p.txt": "a\nb\n"})
+    document = _load(theatre)
+
+    out = render_yaml(document.root, label=lambda file: file.path.name)
+
+    assert out == b"p: | # from p.txt\n  a\n  b\n"
+
+
+_LITERAL_TEXTS = [
+    "line one\nline two\n",
+    "line one\nline two",
+    "a\n\n",
+    "a\n\n\n",
+    "\n",
+    "\n\n",
+    "a\n\nb\n",
+    "  a\nb\n",
+    "\n  a\nb\n",
+    "   \na\n",
+    " x",
+    "  a\n\n",
+    "hello",
+    "true",
+    "",
+    "a\tb\n\tc\n",
+    "# not a comment\n- not a list\nkey: not a mapping\n",
+]
+
+
+@pytest.mark.parametrize("text", _LITERAL_TEXTS)
+def test_literal_blocks_read_back_exactly(make_theatre: MakeTheatre, text: str) -> None:
+    """Req 4.1, 4.4: every LF literal block, as a value, a list item, a value in a list item and
+    a nested value, loads back from the output as the same string."""
+    config = (
+        "p: file:p.txt\nl:\n  - file:p.txt\n  - k: file:p.txt\n    m: file:p.txt\n"
+        "outer:\n  inner:\n    p: file:p.txt\n"
+    )
+    original = _load(make_theatre(config, files={".troupe/p.txt": text}))
+    out = render_yaml(original.root, label=None)
+
+    reread = _load(make_theatre(out, name="readback"))
+
+    before = flatten_leaves(original.root)
+    after = flatten_leaves(reread.root)
+    assert [leaf.path for leaf in after] == [leaf.path for leaf in before]
+    assert all(scalar_equal(a.value, b.value) for a, b in zip(after, before, strict=True))
+    assert all(leaf.value == text for leaf in after)
+
+
+def test_non_include_multi_line_strings_read_back_exactly(make_theatre: MakeTheatre) -> None:
+    """Req 4.1, 4.4, 4.5: literal blocks and double-quoted fallbacks for non-include multi-line
+    strings load back as the same strings."""
+    config = 'a: "a\\nb\\n"\nb: "x\\n\\n"\nc: "  y\\nz"\nd: "a\\r\\nb"\ne: "x\\ny\\a"\n'
+    original = _load(make_theatre(config))
+    out = render_yaml(original.root, label=None)
+
+    reread = _load(make_theatre(out, name="readback"))
+
+    before = flatten_leaves(original.root)
+    after = flatten_leaves(reread.root)
+    assert [leaf.path for leaf in after] == [leaf.path for leaf in before]
+    assert all(scalar_equal(a.value, b.value) for a, b in zip(after, before, strict=True))
+
+
 # --- keys ---------------------------------------------------------------------------------------
 
 
