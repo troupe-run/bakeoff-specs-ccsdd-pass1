@@ -107,7 +107,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Boundary: e2e tests for get_
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 6.7_
 
-- [ ] 4.2 (P) Validate `show` output and command behaviour end to end
+- [x] 4.2 (P) Validate `show` output and command behaviour end to end
   - A scalar gives the same bytes as `get`; a mapping section mixing a YAML include and a text include, the whole configuration, a list, and an empty file give exact expected bytes; missing PATH → 5; surplus PATH, unknown option, `a.` → 2
   - Reconcile first (a hand edit before `show` or `get` appears in `history` as a `set`, also when the command then exits 5), a never-imported theatre is imported with no reconcile events, configuration files are byte-identical afterwards and no new file remains outside `.troupe/` state, a missing config file → 4 with no events, both `troupe.yml` and `troupe.yaml`, `TROUPE_THEATRE` honoured, a following command succeeds (store and lock released)
   - Done when the new e2e test module passes
