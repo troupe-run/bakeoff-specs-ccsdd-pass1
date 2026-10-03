@@ -6,6 +6,11 @@ clip for exactly one, keep ``+`` for more), and the content lines are the value'
 indentation, empty lines written as bare line breaks (9.2). A string a literal block cannot hold
 (:func:`literal_fits` is false) is written double-quoted by the caller instead (9.7).
 
+The chomping kinds, the required chomping and the check of which characters a literal block can
+hold live in the core module :mod:`troupe.config.yaml_style`, shared with ``show``; this module
+re-exports :class:`Chomping` and :func:`required_chomping` for the write-back modules that import
+them from here, and adds the write-back rule that a first line starting with a space is refused.
+
 Folded paragraphs are re-wrapped greedily by word with :func:`wrap_paragraph` (10.2, 10.5).
 
 An existing literal or folded block changed to another string is rewritten in place by
@@ -18,27 +23,26 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from enum import Enum
 from typing import Final, NoReturn
 
 from troupe.config.errors import WriteRefusedError
 from troupe.config.model import ConfigScalar
 from troupe.config.writeback.edits import EditKind, TextEdit
 from troupe.config.writeback.layout import FileLayout, ValueSlot
+from troupe.config.yaml_style import Chomping, literal_characters_fit, required_chomping
 
+# Re-exported: other write-back modules and their tests import these names from here.
+__all__ = [
+    "Chomping",
+    "chomping_fits",
+    "chomping_for",
+    "literal_fits",
+    "render_literal",
+    "required_chomping",
+    "rewrite_block",
+    "wrap_paragraph",
+]
 
-class Chomping(Enum):
-    """Block chomping indicator: strip (``-``), clip (nothing) or keep (``+``)."""
-
-    STRIP = "-"
-    CLIP = ""
-    KEEP = "+"
-
-
-_UNFIT: Final = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff\ufffe\uffff]")
-"""Characters a literal block cannot hold (9.7): control characters other than TAB and LF
-(C0, DEL, C1 including U+0085), the Unicode line/paragraph separators, lone surrogates and the
-non-characters U+FFFE/U+FFFF, none of which YAML accepts literally."""
 
 _BREAK_POINT: Final = re.compile(r"(?<=[^ \t]) (?=[^ \t])")
 """A single space with a non-whitespace character on both sides, the only break point (10.5).
@@ -47,29 +51,13 @@ A space next to a TAB is never a break point: a folded line starting with a TAB 
 and its preceding break is kept, and a line ending in whitespace would lose the fold."""
 
 
-def _trailing_breaks(value: str) -> int:
-    return len(value) - len(value.rstrip("\n"))
-
-
-def required_chomping(value: str) -> Chomping:
-    """The chomping a value's trailing line breaks require (9.1).
-
-    Strip for none, clip for exactly one, keep for more. A value made only of line breaks needs
-    keep even for a single one (``"\\n"``): clip without a content line reads back as ``""``.
-    """
-    trailing = _trailing_breaks(value)
-    if trailing == 0:
-        return Chomping.STRIP
-    return Chomping.CLIP if trailing == 1 and trailing < len(value) else Chomping.KEEP
-
-
 def chomping_fits(chomping: Chomping, value: str) -> bool:
     """Whether an existing chomping can still represent the value (9.4).
 
     Keep represents one or more trailing line breaks, clip exactly one after some content (not
     ``"\\n"`` alone), strip none.
     """
-    trailing = _trailing_breaks(value)
+    trailing = len(value) - len(value.rstrip("\n"))
     if chomping is Chomping.KEEP:
         return trailing >= 1
     if chomping is Chomping.CLIP:
@@ -86,10 +74,11 @@ def literal_fits(value: str) -> bool:
     """Whether a literal block can hold the string exactly (9.7).
 
     Refused: a control character other than TAB and LF, U+2028/U+2029 (or another character YAML
-    does not accept literally), a first non-empty line starting with a space (its indentation would
+    does not accept literally; the core :func:`~troupe.config.yaml_style.literal_characters_fit`),
+    a first non-empty line starting with a space (its indentation would
     be taken as the block's).
     """
-    if _UNFIT.search(value):
+    if not literal_characters_fit(value):
         return False
     first = next((line for line in value.split("\n") if line), "")
     return not first.startswith(" ")
@@ -189,7 +178,7 @@ def rewrite_block(
     """
     if scalar.value == value:
         return []
-    if _UNFIT.search(value):
+    if not literal_characters_fit(value):
         raise ValueError(f"string cannot be written as a block scalar: {value!r}")
     text = layout.file.text
     header = layout.inline_extent(slot)

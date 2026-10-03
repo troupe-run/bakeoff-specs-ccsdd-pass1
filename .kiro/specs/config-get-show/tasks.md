@@ -11,7 +11,7 @@ auto`, `uv run mypy --strict .`, `uv run ruff check .` and `uv run ruff format -
 tasks `[x]`). No new runtime dependency is added.
 
 - [ ] 1. Foundation: shared YAML scalar presentation
-- [ ] 1.1 Move the write-neutral scalar presentation rules from write-back into a core module
+- [x] 1.1 Move the write-neutral scalar presentation rules from write-back into a core module
   - Move the quoting contexts, quote styles, representability check, minimal style choice, quoting and escaping (made public) and the plain-scalar probes, plus the chomping kinds, required chomping and the "characters a literal block can hold" check, into the new core presentation module
   - Leave the refusals (lone surrogates, the first-line-starts-with-a-space rule of the write-back literal check), the literal renderer and the block rewriting in write-back, importing the moved definitions; keep every name other write-back modules already import available from its old place
   - Pure move: no write-back output byte changes
