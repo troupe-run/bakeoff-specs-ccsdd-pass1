@@ -99,7 +99,7 @@ tasks `[x]`). No new runtime dependency is added.
   - Done when a search for `show PATH` and `show_value` in `src/`, `tests/` and those two requirement files finds only text that is correct for step 3, and the suite passes
   - _Requirements: 1.2, 6.2_
 
-- [ ] 4. Validation: end to end through the real CLI
+- [x] 4. Validation: end to end through the real CLI
 - [x] 4.1 (P) Validate `get` end to end
   - Every step 1 scalar printing case (strings with and without a final newline, booleans, null, integers, floats, a folded block, a text include), mapping and list → 5 with empty stdout and stderr naming the file, PATH and `config show`, missing PATH → 5, no PATH / two PATHs / `--sources` → 2, `a..b` → 2
   - This task owns the new `get` e2e module; the cases 3.2 retargeted in place stay where they are
@@ -127,7 +127,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Boundary: e2e tests for sources_
   - _Requirements: 2.6, 2.7, 4.5, 5.1, 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 4.5 Run the full quality gate and check traceability
+- [x] 4.5 Run the full quality gate and check traceability
   - Check every requirement ID 1.1–6.8 is named in at least one test docstring and every new test names an existing ID; tick the step 3 items in the roadmap
   - Done when the traceability check finds no gap, and `uv run pytest -n auto`, `uv run mypy --strict .`, `uv run ruff check .` and `uv run ruff format --check .` pass with their output shown
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 5.1, 5.2, 5.3, 5.4, 5.5, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8_

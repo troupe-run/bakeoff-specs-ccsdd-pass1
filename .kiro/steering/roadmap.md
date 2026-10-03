@@ -59,7 +59,7 @@ rules). The write side carries most of the risk and rules, so it gets its own sp
 - [x] config-foundation -- CLI scaffold, theatre/config-file location, YAML loading with recursive includes into a source-mapped model, path addressing, event-sourced projection with import, `show PATH`, `history [PATH]`, error/exit-code conventions. Dependencies: none
 - [x] config-set-writeback -- `set PATH VALUE`: YAML 1.2 flow-node value parsing, target-file resolution, byte-surgical write-back rules, leaf-level set/remove events. Dependencies: config-foundation
 - [x] config-file-sync -- (step 2) reconcile files against the recorded configuration (set/remove per differing leaf), reconcile-first for every command except `history`, `troupe config watch` (polling, readiness line, include following, SIGINT/SIGTERM → 0), inter-process lock so a `set`'s write-back is never re-recorded. Dependencies: config-foundation, config-set-writeback
-- [ ] config-get-show -- (step 3) `get PATH` (scalar; mapping/list → 5 mentioning `config show`), `show [PATH]` (scalar as `get`; otherwise block YAML with includes resolved, text includes as literal blocks; whole config without PATH), `--sources` end-of-line `# from <file>` provenance. Dependencies: config-foundation, config-set-writeback, config-file-sync
+- [x] config-get-show -- (step 3) `get PATH` (scalar; mapping/list → 5 mentioning `config show`), `show [PATH]` (scalar as `get`; otherwise block YAML with includes resolved, text includes as literal blocks; whole config without PATH), `--sources` end-of-line `# from <file>` provenance. Dependencies: config-foundation, config-set-writeback, config-file-sync
 
 ## Product owner decisions (2026-10-01)
 Full records (decision, alternatives, why, revisit trigger, status) are in each spec's `research.md`.
@@ -131,8 +131,8 @@ scalar. Decision A (files are the truth) and reconcile-first (step 2) apply to b
   second tree); printing source spans (no include resolution, not block style).
 
 ### Existing Spec Updates
-- [ ] config-foundation -- Requirement 6 ("show a value") becomes `get PATH`; 6.7's exit-5 message also mentions `config show`. 1.1 and the Introduction name `get`/`show`. Add step-3 notes pointing to config-get-show. Dependencies: config-get-show
-- [ ] config-file-sync -- the reconcile-first command list gains `get` (`show` stays; `history` still never reconciles). Dependencies: config-get-show
+- [x] config-foundation -- Requirement 6 ("show a value") becomes `get PATH`; 6.7's exit-5 message also mentions `config show`. 1.1 and the Introduction name `get`/`show`. Add step-3 notes pointing to config-get-show. Dependencies: config-get-show
+- [x] config-file-sync -- the reconcile-first command list gains `get` (`show` stays; `history` still never reconciles). Dependencies: config-get-show
 
 ### Direct Implementation Candidates
 - (none) -- test and docstring updates for the rename are done inside config-get-show's tasks, in the same change as the behaviour (collaboration.md).
