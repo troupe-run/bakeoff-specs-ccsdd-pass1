@@ -148,7 +148,8 @@ def test_every_command_kind_only_adds_the_store_and_leaves_user_files_untouched(
         (("history", ".team"), 2),
         (("show", "team", "--bogus"), 2),
         (("show", "team.lead.missing"), 5),
-        (("show", "team.members"), 5),
+        (("get", "team.members"), 5),
+        (("show", "team.members"), 0),
     ]
     for args, exit_code in steps:
         before = _list_tree(tmp_path)

@@ -99,10 +99,10 @@ def test_get_prints_a_text_include_exactly(make_theatre: MakeTheatre, run_cli: R
     assert (result.exit_code, result.stdout, result.stderr) == (0, b"hi\r\n\n", "")
 
 
-def test_get_and_step_1_show_print_the_same_bytes(
+def test_get_and_show_print_the_same_bytes_for_scalars(
     make_theatre: MakeTheatre, run_cli: RunCli
 ) -> None:
-    """Req 1.1: for every scalar, `get` and the (still step 1) `show` print the same bytes."""
+    """Req 1.1, 2.1: for every scalar, `get` and `show` without `--sources` print the same bytes."""
     theatre = make_theatre(CONFIG)
 
     for path in ("name", "count", "ratio", "on", "nothing", "agents.lead", "items.0"):

@@ -160,7 +160,7 @@ USAGE_CASES = {
     "no subcommand": ("config",),
     "no command group": (),
     "unknown subcommand": ("config", "bogus"),
-    "show missing PATH": ("config", "show"),
+    "get missing PATH": ("config", "get"),
     "show unknown option": ("config", "show", "a", "--bogus"),
     "history unknown option": ("config", "history", "--bogus"),
     "show surplus argument": ("config", "show", "a", "b"),
@@ -203,7 +203,7 @@ def test_unknown_option_message_names_it(make_theatre: MakeTheatre, run_cli: Run
 def test_missing_argument_message_names_it(make_theatre: MakeTheatre, run_cli: RunCli) -> None:
     theatre = make_theatre(CONFIG)
 
-    result = run_cli("config", "show", cwd=theatre)
+    result = run_cli("config", "get", cwd=theatre)
 
     assert "PATH" in result.stderr
 
@@ -253,10 +253,11 @@ def test_missing_key_exits_5_naming_file_and_path(
     assert "agents.nobody" in result.stderr
 
 
-def test_mapping_target_exits_5(make_theatre: MakeTheatre, run_cli: RunCli) -> None:
+def test_mapping_target_of_get_exits_5(make_theatre: MakeTheatre, run_cli: RunCli) -> None:
+    """config-get-show 1.2: `get` refuses a mapping (step 3's `show` prints it)."""
     theatre = make_theatre(CONFIG)
 
-    result = run_cli("config", "show", "agents", "--theatre", str(theatre))
+    result = run_cli("config", "get", "agents", "--theatre", str(theatre))
 
     assert result.exit_code == 5
     assert result.stdout == b""
@@ -372,17 +373,18 @@ def test_run_does_not_catch_unexpected_exceptions(monkeypatch: pytest.MonkeyPatc
 
 
 def test_registration_point_holds_show_and_history() -> None:
-    """config-file-sync 4.1, config-get-show 1.1: ``get`` first, ``watch`` after ``set``."""
+    """config-file-sync 4.1, config-get-show 1.1, 2.1: ``get, show`` first, ``watch`` last."""
     # config-set-writeback appends its `set` registrar (its only change to main.py);
-    # config-file-sync appends its `watch` registrar; config-get-show puts `get` first.
-    from troupe.cli.get_show_command import add_get_subparser
+    # config-file-sync appends its `watch` registrar; config-get-show puts `get` first and
+    # replaces step 1's `show` with its own, both from its read-command module.
+    from troupe.cli.get_show_command import add_get_subparser, add_show_subparser
     from troupe.cli.set_command import add_set_subparser
     from troupe.cli.watch_command import add_watch_subparser
 
     registrars = cli_main.SUBCOMMAND_REGISTRARS
     assert registrars == (
         add_get_subparser,
-        cli_main.add_show_subparser,
+        add_show_subparser,
         cli_main.add_history_subparser,
         add_set_subparser,
         add_watch_subparser,
@@ -390,11 +392,13 @@ def test_registration_point_holds_show_and_history() -> None:
 
 
 def test_every_subcommand_sets_a_handler() -> None:
+    from troupe.cli.get_show_command import handle_show
+
     parser = cli_main.build_parser()
     assert isinstance(parser, shell.TroupeArgumentParser)
     show = parser.parse_args(["config", "show", "a"])
     history = parser.parse_args(["config", "history"])
-    assert show.handler is cli_main.handle_show
+    assert show.handler is handle_show
     assert history.handler is cli_main.handle_history
     assert history.path is None
     assert show.theatre == Path.cwd()

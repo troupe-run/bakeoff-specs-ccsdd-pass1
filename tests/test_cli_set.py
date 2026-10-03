@@ -276,15 +276,15 @@ def test_set_command_imports_the_shell_and_never_main() -> None:
 
 def test_main_registers_set_after_show_and_history() -> None:
     """Req 1.1: SUBCOMMAND_REGISTRARS gains exactly the `set` registrar."""
-    from troupe.cli.get_show_command import add_get_subparser
+    from troupe.cli.get_show_command import add_get_subparser, add_show_subparser
     from troupe.cli.set_command import add_set_subparser, handle_set
 
     registrars = cli_main.SUBCOMMAND_REGISTRARS
     # Later specs append their registrars after `set` (config-file-sync's `watch`) or put them
-    # first (config-get-show's `get`).
+    # first (config-get-show's `get`, followed by its `show`, which replaced step 1's).
     assert registrars[:4] == (
         add_get_subparser,
-        cli_main.add_show_subparser,
+        add_show_subparser,
         cli_main.add_history_subparser,
         add_set_subparser,
     )

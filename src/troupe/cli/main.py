@@ -11,8 +11,10 @@ theatre in a ``with`` block, so usage errors create no state and the store is cl
 of every command (1.5, 7.4, 7.9). Unexpected exceptions are not caught (traceback, exit 1); for
 buffered handlers stdout is still empty because output is buffered.
 
-Step 3 (config-get-show) adds ``get PATH``, registered first from its read-command module
-:mod:`troupe.cli.get_show_command` (config-get-show 1.1-1.5).
+Step 3 (config-get-show) adds ``get PATH`` and replaces step 1's scalar-only ``show PATH`` with
+``show [PATH] [--sources]``, which prints values and whole sections as YAML; both are registered
+first, in that order, from the read-command module :mod:`troupe.cli.get_show_command`
+(config-get-show 1.1-1.5, 2.1-2.7).
 """
 
 import argparse
@@ -21,8 +23,8 @@ import sys
 from collections.abc import Sequence
 from typing import BinaryIO, Final, NoReturn, TextIO
 
-from troupe.cli.get_show_command import add_get_subparser
-from troupe.cli.render import format_history_line, format_show_output
+from troupe.cli.get_show_command import add_get_subparser, add_show_subparser
+from troupe.cli.render import format_history_line
 from troupe.cli.set_command import add_set_subparser
 from troupe.cli.shell import (
     StreamHandler,
@@ -33,14 +35,7 @@ from troupe.cli.shell import (
 from troupe.cli.watch_command import add_watch_subparser
 from troupe.config.errors import TroupeError
 from troupe.config.paths import ConfigPath
-from troupe.config.theatre import get_value, list_history, open_theatre
-
-
-def handle_show(args: argparse.Namespace, buffer: io.BytesIO) -> None:
-    """Handler of ``troupe config show PATH``: print the scalar at PATH."""
-    path = ConfigPath.parse(args.path)
-    with open_theatre(args.theatre) as theatre:
-        buffer.write(format_show_output(get_value(theatre, path)))
+from troupe.config.theatre import list_history, open_theatre
 
 
 def handle_history(args: argparse.Namespace, buffer: io.BytesIO) -> None:
@@ -53,18 +48,6 @@ def handle_history(args: argparse.Namespace, buffer: io.BytesIO) -> None:
     with open_theatre(args.theatre, reconcile=False) as theatre:
         for record in list_history(theatre, prefix):
             buffer.write(format_history_line(record))
-
-
-def add_show_subparser(subparsers: "argparse._SubParsersAction[TroupeArgumentParser]") -> None:
-    """Register ``show PATH``."""
-    parser = subparsers.add_parser(
-        "show",
-        parents=[theatre_option_parent()],
-        help="print the value at PATH",
-        description="Print the scalar value at PATH as written in the configuration files.",
-    )
-    parser.add_argument("path", metavar="PATH", help="dotted path, e.g. agents.lead or items.0")
-    parser.set_defaults(handler=handle_show)
 
 
 def add_history_subparser(
@@ -87,7 +70,8 @@ def add_history_subparser(
 # Each entry adds one `troupe config` subcommand. config-set-writeback extends this tuple with
 # exactly one entry (its `set` registrar, imported from its own module); nothing else changes.
 # config-file-sync appends its streaming `watch` registrar the same way.
-# config-get-show (step 3) puts its `get` registrar first, from its read-command module.
+# config-get-show (step 3) puts its `get` registrar first and replaces step 1's `show` with its
+# own, both from its read-command module.
 SUBCOMMAND_REGISTRARS: Final[tuple[SubcommandRegistrar, ...]] = (
     add_get_subparser,
     add_show_subparser,

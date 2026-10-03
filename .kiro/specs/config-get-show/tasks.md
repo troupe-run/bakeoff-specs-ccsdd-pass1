@@ -79,7 +79,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Depends: 2.1_
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 6.1, 6.2, 6.3, 6.5, 6.7, 6.8_
 
-- [ ] 3.2 Replace the step 1 `show` with the new `show` and retarget the tests that relied on it
+- [x] 3.2 Replace the step 1 `show` with the new `show` and retarget the tests that relied on it
   - `show [PATH] [--sources]` (flag before or after PATH, PATH optional) prints a scalar without `--sources` exactly like `get`, and otherwise the YAML output (labelled with source files when `--sources` is given), with the same opening, buffering and no-write rules as `get`
   - Remove the step 1 `show` handler and registrar from the entry module and register the new `show` from the read-command module
   - In the same change, retarget every existing test that relies on step 1 `show` being scalar-only, so the suite stays green. Mapping/list → 5 and "missing PATH → 2" cases move to `get` in place (or, where the case is about `show`, change to a surplus PATH or the new exit 0). Known cases:
@@ -135,3 +135,4 @@ tasks `[x]`). No new runtime dependency is added.
 ## Implementation Notes
 - 2.3: Under requirement 4.3's minimal chain, a string containing a TAB is single-quoted (`'x<TAB>y'`), not double-quoted. Double quotes are only for characters single quotes cannot hold.
 - 2.3 (review): `yaml_style` (shared with `set`) writes a string containing U+FEFF plain or single-quoted. Our loader and ruamel read it back exactly, but strict YAML 1.2 excludes the BOM from `nb-char`. This is pre-existing write-back behaviour; changing it would change `set`'s bytes, which this spec must not do. Revisit in write-back if a strict parser rejects it.
+- 3.2: The full suite found one more test relying on step 1's scalar-only `show`, beyond the known list: `tests/test_e2e_includes.py` (an included collection → 5). It was retargeted to `get`, and now also asserts that `show` exits 0.

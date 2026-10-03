@@ -193,7 +193,7 @@ def test_first_show_on_fresh_theatre_records_imports_only(
     "args",
     [
         pytest.param(("show", "a", "--bogus"), id="unknown-option"),
-        pytest.param(("show",), id="missing-path"),
+        pytest.param(("get",), id="missing-path"),
         pytest.param(("set", "a"), id="set-missing-value"),
     ],
 )

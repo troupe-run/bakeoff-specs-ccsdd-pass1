@@ -82,7 +82,9 @@ def test_registered_subcommands_get_the_theatre_text(monkeypatch: pytest.MonkeyP
     args = cli_main.build_parser().parse_args(["config", "show", "a", "--theatre", "./t/"])
 
     assert (args.theatre_text, args.theatre) == ("./t/", Path("t"))
-    assert args.handler is cli_main.handle_show
+    from troupe.cli.get_show_command import handle_show
+
+    assert args.handler is handle_show
 
 
 # ---- 4.7, 4.8 (config-foundation 10.1-10.3, 10.5): streaming handlers in run() ----

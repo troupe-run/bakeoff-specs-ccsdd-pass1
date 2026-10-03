@@ -355,13 +355,16 @@ def test_path_not_found_inside_included_file_names_the_included_file(
 
 
 @pytest.mark.parametrize(("path", "file"), [("team", "team.yml"), ("team.tags", "team.yml")])
-def test_show_of_included_collection_names_the_included_file(
+def test_get_of_included_collection_names_the_included_file(
     make_theatre: MakeTheatre, run_cli: RunCli, path: str, file: str
 ) -> None:
+    """Req 10.4, config-get-show 1.2: `get` of a collection reached through an include exits 5
+    naming the included file (step 3's `show` prints the collection instead)."""
     theatre = make_theatre(
         "team: file:team.yml\n", files={".troupe/team.yml": "tags:\n  - a\n  - b\n"}
     )
 
-    result = _show(run_cli, theatre, path)
+    result = run_cli("config", "get", path, "--theatre", str(theatre))
 
     _assert_failure(result, 5, theatre / ".troupe" / file, path)
+    assert _show(run_cli, theatre, path).exit_code == 0

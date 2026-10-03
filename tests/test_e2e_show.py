@@ -1,9 +1,11 @@
-"""``troupe config show``, end to end through the real ``troupe`` console script.
+"""``troupe config show PATH`` on scalars, end to end through the real ``troupe`` console script.
 
 Covers the printing rules for every scalar kind (6.1-6.5) under the YAML 1.2 core schema (3.1),
 folded block scalars printed with no added character (3.8), list items by index (5.1-5.3), path
-errors for mapping/list targets and missing paths (5.5, 6.7, 6.8) with exit 5, empty stdout and a
-stderr message naming the file and PATH, malformed PATH syntax (1.5) with exit 2, and the
+errors with exit 5, empty stdout and a stderr message naming the file and PATH: missing paths
+(5.5, 6.8) for ``show``, and mapping/list targets (6.7) for ``get``, which since step 3
+(config-get-show 1.2) is the scalar-only command (``show`` prints mappings and lists as YAML,
+config-get-show 2.2), malformed PATH syntax (1.5) with exit 2, and the
 product-owner decision A: files are the truth, so a hand edit after the import is shown (6.9) and,
 since step 2, recorded by the reconcile that ``show`` runs first (config-file-sync 1.1, 1.6).
 """
@@ -178,7 +180,7 @@ def test_show_works_with_troupe_yaml_root(make_theatre: MakeTheatre, run_cli: Ru
     _assert_shows(_show(run_cli, theatre, "v"), b"1\n")
 
 
-# ---- 6.7: a mapping or list target is exit 5 ----
+# ---- 6.7 (config-get-show 1.2): a mapping or list target of `get` is exit 5 ----
 
 NESTED = "a:\n  b:\n    - x\n    - [y, z]\n  s: hi\n  e: {}\n  l: []\n"
 
@@ -188,15 +190,19 @@ NESTED = "a:\n  b:\n    - x\n    - [y, z]\n  s: hi\n  e: {}\n  l: []\n"
     [("a", "mapping"), ("a.b", "list"), ("a.b.1", "list"), ("a.e", "mapping"), ("a.l", "list")],
 )
 @pytest.mark.parametrize("config_name", ["troupe.yml", "troupe.yaml"])
-def test_show_mapping_or_list_target_exits_5_naming_file_and_path(
+def test_get_mapping_or_list_target_exits_5_naming_file_and_path(
     make_theatre: MakeTheatre, run_cli: RunCli, config_name: str, path: str, kind: str
 ) -> None:
+    """Req 6.7, config-get-show 1.2: `get` of a mapping or list exits 5 naming file and PATH;
+    `show` of the same PATH exits 0 (config-get-show 2.2)."""
     theatre = make_theatre(NESTED, config_name=config_name)
 
-    result = _show(run_cli, theatre, path)
+    result = run_cli("config", "get", path, "--theatre", str(theatre))
 
     problem = _assert_path_failure(result, theatre / ".troupe" / config_name, path)
     assert kind in problem
+    assert "config show" in problem
+    assert _show(run_cli, theatre, path).exit_code == 0
 
 
 # ---- 5.5, 6.8: a path that is not found is exit 5 ----
