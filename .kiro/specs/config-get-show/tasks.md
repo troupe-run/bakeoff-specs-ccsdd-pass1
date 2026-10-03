@@ -100,7 +100,7 @@ tasks `[x]`). No new runtime dependency is added.
   - _Requirements: 1.2, 6.2_
 
 - [ ] 4. Validation: end to end through the real CLI
-- [ ] 4.1 (P) Validate `get` end to end
+- [x] 4.1 (P) Validate `get` end to end
   - Every step 1 scalar printing case (strings with and without a final newline, booleans, null, integers, floats, a folded block, a text include), mapping and list → 5 with empty stdout and stderr naming the file, PATH and `config show`, missing PATH → 5, no PATH / two PATHs / `--sources` → 2, `a..b` → 2
   - This task owns the new `get` e2e module; the cases 3.2 retargeted in place stay where they are
   - Done when the new e2e test module passes and fails if the hint or any exit code is broken
