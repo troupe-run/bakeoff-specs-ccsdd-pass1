@@ -8,7 +8,9 @@ comments, quoting, key order and whether a value is written in place or through 
 change a leaf, so they give no change (2.4).
 
 :func:`reconcile` records those changes with the store's one-transaction append, so a reconcile is
-recorded all or nothing (2.7). It never reads or writes user files.
+recorded all or nothing (2.7). It never reads or writes user files. Since step 4 the batch is
+recorded with the file context, so a reconcile is one change with ``via`` ``file``, actor unknown
+and no reason, whichever command runs it (config-lineage 3.2, 4.1, 6.3).
 """
 
 from collections.abc import Sequence

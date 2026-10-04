@@ -129,9 +129,11 @@ Terms used below:
 4. When no leaf differs, including after an edit that changes only formatting, comments, quoting style, key order, blank lines, line endings, or whether a value is written in place or through an include, the troupe CLI shall record no event.
 5. When a leaf's value changes type (for example `1` to `1.0` or to `"1"`), the troupe CLI shall record a `set` event for that leaf.
 6. The troupe CLI shall record the events of one reconcile together, with consecutive `seq` numbers: first the `set` events in the files' document order, then the `remove` events ordered by the `seq` of the event that most recently created each leaf (its `import` event, or a `set` event recorded while the leaf did not exist), oldest first.
+   *Note (step 4): each reconcile that records events is one change: all its events carry `via` `"file"`, actor `{"kind": "unknown", "id": null}` and `reason` null whatever `TROUPE_ACTOR` holds, and share one `at`, and one `change` that no other change has, including the following `set` of the same command and every other reconcile of a `watch`; a reconcile that finds no difference records no change (spec config-lineage, requirements 3.2, 4.1–4.4, 5.2 and 6.3).*
 7. If a reconcile is interrupted (including by a signal), then the troupe CLI shall leave either all of its events recorded or none of them.
 8. When the content of a text-included file changes, the troupe CLI shall record one `set` event for the leaf that holds that include, with the previous text as `old` and the new text as `new`.
 9. The troupe CLI shall print reconcile events in `history` with the same line format, value forms and PATH filtering as every other event (config-foundation Requirement 8).
+   *Note (step 4): that line format now includes the lineage members `actor`, `via`, `at`, `reason` and `change` (spec config-lineage, requirement 1).*
 
 ### Requirement 3: Includes added or removed by hand
 **Objective:** As a developer, I want includes I add or remove by hand to be followed, so that the history reflects the configuration they bring in or take away.

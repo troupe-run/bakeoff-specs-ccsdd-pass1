@@ -16,6 +16,10 @@ only that document (config-get-show 6.4). Step 2 supersedes the step 1 rule that
 never recorded (6.9, 7.3): every command except ``history`` reconciles first, so a hand edit is
 recorded as ``set``/``remove`` events before the command's own work; ``history`` opens with
 ``reconcile=False`` and only imports a never-imported theatre.
+
+Since step 4 the import is recorded with the import context (``via`` ``import``, actor unknown,
+whatever ``TROUPE_ACTOR`` holds) and the reconcile with the file context; only the command's own
+work, such as ``set``'s batch, carries the command's actor (config-lineage 3.1, 3.2, 3.3).
 """
 
 from collections.abc import Callable

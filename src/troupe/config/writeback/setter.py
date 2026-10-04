@@ -8,6 +8,10 @@ written are restored in reverse order and the failure is re-raised with PATH (14
 changes are recorded in one batch only after every write succeeded; when recording fails, every
 written file is restored and the store error is re-raised (15.6). A failing restore never stops the
 remaining restores; the original error keeps its exit code and names each unrestored file (14.10).
+
+Since step 4 the batch is recorded with the caller's context (``handle_set`` passes a cli context
+with the command's actor and ``--reason``), so the set's own events form one change, separate from
+the reconcile change recorded when the theatre was opened (config-lineage 3.3, 4.1, 4.2, 6.1).
 """
 
 from collections.abc import Sequence

@@ -84,6 +84,11 @@ Approach Decision). The CLI uses a standard argument parser, with usage errors m
 > **Note (step 3):** the contract's "show PATH" section now describes `get PATH` (spec config-get-show,
 > requirement 1). The new `show [PATH] [--sources]` prints any node as YAML, so `show` applied to a mapping or
 > list no longer exits 5 (config-get-show requirement 2).
+>
+> **Note (step 4):** each line of the contract's "history [PATH]" section now also has the members `actor`,
+> `via`, `at`, `reason` and `change` after `new` (spec config-lineage, requirement 1). Import events carry
+> `via` `"import"` and actor unknown, and the events of one import or one `set` share one `change`
+> (config-lineage requirements 3 and 4).
 
 ## Introduction
 This specification covers the read side of the troupe configuration subsystem (contract step 1): the
@@ -214,6 +219,7 @@ and is owned by config-get-show.)*
 
 #### Acceptance Criteria
 1. When any `troupe config` command first runs against a theatre whose history has never been imported and the configuration loads successfully, the troupe CLI shall record one `import` event per leaf of the configuration, with `old` null and `new` the leaf's value, in document order.
+   *Note (step 4): every import event also carries import lineage: `via` `"import"`, actor `{"kind": "unknown", "id": null}`, `reason` null, and one `change` and one `at` shared by all events of the import, whichever command performed it and whatever `TROUPE_ACTOR` holds (spec config-lineage, requirements 3.1, 4.1 and 5.2).*
 2. The troupe CLI shall treat as leaves every scalar value (including a text-include string) at its full dotted path, with list items addressed by index (`list.0`, `list.1`, …); empty mappings and empty lists contribute no leaves.
 3. While a theatre's history has already been imported, the troupe CLI shall not record import events again, and shall not record events for differences between the files and the history (importing is not reconciling).
    *Note (step 2): the "shall not record events for differences between the files and the history" part is superseded by spec config-file-sync (requirements 1.1–1.3, 1.7) for every command except `history`; import events are still never recorded again, and `history` never reconciles.*
@@ -230,6 +236,7 @@ and is owned by config-get-show.)*
 #### Acceptance Criteria
 1. When `troupe config history` runs, the troupe CLI shall print every recorded event, oldest first, one JSON object per line, and exit with code 0.
 2. The troupe CLI shall include in each line at least the members `seq` (an integer, 1 for the first event and increasing by 1 per event), `op` (`import`, `set` or `remove`), `path` (dotted), `old` and `new` (the JSON form of the values).
+   *Note (step 4): each line also has the members `actor`, `via`, `at`, `reason` and `change`, printed after `new` in that order; `seq`, `op`, `path`, `old` and `new` keep their order and values (spec config-lineage, requirement 1). Events recorded before step 4 are printed with the legacy lineage of config-lineage requirement 7.3.*
 3. When PATH is given, the troupe CLI shall print only the events whose path equals PATH or starts with PATH followed by `.`, keeping their original `seq` numbers.
 4. When PATH matches no events, the troupe CLI shall print nothing and exit with code 0.
 5. When `troupe config history` runs against a theatre whose history has never been imported, the troupe CLI shall import it first (Requirement 7) and then print the import events.
@@ -243,6 +250,7 @@ and is owned by config-get-show.)*
 1. When the set command reports a leaf as changed or created, the troupe CLI shall record one `set` event with the leaf's path, its previous value (`null` if newly created) as `old`, and its new value as `new`.
 2. When the set command reports a leaf as no longer existing, the troupe CLI shall record one `remove` event with the leaf's path, its previous value as `old`, and `null` as `new`.
 3. When the set command reports a group of changes from one invocation, the troupe CLI shall record all of them or none of them, with consecutive `seq` numbers in the order reported.
+   *Note (step 4): such a group is one change: all its events share one `change` and one `at`, and carry the lineage of the caller (`via` `"cli"` with the command's actor for `set`, `via` `"file"` with actor unknown for a reconcile); an empty group records no change (spec config-lineage, requirements 3.2, 3.3, 4.1, 4.4 and 5.2).*
 4. When the set command reports no changes, the troupe CLI shall record no events.
 
 ### Requirement 10: Error reporting and exit codes

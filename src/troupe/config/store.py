@@ -9,6 +9,12 @@ Every write is one ``Application.save`` call, i.e. one SQLite transaction, so a 
 failed batch of changes leaves no partial history. Every eventsourcing/SQLite failure is reported as
 a :class:`ConfigLoadError` naming the store file. :meth:`HistoryStore.close` closes every SQLite
 connection, after which SQLite checkpoints the write-ahead log and removes the side files.
+
+Since step 4 the import and every batch of changes take the caller's
+:class:`~troupe.config.lineage.ChangeContext`. A non-empty write is stamped once, right before its
+save, so all its events share one ``at``, and one ``change`` that no other write has; an empty batch
+records nothing and is not stamped (config-lineage 4.1, 4.3, 4.4, 5.2). Records read back carry
+the stored lineage, the same in every later process (config-lineage 7.1).
 """
 
 import sqlite3

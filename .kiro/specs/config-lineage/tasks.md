@@ -10,7 +10,7 @@ from the developer's shell): an autouse fixture removes it for every test, and t
 **External prerequisites.** config-foundation, config-set-writeback, config-file-sync and config-get-show are
 complete. No new runtime dependency is added.
 
-- [ ] 1. Foundation: lineage values and the command's actor
+- [x] 1. Foundation: lineage values and the command's actor
 - [x] 1.1 Provide the lineage values, the batch stamp and the timestamp format
   - Define the actor (kind human, agent or unknown, and an optional id), the three origins (import, cli, file), the context of a batch (actor, origin, optional reason), the fixed import and file contexts (unknown actor, no reason), the cli context built from an actor and a reason, and the stamped lineage (context plus time and change id)
   - Stamping takes the current UTC time and a fresh random change id; the time format is `YYYY-MM-DDTHH:MM:SS.ffffffZ`, produced by one function that converts any aware time to UTC and refuses a naive one
@@ -25,7 +25,7 @@ complete. No new runtime dependency is added.
   - Done when unit tests cover the valid forms, each invalid form and the default actor (login name lookup patched to fail for the null case), and an in-process CLI test shows an invalid value gives exit 2, empty stdout and the message for `get`, `show`, `set`, `history` and `watch` without creating `.troupe/history.sqlite`
   - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-- [ ] 2. Core and CLI: record and print lineage
+- [x] 2. Core and CLI: record and print lineage
 - [x] 2.1 Store lineage with every history event and stamp each recorded batch once (integration across the history events, store, theatre opening, reconcile and `set`)
   - The three history events gain the lineage fields (fresh stores only; the schema version is raised in 2.2 together with its upcaster); history records carry their lineage; an unknown stored actor kind or origin is reported as an unreadable store (exit 4)
   - Importing and recording a batch take a context; each non-empty batch is stamped once, so all its events share time and change id; an empty batch records nothing
@@ -50,7 +50,7 @@ complete. No new runtime dependency is added.
   - Done when CLI tests prove the reason is recorded verbatim on the set's events, is null without the option and on preceding reconcile events, and `set --reason` with no TEXT exits 2 without creating history state
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5_
 
-- [ ] 3. Validation through the real CLI and spec alignment
+- [x] 3. Validation through the real CLI and spec alignment
 - [x] 3.1 (P) Validate the lineage of each origin, change grouping and time end to end
   - First `history` gives import events with unknown actor, `via` import, null reason and one change; a hand edit then `get`/`show` gives file events with unknown actor even with `TROUPE_ACTOR` set; a `set` of a mapping changing several leaves gives one cli change with the declared actor; a hand edit then `set` gives two changes (file, then cli); successive commands never share a change; `watch` rounds are separate file changes
   - Each line's members appear in the order `seq`, `op`, `path`, `old`, `new`, `actor`, `via`, `at`, `reason`, `change`, with `actor` holding exactly `kind` and `id`
@@ -71,7 +71,7 @@ complete. No new runtime dependency is added.
   - _Boundary: test_e2e_reason_
   - _Requirements: 1.5, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6_
 
-- [ ] 3.4 Run the full quality gate, check traceability and align the earlier specs with step 4
+- [x] 3.4 Run the full quality gate, check traceability and align the earlier specs with step 4
   - Traceability: every requirement ID of this spec is named by at least one test docstring, and every new test names its IDs
   - Add step-4 notes to config-foundation (Requirements 7 and 8), config-set-writeback (Requirements 1 and 15) and config-file-sync (Requirement 2) pointing to config-lineage, and update module docstrings that describe the history line or recorded batches (design: This Spec Owns)
   - Done when the full suite, `mypy --strict` and ruff pass and the traceability check lists no missing ID
