@@ -45,7 +45,7 @@ complete. No new runtime dependency is added.
   - Done when render tests prove the member order and values (including a null id and a null reason) and the whole suite passes with the projection helper in place
   - _Requirements: 1.1, 1.2, 1.5, 1.7, 1.8_
 
-- [ ] 2.4 Accept `--reason TEXT` on `set`
+- [x] 2.4 Accept `--reason TEXT` on `set`
   - `--reason TEXT` and `--reason=TEXT` anywhere among the arguments; the last one counts; a missing TEXT is a usage error (exit 2) with no state touched; the reason reaches only the set's own events
   - Done when CLI tests prove the reason is recorded verbatim on the set's events, is null without the option and on preceding reconcile events, and `set --reason` with no TEXT exits 2 without creating history state
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5_

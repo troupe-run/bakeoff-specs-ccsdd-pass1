@@ -137,9 +137,11 @@
 
 ### Decision 6: `--reason` on `set`
 - **Selected Approach**: a normal `--reason TEXT` option (metavar `TEXT`, default `None`). It goes through the
-  existing `_SetArgumentParser` rule: only `--` arguments are options, so a reason that starts with a single
-  `-` must be given as `--reason=-x`. That is argparse's standard behaviour for a value that looks like an
-  option. A missing TEXT is argparse's usage error (exit 2). If given twice, the last one counts (argparse
+  existing `_SetArgumentParser` rule: only `--` arguments and `-h` are options, so a reason that starts with a
+  single `-` (e.g. `--reason -x`) is taken as TEXT. A reason spelled like an option (`-h`, `--theatre`) must be
+  given as `--reason=TEXT`; the help text recommends that form for any reason starting with `-`. A missing TEXT
+  is argparse's usage error (exit 2, the project's one-line `troupe config set: argument --reason: expected
+  one argument`). If given twice, the last one counts (argparse
   `store`).
 - **Rationale**: no custom parsing. The reason is passed into `cli_context(actor, reason)` and reaches only
   the `set`'s own batch.
