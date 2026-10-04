@@ -136,3 +136,38 @@ scalar. Decision A (files are the truth) and reconcile-first (step 2) apply to b
 
 ### Direct Implementation Candidates
 - (none) -- test and docstring updates for the rename are done inside config-get-show's tasks, in the same change as the behaviour (collaboration.md).
+
+## Step 4 — Lineage (2026-10-04)
+
+### Overview
+Step 4 adds the contract section "Lineage". Every `history` event also carries `actor`
+(`{"kind": "human"|"agent"|"unknown", "id"}`), `via` (`import`|`cli`|`file`), `at` (RFC 3339 UTC ending in `Z`),
+`reason` (from `set --reason TEXT`, else null) and `change` (shared by every event one command, file
+reconcile or import produced; never shared by two of them). A CLI command's actor comes from `TROUPE_ACTOR`
+(`human:<id>`/`agent:<id>`, anything else → exit 2; unset → human with the login name). Imports and
+file-originated events have actor unknown. Lineage is persisted in the event store and survives restarts.
+
+### Approach Decision
+- **Chosen**: one `Lineage(actor, via, at, reason, change)` value per recorded batch. `ensure_imported` and
+  `record_changes` take it, and every event of that transaction carries its fields. Import → `import`/unknown,
+  reconcile (before `get`/`show`/`set`, and each `watch` round) → `file`/unknown, and `set`'s own events →
+  `cli`/actor from `TROUPE_ACTOR`. Change id: a random UUID per batch. `at`: one UTC instant per batch with
+  microseconds. Events get `class_version = 2` with an upcaster, so pre-step-4 stores still read, with their
+  lineage shown as unknown.
+- **Why**: a batch is already one transaction and one "command (or file reconcile, or import)". Putting the
+  lineage on the events keeps one store, one `seq` numbering and one event → record mapping. The environment
+  is read only in the CLI layer.
+- **Rejected alternatives**: a separate "change recorded" event (shifts `seq`, splits one fact in two);
+  eventsourcing's per-event `timestamp` as `at` (differs within a change); a side table keyed by seq (second
+  store to keep consistent); reading `TROUPE_ACTOR` in the core (hidden input, breaks layering).
+
+### Existing Spec Updates
+- [ ] config-foundation -- Requirement 8's history line gains the five lineage keys, and Requirement 7's import events carry import lineage; add step-4 notes pointing to config-lineage. Dependencies: config-lineage
+- [ ] config-set-writeback -- `set` accepts `--reason TEXT`, and its events carry cli lineage; add a step-4 note. Dependencies: config-lineage
+- [ ] config-file-sync -- each reconcile is one change with `via file` and actor unknown; add a step-4 note. Dependencies: config-lineage
+
+### Direct Implementation Candidates
+- (none) -- updating step 1–3 tests that pin the exact history line shape is done inside config-lineage's tasks, in the same change as the behaviour (collaboration.md).
+
+### Specs (step 4)
+- [ ] config-lineage -- (step 4) actor/via/at/reason/change on every history event; `TROUPE_ACTOR` (exit 2 when invalid) and login-name default; `set --reason`; one change id per command, reconcile or import; persisted, legacy stores readable. Dependencies: config-foundation, config-set-writeback, config-file-sync, config-get-show
