@@ -11,7 +11,7 @@ from the developer's shell): an autouse fixture removes it for every test, and t
 complete. No new runtime dependency is added.
 
 - [ ] 1. Foundation: lineage values and the command's actor
-- [ ] 1.1 Provide the lineage values, the batch stamp and the timestamp format
+- [x] 1.1 Provide the lineage values, the batch stamp and the timestamp format
   - Define the actor (kind human, agent or unknown, and an optional id), the three origins (import, cli, file), the context of a batch (actor, origin, optional reason), the fixed import and file contexts (unknown actor, no reason), the cli context built from an actor and a reason, and the stamped lineage (context plus time and change id)
   - Stamping takes the current UTC time and a fresh random change id; the time format is `YYYY-MM-DDTHH:MM:SS.ffffffZ`, produced by one function that converts any aware time to UTC and refuses a naive one
   - The module is core: standard library only, no environment access; extend the core boundary test (AST-based, like the existing import checks) so it fails if the lineage module imports `os` or any CLI module

@@ -22,6 +22,8 @@ def _imported_modules(source: Path) -> list[str]:
             modules.extend(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module is not None:
             modules.append(node.module)
+            # ``from troupe import cli`` imports the module ``troupe.cli``.
+            modules.extend(f"{node.module}.{alias.name}" for alias in node.names)
     return modules
 
 
@@ -53,6 +55,26 @@ def test_no_core_config_module_imports_the_cli_package() -> None:
     }
 
     assert offenders == {}
+
+
+def test_lineage_module_is_core_and_reads_no_environment() -> None:
+    """Req 3.4, 5.3 (config-lineage, Allowed Dependencies): ``troupe.config.lineage`` is core.
+
+    It imports neither ``os`` (no environment access) nor any CLI module.
+    """
+    lineage_module = CONFIG_PACKAGE / "lineage.py"
+    assert lineage_module.is_file()
+
+    offenders = [
+        imported
+        for imported in _imported_modules(lineage_module)
+        if imported == "os"
+        or imported.startswith("os.")
+        or imported == CLI_PACKAGE
+        or imported.startswith(CLI_PACKAGE + ".")
+    ]
+
+    assert offenders == []
 
 
 def test_writeback_compare_still_exports_the_core_scalar_equal() -> None:
