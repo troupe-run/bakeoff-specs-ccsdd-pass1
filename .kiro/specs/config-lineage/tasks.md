@@ -59,7 +59,7 @@ complete. No new runtime dependency is added.
   - _Boundary: test_e2e_lineage_
   - _Requirements: 1.1, 1.3, 1.4, 1.6, 1.7, 1.8, 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3, 7.1, 7.2, 7.4_
 
-- [ ] 3.2 (P) Validate `TROUPE_ACTOR` end to end
+- [x] 3.2 (P) Validate `TROUPE_ACTOR` end to end
   - `human:alice`, `agent:planner` and an id containing `:` appear on `set` events; unset uses the login name from the environment; each invalid form exits 2 for every subcommand with empty stdout, a message naming `TROUPE_ACTOR` and the value, files byte-identical and no history state created or changed
   - Done when these e2e tests pass against the real console script
   - _Boundary: test_e2e_actor_
