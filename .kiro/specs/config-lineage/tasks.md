@@ -18,7 +18,7 @@ complete. No new runtime dependency is added.
   - Done when unit tests prove the format (six digits, `Z`, a non-UTC aware time converted), that stamping keeps actor/origin/reason, that many stamps never share a change id, and that the import and file contexts carry the unknown actor and no reason
   - _Requirements: 1.2, 1.3, 1.4, 1.6, 3.4, 4.3, 5.1, 5.3_
 
-- [ ] 1.2 Read the command's actor from `TROUPE_ACTOR` and refuse invalid values for every subcommand
+- [x] 1.2 Read the command's actor from `TROUPE_ACTOR` and refuse invalid values for every subcommand
   - Parse `human:<id>` / `agent:<id>` (split at the first `:`, lower-case kind, id kept verbatim, not empty and not only whitespace); unset → human with the login name, or a null id when the login name cannot be determined; anything else (including a set-but-empty variable) is a usage error whose message names `TROUPE_ACTOR`, quotes the value and states the accepted forms
   - The CLI entry point parses the actor once per command, right after argument parsing and before any handler runs, and makes it available to handlers; the variable name lives in one place
   - Add the autouse test fixture that removes `TROUPE_ACTOR` for every test, so the existing suite never depends on the developer's shell

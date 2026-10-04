@@ -15,14 +15,20 @@ Step 3 (config-get-show) adds ``get PATH`` and replaces step 1's scalar-only ``s
 ``show [PATH] [--sources]``, which prints values and whole sections as YAML; both are registered
 first, in that order, from the read-command module :mod:`troupe.cli.get_show_command`
 (config-get-show 1.1-1.5, 2.1-2.7).
+
+Step 4 (config-lineage) resolves the command's actor from ``TROUPE_ACTOR`` right after parsing and
+stores it as ``args.actor``; an invalid value is a usage error raised before any handler runs, so
+every subcommand exits 2 with no state touched (config-lineage 2.3, 2.4).
 """
 
 import argparse
 import io
+import os
 import sys
 from collections.abc import Sequence
 from typing import BinaryIO, Final, NoReturn, TextIO
 
+from troupe.cli.actor import actor_from_environment
 from troupe.cli.get_show_command import add_get_subparser, add_show_subparser
 from troupe.cli.render import format_history_line
 from troupe.cli.set_command import add_set_subparser
@@ -103,10 +109,13 @@ def run(argv: Sequence[str], stdout: BinaryIO, stderr: TextIO) -> int:
     stdout and stderr itself and its return value is the exit code. For both, a ``TroupeError``
     (including a usage error from the parser) is written to stderr as its formatted message and its
     exit code returned; a streaming handler raising it before writing to stdout leaves stdout empty.
+    The command's actor is resolved before dispatch, so an invalid ``TROUPE_ACTOR`` reaches no
+    handler (config-lineage 2.3, 2.4).
     """
     buffer = io.BytesIO()
     try:
         args = build_parser().parse_args(argv)
+        args.actor = actor_from_environment(os.environ)
         stream_handler: StreamHandler | None = getattr(args, "stream_handler", None)
         if stream_handler is not None:
             return stream_handler(args, stdout, stderr)

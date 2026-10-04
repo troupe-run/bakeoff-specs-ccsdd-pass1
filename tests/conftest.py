@@ -11,6 +11,16 @@ import pytest
 from support import CliResult, MakeTheatre, RunCli, TheatreFiles, invoke_troupe, write_theatre
 
 
+@pytest.fixture(autouse=True)
+def _no_troupe_actor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Autouse: remove ``TROUPE_ACTOR``; no test depends on the developer's shell (lineage 2.2).
+
+    Tests that need it set it with ``monkeypatch.setenv``; subprocesses inherit the test's
+    environment.
+    """
+    monkeypatch.delenv("TROUPE_ACTOR", raising=False)
+
+
 @pytest.fixture
 def make_theatre(tmp_path: Path) -> MakeTheatre:
     """Fixture: build a real theatre inside ``tmp_path`` (see ``write_theatre``)."""
