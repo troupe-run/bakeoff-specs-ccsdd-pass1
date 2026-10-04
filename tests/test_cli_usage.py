@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 import troupe.cli.main as cli_main
-from support import MakeTheatre, RunCli
+from support import MakeTheatre, RunCli, step1_members
 from troupe.cli import shell
 from troupe.cli.shell import Handler
 from troupe.config.errors import PathNotFoundError
@@ -71,7 +71,7 @@ def test_history_with_theatre_option_lists_the_import(
 
     assert result.exit_code == 0
     assert result.stderr == ""
-    lines = [json.loads(line) for line in result.stdout.decode("utf-8").splitlines()]
+    lines = [step1_members(line) for line in result.stdout.decode("utf-8").splitlines()]
     assert [(r["seq"], r["op"], r["path"], r["old"], r["new"]) for r in lines] == [
         (1, "import", "name", None, "demo"),
         (2, "import", "agents.lead", None, "alice"),
@@ -120,7 +120,7 @@ def test_history_defaults_to_the_current_directory(
     result = run_cli("config", "history", cwd=theatre)
 
     assert result.exit_code == 0
-    assert json.loads(result.stdout) == {
+    assert step1_members(result.stdout) == {
         "seq": 1,
         "op": "import",
         "path": "a",

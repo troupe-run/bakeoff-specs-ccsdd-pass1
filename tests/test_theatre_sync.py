@@ -20,7 +20,7 @@ import pytest
 from eventsourcing.application import Application
 from eventsourcing.sqlite import SQLiteCursor
 
-from support import MakeTheatre, RunCli, Step1Record, step1
+from support import MakeTheatre, RunCli, Step1Record, step1, step1_output
 from troupe.config import reconcile as reconciler
 from troupe.config.constants import CONFIG_DIR_NAME, HISTORY_STORE_NAME
 from troupe.config.errors import ConfigLoadError, PathNotFoundError
@@ -288,7 +288,7 @@ def test_reconcile_events_remain_after_show_exits_5_and_set_exits_3(
 
     assert refused.exit_code == 3, refused.stderr
     assert history.exit_code == 0, history.stderr
-    assert history.stdout.decode("utf-8").splitlines()[-2:] == [
+    assert step1_output(history.stdout).decode("utf-8").splitlines()[-2:] == [
         '{"seq": 3, "op": "set", "path": "a", "old": 1, "new": 2}',
         '{"seq": 4, "op": "set", "path": "a", "old": 2, "new": 3}',
     ]

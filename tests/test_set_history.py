@@ -29,7 +29,7 @@ from set_support import (
     run_set,
     set_args,
 )
-from support import CliResult, MakeTheatre
+from support import CliResult, MakeTheatre, step1_members
 from troupe.config.constants import HISTORY_STORE_NAME
 
 ROOT = ".troupe/troupe.yml"
@@ -58,9 +58,10 @@ def _events(theatre: Path, path: str | None = None) -> list[Event]:
     assert (result.exit_code, result.stderr) == (0, ""), result.stderr
     events: list[Event] = []
     for line in result.stdout.decode("utf-8").splitlines():
-        row = json.loads(line, parse_constant=_reject_constant)
-        assert isinstance(row, dict)
-        assert sorted(row) == ["new", "old", "op", "path", "seq"], line
+        parsed = json.loads(line, parse_constant=_reject_constant)
+        assert isinstance(parsed, dict)
+        assert list(parsed)[5:] == ["actor", "via", "at", "reason", "change"], line
+        row = step1_members(parsed)
         assert type(row["seq"]) is int, line
         assert row["op"] in ("import", "set", "remove"), line
         assert isinstance(row["path"], str), line

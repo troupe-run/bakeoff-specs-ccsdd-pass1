@@ -9,14 +9,13 @@ Every case runs on both ``troupe.yml`` and ``troupe.yaml`` theatres.
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
 
-import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from set_support import run_config, run_set, snapshot_tree
-from support import CliResult, MakeTheatre
+from support import CliResult, MakeTheatre, step1_members, step1_output
 
 type Event = tuple[int, str, str, Any, Any]
 """One history line as ``(seq, op, path, old, new)``."""
@@ -42,7 +41,7 @@ def _history_bytes(theatre: Path) -> bytes:
 
 def _events(theatre: Path) -> list[Event]:
     """Every recorded event, parsed from the ``history`` lines."""
-    rows = [json.loads(line) for line in _history_bytes(theatre).decode("utf-8").splitlines()]
+    rows = [step1_members(line) for line in _history_bytes(theatre).decode("utf-8").splitlines()]
     return [(row["seq"], row["op"], row["path"], row["old"], row["new"]) for row in rows]
 
 
@@ -65,7 +64,7 @@ def test_hand_edit_is_recorded_by_show_but_not_by_history_and_printed_in_the_usu
     new = edited), which `history` then prints in the usual JSON line format."""
     theatre = make_theatre("a: 1\nb: x\n", config_name=config_name)
     imported = _history_bytes(theatre)
-    assert imported == (
+    assert step1_output(imported) == (
         b'{"seq": 1, "op": "import", "path": "a", "old": null, "new": 1}\n'
         b'{"seq": 2, "op": "import", "path": "b", "old": null, "new": "x"}\n'
     )
@@ -76,7 +75,9 @@ def test_hand_edit_is_recorded_by_show_but_not_by_history_and_printed_in_the_usu
     files = snapshot_tree(theatre)
     _assert_ok(_show(theatre, "a"), b"2\n")
     assert snapshot_tree(theatre) == files
-    assert _history_bytes(theatre) == imported + (
+    after = _history_bytes(theatre)
+    assert after.startswith(imported)
+    assert step1_output(after[len(imported) :]) == (
         b'{"seq": 3, "op": "set", "path": "a", "old": 1, "new": 2}\n'
     )
 
@@ -92,10 +93,10 @@ def test_history_path_filter_applies_to_reconcile_events(
 
     result = run_config("history", "b", "--theatre", str(theatre), cwd=theatre)
 
-    _assert_ok(
-        result,
+    assert (result.exit_code, result.stderr) == (0, ""), result.stderr
+    assert step1_output(result.stdout) == (
         b'{"seq": 2, "op": "import", "path": "b", "old": null, "new": "x"}\n'
-        b'{"seq": 4, "op": "set", "path": "b", "old": "x", "new": "y"}\n',
+        b'{"seq": 4, "op": "set", "path": "b", "old": "x", "new": "y"}\n'
     )
 
 

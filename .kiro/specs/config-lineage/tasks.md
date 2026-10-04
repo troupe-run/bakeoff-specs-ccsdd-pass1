@@ -39,7 +39,7 @@ complete. No new runtime dependency is added.
   - Done when a store test rewrites a real store's rows to the pre-step-4 shape (lineage fields and schema version removed from the stored state), reads it with the legacy lineage twice with identical results, and records new events with full lineage after it
   - _Requirements: 7.2, 7.3_
 
-- [ ] 2.3 Print the five lineage members on every history line
+- [x] 2.3 Print the five lineage members on every history line
   - After `seq`, `op`, `path`, `old`, `new`, each line has `actor` (`kind`, `id`), `via`, `at`, `reason` and `change`, in that order; filtered listings print the same lineage
   - Step 1–3 tests that compare whole history lines or dicts keep asserting the same facts through one shared projection of the five step-1 members
   - Done when render tests prove the member order and values (including a null id and a null reason) and the whole suite passes with the projection helper in place
@@ -79,3 +79,4 @@ complete. No new runtime dependency is added.
 
 ## Implementation Notes
 - 2.1: `tests/support.py` has `step1()`/`Step1Record` (project records to seq/op/path/old/new), `FIXED_LINEAGE`, `lineage_fields()` and `CLI_CONTEXT`; reuse them instead of new helpers. Until 2.2 lands, a pre-step-4 store raises `AttributeError` in `to_history_record` (not mapped to exit 4); 2.2's upcaster must close that.
+- 2.3: history lines in tests are projected with `step1_members`/`step1_output` (tests/support.py); `WatchProcess.history()` returns projected events, so watch lineage tests must read raw `history` lines.

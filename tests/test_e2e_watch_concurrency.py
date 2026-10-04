@@ -18,7 +18,6 @@ Hand edits are written atomically (a temporary file renamed over the target), so
 nor a racing command ever reads a half-written file.
 """
 
-import json
 import os
 import signal
 import subprocess
@@ -29,7 +28,7 @@ from pathlib import Path
 import pytest
 
 from set_support import run_config, run_set
-from support import troupe_executable, write_theatre
+from support import step1_members, troupe_executable, write_theatre
 from troupe.config.constants import CONFIG_DIR_NAME, HISTORY_STORE_NAME
 from watch_support import HistoryEvent, WatchProcess
 
@@ -91,10 +90,11 @@ class Theatre:
         return WatchProcess(str(self.directory), cwd=self.base)
 
     def history(self) -> list[HistoryEvent]:
-        """A fresh ``troupe config history`` run (not throttled: never used in a polling loop)."""
+        """A fresh ``troupe config history`` run (not throttled: never used in a polling loop),
+        each line projected onto its step-1 members."""
         result = run_config("history", "--theatre", str(self.directory), cwd=self.base)
         assert (result.exit_code, result.stderr) == (0, ""), result.stderr
-        return [json.loads(line) for line in result.stdout.decode("utf-8").splitlines()]
+        return [step1_members(line) for line in result.stdout.decode("utf-8").splitlines()]
 
 
 def _theatre(tmp_path: Path, files: dict[str, str] | None = None) -> Theatre:

@@ -1,4 +1,7 @@
-"""Output rendering for ``get``/``show`` scalars and ``history`` (6.1-6.6, 8.2, 8.6, 8.7)."""
+"""Output rendering for ``get``/``show`` scalars and ``history`` (6.1-6.6, 8.2, 8.6, 8.7).
+
+config-lineage 1.1, 1.2, 1.5, 1.7: every history line ends with the five lineage members.
+"""
 
 import json
 import math
@@ -6,9 +9,10 @@ from typing import Any
 
 import pytest
 
-from support import FIXED_LINEAGE
+from support import FIXED_LINEAGE, step1_members
 from troupe.cli.render import format_history_line, format_show_output
 from troupe.config.history import HistoryOp, HistoryRecord
+from troupe.config.lineage import Actor, Lineage
 from troupe.config.scalars import ScalarValue
 
 
@@ -72,9 +76,75 @@ def test_history_line_has_members_in_order_and_ends_with_one_newline() -> None:
     assert isinstance(line, bytes)
     assert line.endswith(b"\n")
     assert line.count(b"\n") == 1
+    assert step1_members(line) == {"seq": 3, "op": "set", "path": "a.b", "old": "x", "new": "y"}
+
+
+def test_history_line_is_exactly_step1_members_then_lineage_members() -> None:
+    """config-lineage 1.1, 1.2, 1.7: the exact line, lineage after ``new`` in its fixed order."""
+    line = format_history_line(_record(old="x", new="y"))
+    assert line == (
+        b'{"seq": 3, "op": "set", "path": "a.b", "old": "x", "new": "y", '
+        b'"actor": {"kind": "human", "id": "alice"}, "via": "cli", '
+        b'"at": "2026-10-04T09:05:07.123456Z", "reason": "a fixed reason", '
+        b'"change": "fixed-change"}\n'
+    )
     parsed = _strict_parse(line)
-    assert list(parsed) == ["seq", "op", "path", "old", "new"]
-    assert parsed == {"seq": 3, "op": "set", "path": "a.b", "old": "x", "new": "y"}
+    assert list(parsed) == [
+        "seq",
+        "op",
+        "path",
+        "old",
+        "new",
+        "actor",
+        "via",
+        "at",
+        "reason",
+        "change",
+    ]
+    assert list(parsed["actor"]) == ["kind", "id"]
+
+
+def test_history_line_prints_null_actor_id_and_null_reason_as_json_null() -> None:
+    """config-lineage 1.2, 1.5: an unknown id and an absent reason are JSON ``null``."""
+    lineage = Lineage(
+        actor=Actor(kind="unknown", id=None),
+        via="import",
+        at="2026-01-02T03:04:05.000000Z",
+        reason=None,
+        change="c-1",
+    )
+    record = HistoryRecord(seq=1, op="import", path="a", old=None, new=1, lineage=lineage)
+    line = format_history_line(record)
+    assert line.endswith(
+        b'"actor": {"kind": "unknown", "id": null}, "via": "import", '
+        b'"at": "2026-01-02T03:04:05.000000Z", "reason": null, "change": "c-1"}\n'
+    )
+    parsed = _strict_parse(line)
+    assert parsed["actor"] == {"kind": "unknown", "id": None}
+    assert parsed["reason"] is None
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ['say "hi"', "two\nlines\r\n", "café ☃ \U0001f600", "back\\slash\ttab", ""],
+)
+def test_history_line_reason_with_special_characters_stays_one_strict_json_line(
+    reason: str,
+) -> None:
+    """config-lineage 1.5: any reason text is printed as a JSON string on one line, verbatim."""
+    lineage = Lineage(
+        actor=Actor(kind="agent", id="planner:v2"),
+        via="cli",
+        at="2026-01-02T03:04:05.000000Z",
+        reason=reason,
+        change="c-2",
+    )
+    record = HistoryRecord(seq=2, op="set", path="a", old=1, new=2, lineage=lineage)
+    line = format_history_line(record)
+    assert line.count(b"\n") == 1
+    parsed = _strict_parse(line)
+    assert parsed["reason"] == reason
+    assert parsed["actor"] == {"kind": "agent", "id": "planner:v2"}
 
 
 @pytest.mark.parametrize(
@@ -106,8 +176,13 @@ def test_history_line_non_finite_floats_are_canonical_yaml_strings(
     value: float, expected: str
 ) -> None:
     line = format_history_line(_record(op="import", old=None, new=value))
-    parsed = _strict_parse(line)
-    assert parsed == {"seq": 3, "op": "import", "path": "a.b", "old": None, "new": expected}
+    assert step1_members(line) == {
+        "seq": 3,
+        "op": "import",
+        "path": "a.b",
+        "old": None,
+        "new": expected,
+    }
     removed = _strict_parse(format_history_line(_record(op="remove", old=value, new=None)))
     assert removed["old"] == expected
     assert removed["new"] is None

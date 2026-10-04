@@ -8,7 +8,6 @@ sends signals, and always terminates and kills the child when it is closed. Sign
 sent to the child: no test installs a signal handler in the pytest process for this.
 """
 
-import json
 import os
 import signal
 import subprocess
@@ -19,7 +18,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import IO, Any, Self
 
-from support import invoke_troupe, troupe_executable
+from support import invoke_troupe, step1_members, troupe_executable
 
 READY_TIMEOUT_SECONDS = 10.0
 """Longest wait for the ``watching`` line after the process starts."""
@@ -31,7 +30,7 @@ EXIT_TIMEOUT_SECONDS = 10.0
 """Longest wait for the child to exit after a signal or in teardown before it is killed."""
 
 HistoryEvent = dict[str, Any]
-"""One parsed JSON line of ``troupe config history``."""
+"""The step-1 members of one ``troupe config history`` line (:func:`support.step1_members`)."""
 
 
 class _PipeReader:
@@ -139,7 +138,9 @@ class WatchProcess:
         return data[: data.index(b"\n") + 1]
 
     def history(self) -> list[HistoryEvent]:
-        """Run ``troupe config history`` on the theatre and return its parsed lines.
+        """Run ``troupe config history`` on the theatre and return its lines' step-1 members.
+
+        Each line is projected by :func:`support.step1_members` (lineage differs on every run).
 
         Never polls more often than every ``HISTORY_POLL_SECONDS``.
         """
@@ -149,7 +150,7 @@ class WatchProcess:
         self._last_poll = time.monotonic()
         result = invoke_troupe("config", "history", "--theatre", str(self.theatre), cwd=self.cwd)
         assert result.exit_code == 0, result.stderr
-        return [json.loads(line) for line in result.stdout.decode("utf-8").splitlines()]
+        return [step1_members(line) for line in result.stdout.decode("utf-8").splitlines()]
 
     def wait_for_history(
         self,

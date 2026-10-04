@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from support import CLI_CONTEXT, CliResult, MakeTheatre, RunCli
+from support import CLI_CONTEXT, CliResult, MakeTheatre, RunCli, step1_members, step1_output
 from troupe.config.constants import CONFIG_DIR_NAME, HISTORY_STORE_NAME
 from troupe.config.history import LeafChange, RemoveChange, SetChange
 from troupe.config.paths import ConfigPath
@@ -50,8 +50,7 @@ def _events(result: CliResult) -> list[Event]:
     assert text.endswith("\n"), text
     events: list[Event] = []
     for line in text[:-1].split("\n"):
-        member = _strict_line(line)
-        assert set(member) >= {"seq", "op", "path", "old", "new"}, line
+        member = step1_members(_strict_line(line))
         seq = member["seq"]
         assert type(seq) is int, line
         events.append((seq, member["op"], member["path"], member["old"], member["new"]))
@@ -138,7 +137,7 @@ def test_history_prints_booleans_as_json_booleans_never_numbers(
 
     result = _history(run_cli, theatre)
 
-    assert result.stdout == (
+    assert step1_output(result.stdout) == (
         b'{"seq": 1, "op": "import", "path": "on", "old": null, "new": true}\n'
         b'{"seq": 2, "op": "import", "path": "off", "old": null, "new": false}\n'
     )
@@ -323,6 +322,34 @@ def test_history_lists_recorded_set_and_remove_events_with_consecutive_seq(
         (4, "set", "agents.0.enabled", None, True),
         (5, "remove", "agents.0.temperature", 0.5, None),
     ]
+
+
+def test_history_path_lines_are_byte_identical_to_their_unfiltered_lines(
+    make_theatre: MakeTheatre, run_cli: RunCli
+) -> None:
+    """config-lineage 1.8: a filtered listing prints each event with its full unfiltered lineage."""
+    theatre = make_theatre(PREFIX_CONFIG)
+    _history(run_cli, theatre)  # import: seq 1-5
+    _record(
+        theatre,
+        (
+            SetChange(path=ConfigPath.parse("agents.alice.model"), old="m1", new="m2"),
+            SetChange(path=ConfigPath.parse("alice"), old="z", new="w"),
+        ),
+    )
+
+    unfiltered = _history(run_cli, theatre)
+    assert (unfiltered.exit_code, unfiltered.stderr) == (0, ""), unfiltered.stderr
+    by_path: dict[str, list[bytes]] = {}
+    for line in unfiltered.stdout.splitlines(keepends=True):
+        member = _strict_line(line.decode("utf-8"))
+        assert set(member) >= {"actor", "via", "at", "reason", "change"}, line
+        by_path.setdefault(member["path"], []).append(line)
+
+    filtered = _history(run_cli, theatre, "agents.alice")
+    assert (filtered.exit_code, filtered.stderr) == (0, ""), filtered.stderr
+    assert filtered.stdout == b"".join(by_path["agents.alice.model"])
+    assert len(by_path["agents.alice.model"]) == 2  # the import line and the set line
 
 
 # ---- 3.8: a folded leaf's import event holds the folded text ----

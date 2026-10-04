@@ -2,7 +2,8 @@
 
 ``get`` (and ``show`` for a scalar without ``--sources``, config-get-show 2.1) prints one scalar
 per :func:`format_show_output`; ``history`` prints one JSON line per record per
-:func:`format_history_line`. Both return bytes so handlers can write them into the
+:func:`format_history_line`, the step-1 members followed by the record's lineage (config-lineage
+1.1, 1.2, 1.5, 1.7). Both return bytes so handlers can write them into the
 binary output buffer without newline translation (a CRLF in a text include is kept).
 :func:`source_label` names a loaded file relative to the theatre directory for ``--sources``.
 """
@@ -40,11 +41,16 @@ def format_show_output(value: ScalarValue) -> bytes:
 
 
 def format_history_line(record: HistoryRecord) -> bytes:
-    """Return one JSON Lines line for ``record`` with members seq, op, path, old, new, as UTF-8.
+    """Return one JSON Lines line for ``record`` as UTF-8 (8.2; config-lineage 1.1, 1.2, 1.5, 1.7).
+
+    The members are ``seq``, ``op``, ``path``, ``old``, ``new``, then the record's lineage:
+    ``actor`` (an object with exactly ``kind`` and ``id``), ``via``, ``at``, ``reason`` and
+    ``change``, in that order. An unknown actor id and an absent reason print as ``null``.
 
     Infinite and NaN values in ``old``/``new`` become the strings ``".inf"``, ``"-.inf"`` and
     ``".nan"``; the line is encoded with ``allow_nan=False`` so it is always strict JSON.
     """
+    lineage = record.lineage
     line = json.dumps(
         {
             "seq": record.seq,
@@ -52,6 +58,11 @@ def format_history_line(record: HistoryRecord) -> bytes:
             "path": record.path,
             "old": _json_safe(record.old),
             "new": _json_safe(record.new),
+            "actor": {"kind": lineage.actor.kind, "id": lineage.actor.id},
+            "via": lineage.via,
+            "at": lineage.at,
+            "reason": lineage.reason,
+            "change": lineage.change,
         },
         allow_nan=False,
     )

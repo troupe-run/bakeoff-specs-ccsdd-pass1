@@ -6,12 +6,11 @@ and cycles (4.5, 4.6), load errors inside included files (4.7) and path errors n
 file that holds the value (10.4). Every failure exits non-zero with empty stdout (10.2).
 """
 
-import json
 from pathlib import Path
 
 import pytest
 
-from support import CliResult, MakeTheatre, RunCli
+from support import CliResult, MakeTheatre, RunCli, step1_members
 
 CONFIG_NAMES = ["troupe.yml", "troupe.yaml"]
 COMMANDS = [("show", "a"), ("history",)]
@@ -191,7 +190,7 @@ def test_history_imports_leaves_through_yaml_and_text_includes(
 
     assert result.exit_code == 0, result.stderr
     assert result.stderr == ""
-    records = [json.loads(line) for line in result.stdout.decode().splitlines()]
+    records = [step1_members(line) for line in result.stdout.decode().splitlines()]
     assert records == [
         {"seq": 1, "op": "import", "path": "first", "old": None, "new": 0},
         {"seq": 2, "op": "import", "path": "team.lead", "old": None, "new": "alice"},

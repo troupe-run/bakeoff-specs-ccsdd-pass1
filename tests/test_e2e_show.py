@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from support import CliResult, MakeTheatre, RunCli
+from support import CliResult, MakeTheatre, RunCli, step1_output
 
 
 def _show(run_cli: RunCli, theatre: Path, path: str) -> CliResult:
@@ -289,7 +289,7 @@ def test_show_after_hand_edit_prints_new_value_and_records_one_reconcile_set(
     _assert_shows(_show(run_cli, theatre, "a"), b"1\n")
     first_history = _history(run_cli, theatre)
     assert (first_history.exit_code, first_history.stderr) == (0, "")
-    assert first_history.stdout == (
+    assert step1_output(first_history.stdout) == (
         b'{"seq": 1, "op": "import", "path": "a", "old": null, "new": 1}\n'
     )
 
@@ -299,7 +299,8 @@ def test_show_after_hand_edit_prints_new_value_and_records_one_reconcile_set(
     _assert_shows(_show(run_cli, theatre, "a"), b"2\n")
     second_history = _history(run_cli, theatre)
     assert (second_history.exit_code, second_history.stderr) == (0, "")
-    assert second_history.stdout == first_history.stdout + (
+    assert second_history.stdout.startswith(first_history.stdout)
+    assert step1_output(second_history.stdout[len(first_history.stdout) :]) == (
         b'{"seq": 2, "op": "set", "path": "a", "old": 1, "new": 2}\n'
     )
     assert config.read_bytes() == b"a: 2\n"

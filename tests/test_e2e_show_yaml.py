@@ -17,14 +17,13 @@ property (4.1) is proved separately in task 4.3's module.
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
 
-import json
 import os
 from pathlib import Path
 
 import pytest
 
 from set_support import run_set, snapshot_tree
-from support import CliResult, MakeTheatre, RunCli
+from support import CliResult, MakeTheatre, RunCli, step1_members
 from troupe.config.constants import CONFIG_DIR_NAME, HISTORY_STORE_NAME
 
 CONFIG_NAMES = ["troupe.yml", "troupe.yaml"]
@@ -55,10 +54,11 @@ def _assert_failure(result: CliResult, exit_code: int) -> None:
 
 
 def _history_lines(run_cli: RunCli, theatre: Path) -> list[dict[str, object]]:
-    """Every event printed by ``history`` (which never reconciles), asserting success."""
+    """Every event printed by ``history`` (which never reconciles), asserting success, projected
+    onto its step-1 members."""
     result = run_cli("config", "history", "--theatre", str(theatre))
     assert (result.exit_code, result.stderr) == (0, ""), result.stderr
-    return [json.loads(line) for line in result.stdout.decode("utf-8").splitlines()]
+    return [step1_members(line) for line in result.stdout.decode("utf-8").splitlines()]
 
 
 def _ops(run_cli: RunCli, theatre: Path) -> list[str]:

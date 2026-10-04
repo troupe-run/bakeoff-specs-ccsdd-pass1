@@ -10,14 +10,13 @@ an unchanged theatre.
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
 
-import json
 from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
 from set_support import TreeSnapshot, assert_file_bytes, run_config, run_set, snapshot_tree
-from support import CliResult, MakeTheatre
+from support import CliResult, MakeTheatre, step1_members
 
 ROOT = ".troupe/troupe.yml"
 
@@ -67,7 +66,7 @@ def _assert_refused(
 def _history(theatre: Path) -> list[dict[str, object]]:
     result = run_config("history", "--theatre", str(theatre), cwd=theatre)
     assert (result.exit_code, result.stderr) == (0, ""), result.stderr
-    return [json.loads(line) for line in result.stdout.decode("utf-8").splitlines()]
+    return [step1_members(line) for line in result.stdout.decode("utf-8").splitlines()]
 
 
 def _set_and_check(
