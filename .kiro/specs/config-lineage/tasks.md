@@ -65,7 +65,7 @@ complete. No new runtime dependency is added.
   - _Boundary: test_e2e_actor_
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 1.2_
 
-- [ ] 3.3 (P) Validate `set --reason` end to end
+- [x] 3.3 (P) Validate `set --reason` end to end
   - Positions before, between and after the positionals and `--reason=TEXT`; spaces, non-ASCII and empty text kept exactly; absent → null; given twice → last; missing TEXT → exit 2 with no state; a no-op `set --reason` records nothing and exits 0
   - Done when these e2e tests pass against the real console script
   - _Boundary: test_e2e_reason_
