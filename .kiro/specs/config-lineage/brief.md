@@ -126,9 +126,9 @@ Rejected alternatives:
      not stored on the reconcile events before it. A no-op `set` records nothing, so the reason is not kept.
      A reason given more than once: the last one wins (argparse default).
   7. *Pre-step-4 stores*: legacy events are upcast to actor unknown, `at` from the stored event timestamp,
-     `reason` null. `via` is `import` for imports. For set/remove, `via` is the PO question below. `change`:
+     `reason` null. `via` is `import` for imports. For set/remove, `via` is `cli` (see 8). `change`:
      all legacy import events share one id (they were one transaction); every legacy set/remove gets its own
      id (we cannot prove which belonged together, and claiming a grouping would be a guess).
-  8. *PO question (recorded, default chosen)*: `via` for legacy set/remove events cannot be known. The contract
-     allows only `import|cli|file`. Default `"cli"`: before step 2 every set/remove came from `set`. Revisit if
-     the PO wants a fourth value or `null` for legacy data.
+  8. *Legacy `via` for set/remove*: it cannot be known, and the contract allows only `import|cli|file`. We
+     choose `"cli"`: before step 2 every set/remove came from `set`. The product owner has since confirmed that
+     showing pre-step-4 history is outside the contract and our choice; `"cli"` with actor unknown is accepted.

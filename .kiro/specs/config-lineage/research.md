@@ -119,14 +119,21 @@
 - **Rationale**: random UUIDs never collide across processes or restarts in practice (4.3). Legacy ids are
   deterministic, so the output stays identical across runs (7.2). They cannot collide with UUID text.
 
-### Decision 5: Legacy `via` for set/remove (open PO question)
-- **Context**: a pre-step-4 set/remove came from `set` (cli) or, since step 2, from reconcile (file). The stored
-  data cannot tell which. The contract allows only `import|cli|file`.
+### Decision 5: How history recorded before step 4 is shown (our choice, outside the contract)
+- **Context**: the product owner confirmed (2026-10-04) that the contract says nothing about events recorded
+  before step 4 or about upgrading stored history. How those events are shown is our choice, provided every
+  printed event still has the lineage members. The open part was `via` for a pre-step-4 set/remove: it came from
+  `set` (cli) or, since step 2, from reconcile (file), and the stored data cannot tell which. The contract allows
+  only `import|cli|file`.
 - **Alternatives**: `"cli"`; `"file"`; `null` or a fourth value such as `"unknown"` (extends the contract).
 - **Selected Approach**: `"cli"`, with actor unknown, so the actor makes it explicit that nobody is attributed.
 - **Rationale**: stays inside the contract's vocabulary, and matches the most common origin of pre-step-4
-  events (all step 1 events, and every event a `set` recorded). Revisit if the PO prefers an explicit unknown
-  `via`.
+  events (all step 1 events, and every event a `set` recorded). Every line keeps the contract's shape, so tools
+  that read `history` need no special case. The product owner accepted this choice on that basis. The rest of
+  the legacy lineage (actor unknown, `reason` null, `at` from the stored event time, change ids per Decision 4)
+  follows the same rule: say "unknown" where the vocabulary allows it, and never claim a grouping that cannot
+  be proven.
+- **Follow-up**: none. Revisit only if a later contract step specifies how older history is shown.
 
 ### Decision 6: `--reason` on `set`
 - **Selected Approach**: a normal `--reason TEXT` option (metavar `TEXT`, default `None`). It goes through the

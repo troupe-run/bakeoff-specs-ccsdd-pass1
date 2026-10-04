@@ -98,13 +98,16 @@ Terms used below:
      one counts (6.1, 6.4).
   7. A history recorded before step 4 has no lineage. Its events are shown with actor unknown, `reason` null, and
      `at` taken from when each event was originally stored. `via` is `import` for import events and `cli` for
-     `set` and `remove` events. This last point is an open question for the product owner, see below. Recorded
+     `set` and `remove` events. How such events are shown is outside the contract (see below). Recorded
      import events share one change. Every other recorded event is its own change, because which events belonged
      together cannot be known (7.3).
-- **Open question for the product owner** (default chosen, decision recorded in `research.md`): `via` for `set`/
-  `remove` events recorded before step 4 cannot be known. Before step 2, every such event came from `set`; since
-  step 2, a reconcile may also have produced them. The contract allows only `import`, `cli` and `file`. Default:
-  `cli`. Alternatives: `file`, or a fourth value or `null` for unknown (which would extend the contract).
+- **History recorded before step 4 is outside the contract** (product owner, 2026-10-04): the contract requires
+  the lineage members on every event, and says nothing about events recorded before step 4 or about upgrading
+  stored history. How those events are shown is our choice. We chose choice 7 above, and record why in
+  `research.md` (Decision 5). In short, every event still gets all five members, so every line keeps the
+  contract's shape. `via` for old `set`/`remove` events cannot be known; `cli` stays inside the contract's
+  vocabulary and matches their most common origin, and the unknown actor makes it explicit that nobody is
+  attributed.
 
 ## Requirements
 

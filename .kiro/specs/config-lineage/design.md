@@ -63,7 +63,7 @@ unchanged.
 - Changing batch boundaries (for example merging reconcile and `set` into one transaction) changes how events
   group into changes.
 - Changing the event class names or field names (stored topics and state) needs another upcaster.
-- A PO decision on legacy `via` (research Decision 5).
+- A later contract step that specifies how history recorded before step 4 is shown (today our choice, research Decision 5).
 
 ## Architecture
 
