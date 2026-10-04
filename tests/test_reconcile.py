@@ -11,10 +11,11 @@ from typing import Protocol
 
 import pytest
 
-from support import MakeTheatre
+from support import CLI_CONTEXT, MakeTheatre
 from troupe.config.constants import CONFIG_DIR_NAME, HISTORY_STORE_NAME
 from troupe.config.errors import ConfigLoadError
 from troupe.config.history import LeafChange, RemoveChange, SetChange
+from troupe.config.lineage import IMPORT_CONTEXT
 from troupe.config.loader import load_config
 from troupe.config.locate import find_config_file
 from troupe.config.model import ConfigDocument
@@ -63,7 +64,9 @@ def open_theatre(make_theatre: MakeTheatre) -> Iterator[MakeTheatreWithStore]:
         )
         store = HistoryStore.open(directory / CONFIG_DIR_NAME)
         stores.append(store)
-        store.ensure_imported(flatten_leaves(load_config(find_config_file(directory)).root))
+        store.ensure_imported(
+            flatten_leaves(load_config(find_config_file(directory)).root), IMPORT_CONTEXT
+        )
         return Theatre(directory, store)
 
     yield _open
@@ -302,8 +305,8 @@ def test_removes_follow_creation_seq_not_document_order(
     """Req 2.6: a leaf re-created by a later set is removed after the imported leaves."""
     theatre = open_theatre("a: 1\nb: 2\nc: 3\n")
     # Recreate `a` after the import: removed, then set again (created_seq now newest).
-    theatre.store.record_changes([_remove("a", 1)])
-    theatre.store.record_changes([_set("a", None, 1)])
+    theatre.store.record_changes([_remove("a", 1)], CLI_CONTEXT)
+    theatre.store.record_changes([_set("a", None, 1)], CLI_CONTEXT)
     theatre.write("troupe.yml", "z: 0\n")
 
     assert theatre.changes() == (

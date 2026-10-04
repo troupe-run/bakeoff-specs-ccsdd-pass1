@@ -22,6 +22,7 @@ from troupe.cli.shell import (
     TroupeArgumentParser,
     theatre_option_parent,
 )
+from troupe.config.lineage import cli_context
 from troupe.config.paths import ConfigPath
 from troupe.config.theatre import open_theatre
 from troupe.config.writeback.setter import set_value
@@ -53,7 +54,7 @@ def handle_set(args: argparse.Namespace, out: io.BytesIO) -> None:
     path = ConfigPath.parse(args.path)
     value = parse_value(args.value, path)
     with open_theatre(args.theatre) as theatre:
-        set_value(theatre, path, value)
+        set_value(theatre, path, value, cli_context(args.actor, None))
 
 
 def add_set_subparser(subparsers: "argparse._SubParsersAction[TroupeArgumentParser]") -> None:

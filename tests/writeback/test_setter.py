@@ -20,10 +20,10 @@ import pytest
 from eventsourcing.sqlite import SQLiteCursor
 
 from set_support import assert_file_bytes, snapshot_tree
-from support import MakeTheatre
+from support import CLI_CONTEXT, MakeTheatre, Step1Record, step1
 from troupe.config.constants import HISTORY_STORE_NAME
 from troupe.config.errors import ConfigLoadError, ExitCode, WriteRefusedError
-from troupe.config.history import HistoryRecord, RemoveChange, SetChange
+from troupe.config.history import RemoveChange, SetChange
 from troupe.config.paths import ConfigPath
 from troupe.config.theatre import Theatre, open_theatre
 from troupe.config.writeback.setter import SetOutcome, set_value
@@ -41,7 +41,7 @@ def _opened(directory: Path) -> Iterator[Theatre]:
 
 def _set(theatre: Theatre, path: str, value: str) -> SetOutcome:
     config_path = ConfigPath.parse(path)
-    return set_value(theatre, config_path, parse_value(value, config_path))
+    return set_value(theatre, config_path, parse_value(value, config_path), CLI_CONTEXT)
 
 
 def _listing(directory: Path) -> list[str]:
@@ -99,10 +99,10 @@ def test_successful_single_file_set_writes_one_file_and_records_the_diff(
     directory = make_theatre("a: 1\nb: x\n", files={"other.txt": "keep\n"})
     config_dir = directory / ".troupe"
     with _opened(directory) as theatre:
-        before = theatre.history.records()
+        before = step1(theatre.history.records())
         listing = _listing(config_dir)
         outcome = _set(theatre, "a", "2")
-        records = theatre.history.records()
+        records = step1(theatre.history.records())
 
     assert outcome == SetOutcome(
         written=(config_dir / "troupe.yml",),
@@ -110,7 +110,7 @@ def test_successful_single_file_set_writes_one_file_and_records_the_diff(
     )
     assert_file_bytes(config_dir / "troupe.yml", "a: 2\nb: x\n")
     assert_file_bytes(directory / "other.txt", "keep\n")
-    assert records == (*before, HistoryRecord(len(before) + 1, "set", "a", 1, 2))
+    assert records == (*before, Step1Record(len(before) + 1, "set", "a", 1, 2))
     assert _listing(config_dir) == listing
 
 
@@ -122,10 +122,10 @@ def test_two_file_set_writes_both_files_and_records_both_leaves(
     directory = _two_file_theatre(make_theatre)
     config_dir = directory / ".troupe"
     with _opened(directory) as theatre:
-        before = theatre.history.records()
+        before = step1(theatre.history.records())
         listing = _listing(config_dir)
         outcome = _set(theatre, *P_SET)
-        records = theatre.history.records()
+        records = step1(theatre.history.records())
 
     assert outcome.written == (config_dir / "troupe.yml", config_dir / "t.txt")
     assert_file_bytes(config_dir / "troupe.yml", "p:\n  t: file:t.txt\n  n: 2\n")
@@ -133,8 +133,8 @@ def test_two_file_set_writes_both_files_and_records_both_leaves(
     seq = len(before)
     assert records == (
         *before,
-        HistoryRecord(seq + 1, "set", "p.t", "old\n", "new"),
-        HistoryRecord(seq + 2, "set", "p.n", 1, 2),
+        Step1Record(seq + 1, "set", "p.t", "old\n", "new"),
+        Step1Record(seq + 2, "set", "p.n", 1, 2),
     )
     assert _listing(config_dir) == listing
 
@@ -152,19 +152,19 @@ def test_set_after_hand_edit_follows_the_reconcile_and_takes_old_values_from_the
     config.write_text("a:\n  x: 5\n  y: 6\n", encoding="utf-8")
     with _opened(directory) as theatre:
         outcome = _set(theatre, "a", "{x: 7}")
-        records = theatre.history.records()
+        records = step1(theatre.history.records())
 
     assert outcome.changes == (
         SetChange(ConfigPath.parse("a.x"), 5, 7),
         RemoveChange(ConfigPath.parse("a.y"), 6),
     )
     assert records == (
-        HistoryRecord(1, "import", "a", None, 1),
-        HistoryRecord(2, "set", "a.x", None, 5),
-        HistoryRecord(3, "set", "a.y", None, 6),
-        HistoryRecord(4, "remove", "a", 1, None),
-        HistoryRecord(5, "set", "a.x", 5, 7),
-        HistoryRecord(6, "remove", "a.y", 6, None),
+        Step1Record(1, "import", "a", None, 1),
+        Step1Record(2, "set", "a.x", None, 5),
+        Step1Record(3, "set", "a.y", None, 6),
+        Step1Record(4, "remove", "a", 1, None),
+        Step1Record(5, "set", "a.x", 5, 7),
+        Step1Record(6, "remove", "a.y", 6, None),
     )
     assert_file_bytes(config, "a:\n  x: 7\n")
 
@@ -196,11 +196,11 @@ def test_no_op_writes_nothing_and_records_nothing(
     directory = make_theatre(config, files=files)
     snapshot = snapshot_tree(directory)
     with _opened(directory) as theatre:
-        before = theatre.history.records()
+        before = step1(theatre.history.records())
         renames = _fail_replace(monkeypatch, {})
         outcome = _set(theatre, path, value)
         monkeypatch.undo()
-        records = theatre.history.records()
+        records = step1(theatre.history.records())
 
     assert outcome == SetOutcome(written=(), changes=())
     assert renames == []
@@ -226,10 +226,10 @@ def test_refusal_leaves_files_and_history_untouched(
     snapshot = snapshot_tree(directory)
     listing = _listing(directory / ".troupe")
     with _opened(directory) as theatre:
-        before = theatre.history.records()
+        before = step1(theatre.history.records())
         with pytest.raises(WriteRefusedError) as caught:
             _set(theatre, path, value)
-        records = theatre.history.records()
+        records = step1(theatre.history.records())
 
     assert caught.value.exit_code is ExitCode.WRITE_REFUSED
     assert caught.value.path == path
@@ -251,13 +251,13 @@ def test_second_write_failure_restores_the_first_file(
     config_dir = directory / ".troupe"
     snapshot = snapshot_tree(directory)
     with _opened(directory) as theatre:
-        before = theatre.history.records()
+        before = step1(theatre.history.records())
         listing = _listing(config_dir)
         calls = _fail_replace(monkeypatch, {"t.txt": 1})
         with pytest.raises(WriteRefusedError) as caught:
             _set(theatre, *P_SET)
         monkeypatch.undo()
-        records = theatre.history.records()
+        records = step1(theatre.history.records())
 
     assert calls == ["troupe.yml", "t.txt", "troupe.yml"]  # write, write, restore
     error = caught.value
@@ -281,13 +281,13 @@ def test_first_write_failure_writes_nothing_and_names_path(
     config_dir = directory / ".troupe"
     snapshot = snapshot_tree(directory)
     with _opened(directory) as theatre:
-        before = theatre.history.records()
+        before = step1(theatre.history.records())
         listing = _listing(config_dir)
         calls = _fail_replace(monkeypatch, {"troupe.yml": 1})
         with pytest.raises(WriteRefusedError) as caught:
             _set(theatre, "a", "2")
         monkeypatch.undo()
-        records = theatre.history.records()
+        records = step1(theatre.history.records())
 
     assert calls == ["troupe.yml"]
     assert caught.value.file == config_dir / "troupe.yml"
@@ -307,13 +307,13 @@ def test_write_failure_with_failing_restore_names_the_unrestored_file(
     directory = _two_file_theatre(make_theatre)
     config_dir = directory / ".troupe"
     with _opened(directory) as theatre:
-        before = theatre.history.records()
+        before = step1(theatre.history.records())
         listing = _listing(config_dir)
         calls = _fail_replace(monkeypatch, {"t.txt": 1, "troupe.yml": 2})
         with pytest.raises(WriteRefusedError) as caught:
             _set(theatre, *P_SET)
         monkeypatch.undo()
-        records = theatre.history.records()
+        records = step1(theatre.history.records())
 
     assert calls == ["troupe.yml", "t.txt", "troupe.yml"]
     error = caught.value
@@ -342,14 +342,14 @@ def test_history_failure_restores_every_written_file(
     config_dir = directory / ".troupe"
     snapshot = snapshot_tree(directory)
     with _opened(directory) as theatre:
-        before = theatre.history.records()
+        before = step1(theatre.history.records())
         listing = _listing(config_dir)
         calls = _fail_replace(monkeypatch, {})
         inserts = _fail_inserts(monkeypatch)
         with pytest.raises(ConfigLoadError) as caught:
             _set(theatre, *P_SET)
         monkeypatch.undo()
-        records = theatre.history.records()
+        records = step1(theatre.history.records())
 
     assert inserts, "the failure was not injected at the SQLite boundary"
     assert calls == ["troupe.yml", "t.txt", "t.txt", "troupe.yml"]  # restored in reverse
@@ -373,14 +373,14 @@ def test_history_failure_with_failing_restore_names_store_and_file(
     directory = _two_file_theatre(make_theatre)
     config_dir = directory / ".troupe"
     with _opened(directory) as theatre:
-        before = theatre.history.records()
+        before = step1(theatre.history.records())
         listing = _listing(config_dir)
         calls = _fail_replace(monkeypatch, {"t.txt": 2})
         _fail_inserts(monkeypatch)
         with pytest.raises(ConfigLoadError) as caught:
             _set(theatre, *P_SET)
         monkeypatch.undo()
-        records = theatre.history.records()
+        records = step1(theatre.history.records())
 
     assert calls == ["troupe.yml", "t.txt", "t.txt", "troupe.yml"]
     error = caught.value

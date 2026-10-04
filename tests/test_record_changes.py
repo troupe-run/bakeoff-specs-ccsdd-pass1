@@ -8,10 +8,11 @@ from typing import Any
 import pytest
 from eventsourcing.sqlite import SQLiteCursor
 
-from support import MakeTheatre
+from support import CLI_CONTEXT, MakeTheatre, Step1Record, step1
 from troupe.config.constants import CONFIG_DIR_NAME
 from troupe.config.errors import ConfigLoadError, ExitCode
-from troupe.config.history import HistoryRecord, LeafChange, RemoveChange, SetChange
+from troupe.config.history import LeafChange, RemoveChange, SetChange
+from troupe.config.lineage import IMPORT_CONTEXT
 from troupe.config.loader import load_config
 from troupe.config.locate import find_config_file
 from troupe.config.paths import ConfigPath
@@ -26,9 +27,9 @@ agents:
 """
 
 IMPORTED = (
-    HistoryRecord(seq=1, op="import", path="name", old=None, new="demo"),
-    HistoryRecord(seq=2, op="import", path="agents.0.name", old=None, new="alice"),
-    HistoryRecord(seq=3, op="import", path="agents.0.temperature", old=None, new=0.5),
+    Step1Record(seq=1, op="import", path="name", old=None, new="demo"),
+    Step1Record(seq=2, op="import", path="agents.0.name", old=None, new="alice"),
+    Step1Record(seq=3, op="import", path="agents.0.temperature", old=None, new=0.5),
 )
 
 BATCH: tuple[LeafChange, ...] = (
@@ -38,9 +39,9 @@ BATCH: tuple[LeafChange, ...] = (
 )
 
 BATCH_RECORDS = (
-    HistoryRecord(seq=4, op="set", path="name", old="demo", new="renamed"),
-    HistoryRecord(seq=5, op="set", path="agents.0.enabled", old=None, new=True),
-    HistoryRecord(seq=6, op="remove", path="agents.0.temperature", old=0.5, new=None),
+    Step1Record(seq=4, op="set", path="name", old="demo", new="renamed"),
+    Step1Record(seq=5, op="set", path="agents.0.enabled", old=None, new=True),
+    Step1Record(seq=6, op="remove", path="agents.0.temperature", old=0.5, new=None),
 )
 
 
@@ -60,17 +61,19 @@ def store(theatre: Path) -> Iterator[HistoryStore]:
 
 @pytest.fixture
 def imported(theatre: Path, store: HistoryStore) -> HistoryStore:
-    store.ensure_imported(flatten_leaves(load_config(find_config_file(theatre)).root))
-    assert store.records() == IMPORTED
+    store.ensure_imported(
+        flatten_leaves(load_config(find_config_file(theatre)).root), IMPORT_CONTEXT
+    )
+    assert step1(store.records()) == IMPORTED
     return store
 
 
 def test_changes_follow_the_import_with_consecutive_seq_in_the_given_order(
     imported: HistoryStore,
 ) -> None:
-    imported.record_changes(BATCH)
+    imported.record_changes(BATCH, CLI_CONTEXT)
 
-    assert imported.records() == IMPORTED + BATCH_RECORDS
+    assert step1(imported.records()) == IMPORTED + BATCH_RECORDS
 
 
 def test_a_created_leaf_records_old_null_and_a_removed_leaf_records_new_null(
@@ -80,36 +83,37 @@ def test_a_created_leaf_records_old_null_and_a_removed_leaf_records_new_null(
         [
             SetChange(path=ConfigPath.parse("agents.1.name"), old=None, new="bob"),
             RemoveChange(path=ConfigPath.parse("name"), old="demo"),
-        ]
+        ],
+        CLI_CONTEXT,
     )
 
-    assert imported.records()[len(IMPORTED) :] == (
-        HistoryRecord(seq=4, op="set", path="agents.1.name", old=None, new="bob"),
-        HistoryRecord(seq=5, op="remove", path="name", old="demo", new=None),
+    assert step1(imported.records())[len(IMPORTED) :] == (
+        Step1Record(seq=4, op="set", path="agents.1.name", old=None, new="bob"),
+        Step1Record(seq=5, op="remove", path="name", old="demo", new=None),
     )
 
 
 def test_later_batches_continue_the_sequence_and_survive_reopening(
     theatre: Path, imported: HistoryStore
 ) -> None:
-    imported.record_changes(BATCH[:1])
-    imported.record_changes(BATCH[1:])
+    imported.record_changes(BATCH[:1], CLI_CONTEXT)
+    imported.record_changes(BATCH[1:], CLI_CONTEXT)
     imported.close()
 
     reopened = HistoryStore.open(theatre / CONFIG_DIR_NAME)
     try:
-        assert reopened.records() == IMPORTED + BATCH_RECORDS
+        assert step1(reopened.records()) == IMPORTED + BATCH_RECORDS
     finally:
         reopened.close()
 
 
 def test_an_empty_batch_records_nothing(imported: HistoryStore) -> None:
-    imported.record_changes([])
-    imported.record_changes(())
+    imported.record_changes([], CLI_CONTEXT)
+    imported.record_changes((), CLI_CONTEXT)
 
-    assert imported.records() == IMPORTED
-    imported.record_changes(BATCH[:1])
-    assert imported.records() == (*IMPORTED, BATCH_RECORDS[0])
+    assert step1(imported.records()) == IMPORTED
+    imported.record_changes(BATCH[:1], CLI_CONTEXT)
+    assert step1(imported.records()) == (*IMPORTED, BATCH_RECORDS[0])
 
 
 def test_a_failure_at_the_sqlite_boundary_records_no_event_of_the_batch(
@@ -130,33 +134,33 @@ def test_a_failure_at_the_sqlite_boundary_records_no_event_of_the_batch(
     monkeypatch.setattr(SQLiteCursor, "execute", failing_execute)
 
     with pytest.raises(ConfigLoadError) as caught:
-        imported.record_changes(BATCH)
+        imported.record_changes(BATCH, CLI_CONTEXT)
 
     assert inserts == 3, "the failure was not injected after the first rows were written"
     assert caught.value.file == imported.location
     assert caught.value.exit_code == ExitCode.LOAD
     monkeypatch.setattr(SQLiteCursor, "execute", original_execute)
-    assert imported.records() == IMPORTED
+    assert step1(imported.records()) == IMPORTED
 
-    imported.record_changes(BATCH)
-    assert imported.records() == IMPORTED + BATCH_RECORDS
+    imported.record_changes(BATCH, CLI_CONTEXT)
+    assert step1(imported.records()) == IMPORTED + BATCH_RECORDS
 
 
 def test_recording_before_the_import_is_a_load_error_and_records_nothing(
     store: HistoryStore,
 ) -> None:
     with pytest.raises(ConfigLoadError) as caught:
-        store.record_changes(BATCH)
+        store.record_changes(BATCH, CLI_CONTEXT)
 
     assert caught.value.file == store.location
     assert store.is_imported() is False
-    assert store.records() == ()
+    assert step1(store.records()) == ()
 
 
 def test_recording_on_a_closed_store_is_a_load_error(imported: HistoryStore) -> None:
     imported.close()
 
     with pytest.raises(ConfigLoadError) as caught:
-        imported.record_changes(BATCH)
+        imported.record_changes(BATCH, CLI_CONTEXT)
 
     assert caught.value.file == imported.location

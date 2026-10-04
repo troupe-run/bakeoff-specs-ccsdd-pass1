@@ -8,7 +8,7 @@ import pytest
 from eventsourcing.application import Application
 from eventsourcing.sqlite import SQLiteCursor
 
-from support import MakeTheatre
+from support import MakeTheatre, Step1Record, step1
 from troupe.config.constants import CONFIG_DIR_NAME, HISTORY_STORE_NAME
 from troupe.config.errors import (
     ConfigLoadError,
@@ -16,7 +16,6 @@ from troupe.config.errors import (
     PathNotFoundError,
     WrongNodeKindError,
 )
-from troupe.config.history import HistoryRecord
 from troupe.config.model import ConfigMapping, ConfigScalar, ConfigSequence
 from troupe.config.paths import ConfigPath
 from troupe.config.theatre import Theatre, get_value, list_history, node_at, open_theatre
@@ -38,13 +37,13 @@ alicex: 1
 """
 
 EXPECTED_IMPORT = (
-    HistoryRecord(seq=1, op="import", path="name", old=None, new="demo"),
-    HistoryRecord(seq=2, op="import", path="agents.alice.temperature", old=None, new=0.5),
-    HistoryRecord(seq=3, op="import", path="agents.alice.enabled", old=None, new=True),
-    HistoryRecord(seq=4, op="import", path="agents.alicex", old=None, new=1),
-    HistoryRecord(seq=5, op="import", path="tools.0", old=None, new="grep"),
-    HistoryRecord(seq=6, op="import", path="tools.1", old=None, new="sed"),
-    HistoryRecord(seq=7, op="import", path="notes", old=None, new=None),
+    Step1Record(seq=1, op="import", path="name", old=None, new="demo"),
+    Step1Record(seq=2, op="import", path="agents.alice.temperature", old=None, new=0.5),
+    Step1Record(seq=3, op="import", path="agents.alice.enabled", old=None, new=True),
+    Step1Record(seq=4, op="import", path="agents.alicex", old=None, new=1),
+    Step1Record(seq=5, op="import", path="tools.0", old=None, new="grep"),
+    Step1Record(seq=6, op="import", path="tools.1", old=None, new="sed"),
+    Step1Record(seq=7, op="import", path="notes", old=None, new=None),
 )
 
 
@@ -84,14 +83,14 @@ def test_open_theatre_imports_the_files_and_exposes_the_session(theatre_dir: Pat
         assert theatre.config_file == theatre_dir / CONFIG_DIR_NAME / "troupe.yml"
         assert theatre.document.root_file.path == theatre.config_file
         assert theatre.history.location == theatre_dir / CONFIG_DIR_NAME / HISTORY_STORE_NAME
-        assert theatre.history.records() == EXPECTED_IMPORT
+        assert step1(theatre.history.records()) == EXPECTED_IMPORT
 
 
 def test_open_theatre_twice_imports_only_once(theatre_dir: Path) -> None:
     with open_theatre(theatre_dir):
         pass
     with open_theatre(theatre_dir) as theatre:
-        assert theatre.history.records() == EXPECTED_IMPORT
+        assert step1(theatre.history.records()) == EXPECTED_IMPORT
 
 
 def test_open_theatre_finds_a_troupe_yaml_config(make_theatre: MakeTheatre) -> None:
@@ -156,7 +155,7 @@ def test_failed_import_closes_the_store_before_reraising(
 
     monkeypatch.undo()
     with open_theatre(theatre_dir) as theatre:
-        assert theatre.history.records() == EXPECTED_IMPORT
+        assert step1(theatre.history.records()) == EXPECTED_IMPORT
 
 
 # --- lifecycle --------------------------------------------------------------------------------
@@ -164,11 +163,11 @@ def test_failed_import_closes_the_store_before_reraising(
 
 def test_leaving_the_with_block_closes_the_store(theatre_dir: Path) -> None:
     with open_theatre(theatre_dir) as theatre:
-        theatre.history.records()
+        step1(theatre.history.records())
 
     assert _store_files(theatre_dir) == [HISTORY_STORE_NAME]
     with pytest.raises(ConfigLoadError, match="closed"):
-        theatre.history.records()
+        step1(theatre.history.records())
 
 
 def test_leaving_the_with_block_by_an_exception_closes_the_store_and_propagates(
@@ -179,7 +178,7 @@ def test_leaving_the_with_block_by_an_exception_closes_the_store_and_propagates(
 
     assert _store_files(theatre_dir) == [HISTORY_STORE_NAME]
     with pytest.raises(ConfigLoadError, match="closed"):
-        theatre.history.records()
+        step1(theatre.history.records())
 
 
 def test_close_is_idempotent(theatre_dir: Path) -> None:
@@ -369,20 +368,20 @@ def test_hand_edit_is_returned_by_get_value_and_recorded_by_the_reconcile_on_ope
     theatre_dir = make_theatre("a: 1\n")
     with open_theatre(theatre_dir) as theatre:
         assert get_value(theatre, ConfigPath.parse("a")) == 1
-        before = list_history(theatre, None)
+        before = step1(list_history(theatre, None))
 
     (theatre_dir / CONFIG_DIR_NAME / "troupe.yml").write_text("a: 2\nb: x\n", encoding="utf-8")
 
     with open_theatre(theatre_dir) as theatre:
         assert get_value(theatre, ConfigPath.parse("a")) == 2
         assert get_value(theatre, ConfigPath.parse("b")) == "x"
-        after = list_history(theatre, None)
+        after = step1(list_history(theatre, None))
 
-    assert before == (HistoryRecord(seq=1, op="import", path="a", old=None, new=1),)
+    assert before == (Step1Record(seq=1, op="import", path="a", old=None, new=1),)
     assert after == (
         *before,
-        HistoryRecord(seq=2, op="set", path="a", old=1, new=2),
-        HistoryRecord(seq=3, op="set", path="b", old=None, new="x"),
+        Step1Record(seq=2, op="set", path="a", old=1, new=2),
+        Step1Record(seq=3, op="set", path="b", old=None, new="x"),
     )
 
 
@@ -391,16 +390,16 @@ def test_hand_edit_is_returned_by_get_value_and_recorded_by_the_reconcile_on_ope
 
 def test_list_history_without_prefix_returns_every_record(theatre_dir: Path) -> None:
     with open_theatre(theatre_dir) as theatre:
-        assert list_history(theatre, None) == EXPECTED_IMPORT
+        assert step1(list_history(theatre, None)) == EXPECTED_IMPORT
 
 
 def test_list_history_on_a_fresh_theatre_imports_first(make_theatre: MakeTheatre) -> None:
     theatre_dir = make_theatre("x: true\n")
 
     with open_theatre(theatre_dir) as theatre:
-        records = list_history(theatre, None)
+        records = step1(list_history(theatre, None))
 
-    assert records == (HistoryRecord(seq=1, op="import", path="x", old=None, new=True),)
+    assert records == (Step1Record(seq=1, op="import", path="x", old=None, new=True),)
 
 
 @pytest.mark.parametrize(
@@ -419,7 +418,7 @@ def test_list_history_filters_by_textual_prefix_keeping_seq(
     theatre_dir: Path, prefix: str, seqs: tuple[int, ...]
 ) -> None:
     with open_theatre(theatre_dir) as theatre:
-        records = list_history(theatre, ConfigPath.parse(prefix))
+        records = step1(list_history(theatre, ConfigPath.parse(prefix)))
 
     assert tuple(record.seq for record in records) == seqs
     assert records == tuple(r for r in EXPECTED_IMPORT if r.seq in seqs)

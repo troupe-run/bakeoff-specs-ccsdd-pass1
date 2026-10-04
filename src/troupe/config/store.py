@@ -32,6 +32,7 @@ from troupe.config.history import (
     RemoveChange,
     to_history_record,
 )
+from troupe.config.lineage import ChangeContext, stamp
 from troupe.config.resolve import Leaf
 
 # Failures of the store itself: SQLite errors (some escape eventsourcing unwrapped, e.g. when the
@@ -96,30 +97,46 @@ class HistoryStore:
             lambda app: _first(app.events.get(HISTORY_AGGREGATE_ID, limit=1)) is not None,
         )
 
-    def ensure_imported(self, leaves: Sequence[Leaf]) -> bool:
+    def ensure_imported(self, leaves: Sequence[Leaf], context: ChangeContext) -> bool:
         """Import ``leaves`` unless the history exists; return whether an import happened.
 
         An import is the history-start event plus one leaf-imported event per leaf, in the given
-        order, saved in one transaction. An empty sequence still counts as an import. When the
-        history already exists nothing is recorded: importing is import-only. Reconciling the
-        history with the files is a separate step (``troupe.config.reconcile``, config-file-sync
+        order, saved in one transaction. The import is stamped once with ``context``, so every
+        leaf-imported event shares one lineage (config-lineage 3.1, 4.1, 5.2). An empty sequence
+        still counts as an import (it records only the history-start event, so it is not stamped).
+        When the history already exists nothing is recorded: importing is import-only. Reconciling
+        the history with the files is a separate step (``troupe.config.reconcile``, config-file-sync
         Requirement 2) that the theatre runs after this returns ``False``.
         """
         if self.is_imported():
             return False
         history = ConfigHistory()
-        for leaf in leaves:
-            history.import_leaf(str(leaf.path), leaf.value)
+        if leaves:
+            lineage = stamp(context)
+            for leaf in leaves:
+                history.import_leaf(
+                    str(leaf.path),
+                    leaf.value,
+                    actor_kind=lineage.actor.kind,
+                    actor_id=lineage.actor.id,
+                    via=lineage.via,
+                    at=lineage.at,
+                    reason=lineage.reason,
+                    change=lineage.change,
+                )
         self._run("cannot import into the history store", lambda app: app.save(history))
         return True
 
-    def record_changes(self, changes: Sequence[LeafChange]) -> None:
+    def record_changes(self, changes: Sequence[LeafChange], context: ChangeContext) -> None:
         """Append the changes reported by one ``set`` invocation or one reconcile (9.1-9.4).
 
         Precondition: :meth:`is_imported`. One leaf-value-set event per :class:`SetChange` and one
         leaf-removed event per :class:`RemoveChange`, in the given order, saved in one transaction
-        (all or none). An empty sequence records nothing. Recording before the import, or any store
-        failure, is a :class:`ConfigLoadError` naming the store file.
+        (all or none). The batch is stamped once with ``context`` right before the save, so all
+        its events share one lineage and no other batch shares its change id (config-lineage 4.1,
+        4.2, 5.2). An empty sequence records nothing and is not stamped (config-lineage 4.4).
+        Recording before the import, or any store failure, is a :class:`ConfigLoadError` naming
+        the store file.
         """
         if not changes:
             return
@@ -131,11 +148,31 @@ class HistoryStore:
 
         def record(app: _HistoryApplication) -> None:
             history: ConfigHistory = app.repository.get(HISTORY_AGGREGATE_ID)
+            lineage = stamp(context)
             for change in changes:
                 if isinstance(change, RemoveChange):
-                    history.remove_leaf(str(change.path), change.old)
+                    history.remove_leaf(
+                        str(change.path),
+                        change.old,
+                        actor_kind=lineage.actor.kind,
+                        actor_id=lineage.actor.id,
+                        via=lineage.via,
+                        at=lineage.at,
+                        reason=lineage.reason,
+                        change=lineage.change,
+                    )
                 else:
-                    history.set_leaf(str(change.path), change.old, change.new)
+                    history.set_leaf(
+                        str(change.path),
+                        change.old,
+                        change.new,
+                        actor_kind=lineage.actor.kind,
+                        actor_id=lineage.actor.id,
+                        via=lineage.via,
+                        at=lineage.at,
+                        reason=lineage.reason,
+                        change=lineage.change,
+                    )
             app.save(history)
 
         self._run("cannot record changes in the history store", record)

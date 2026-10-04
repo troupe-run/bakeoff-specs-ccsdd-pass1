@@ -20,11 +20,11 @@ import pytest
 from eventsourcing.application import Application
 from eventsourcing.sqlite import SQLiteCursor
 
-from support import MakeTheatre, RunCli
+from support import MakeTheatre, RunCli, Step1Record, step1
 from troupe.config import reconcile as reconciler
 from troupe.config.constants import CONFIG_DIR_NAME, HISTORY_STORE_NAME
 from troupe.config.errors import ConfigLoadError, PathNotFoundError
-from troupe.config.history import HistoryRecord, LeafChange
+from troupe.config.history import LeafChange
 from troupe.config.model import ConfigDocument
 from troupe.config.paths import ConfigPath
 from troupe.config.store import HistoryStore
@@ -33,7 +33,7 @@ from troupe.config.theatre import get_value, open_theatre
 CHILD_TIMEOUT_SECONDS = 60.0
 HOLD_SECONDS = 0.5
 
-IMPORTED_A = HistoryRecord(seq=1, op="import", path="a", old=None, new=1)
+IMPORTED_A = Step1Record(seq=1, op="import", path="a", old=None, new=1)
 
 # The child announces that it is about to open, opens the theatre (blocking on the lock while the
 # parent holds it) and reports the wall-clock time it got it and the number of history records.
@@ -54,10 +54,10 @@ def _config(theatre_dir: Path) -> Path:
     return theatre_dir / CONFIG_DIR_NAME / "troupe.yml"
 
 
-def _recorded(theatre_dir: Path) -> tuple[HistoryRecord, ...]:
+def _recorded(theatre_dir: Path) -> tuple[Step1Record, ...]:
     """The history as ``history`` sees it: opened without reconciling."""
     with open_theatre(theatre_dir, reconcile=False) as theatre:
-        return theatre.history.records()
+        return step1(theatre.history.records())
 
 
 def _assert_lock_free(theatre_dir: Path) -> None:
@@ -112,7 +112,7 @@ def test_first_open_imports_and_does_not_reconcile(
     calls = _spy_on_reconcile(monkeypatch)
 
     with open_theatre(theatre_dir) as theatre:
-        assert theatre.history.records() == (IMPORTED_A,)
+        assert step1(theatre.history.records()) == (IMPORTED_A,)
 
     assert calls == []
 
@@ -128,9 +128,9 @@ def test_open_of_an_imported_theatre_reconciles_a_hand_edit_before_returning(
     calls = _spy_on_reconcile(monkeypatch)
 
     with open_theatre(theatre_dir) as theatre:
-        assert theatre.history.records() == (
+        assert step1(theatre.history.records()) == (
             IMPORTED_A,
-            HistoryRecord(seq=2, op="set", path="a", old=1, new=2),
+            Step1Record(seq=2, op="set", path="a", old=1, new=2),
         )
         assert calls == [theatre.document]
         assert get_value(theatre, ConfigPath.parse("a")) == 2
@@ -148,7 +148,7 @@ def test_opt_out_records_nothing_and_a_later_default_open_reconciles(
     calls = _spy_on_reconcile(monkeypatch)
 
     with open_theatre(theatre_dir, reconcile=False) as theatre:
-        assert theatre.history.records() == (IMPORTED_A,)
+        assert step1(theatre.history.records()) == (IMPORTED_A,)
         assert get_value(theatre, ConfigPath.parse("a")) == 2
     assert calls == []
 
@@ -159,7 +159,7 @@ def test_opt_out_records_nothing_and_a_later_default_open_reconciles(
 
     assert _recorded(theatre_dir) == (
         IMPORTED_A,
-        HistoryRecord(seq=2, op="set", path="a", old=1, new=2),
+        Step1Record(seq=2, op="set", path="a", old=1, new=2),
     )
 
 
@@ -224,7 +224,7 @@ def test_store_failure_while_reconciling_records_nothing_and_releases_everything
     assert _recorded(theatre_dir) == (IMPORTED_A,)
     with open_theatre(theatre_dir):
         pass
-    assert _recorded(theatre_dir)[-1] == HistoryRecord(seq=2, op="set", path="a", old=1, new=2)
+    assert _recorded(theatre_dir)[-1] == Step1Record(seq=2, op="set", path="a", old=1, new=2)
 
 
 def test_store_close_failure_still_releases_the_lock(
@@ -267,7 +267,7 @@ def test_reconcile_events_remain_when_the_block_fails(make_theatre: MakeTheatre)
     _assert_lock_free(theatre_dir)
     assert _recorded(theatre_dir) == (
         IMPORTED_A,
-        HistoryRecord(seq=2, op="set", path="a", old=1, new=2),
+        Step1Record(seq=2, op="set", path="a", old=1, new=2),
     )
 
 
@@ -345,6 +345,6 @@ def test_opening_the_same_theatre_inside_an_open_block_raises_instead_of_deadloc
             open_theatre(theatre_dir)
         with pytest.raises(RuntimeError):
             open_theatre(theatre_dir, reconcile=False)
-        assert theatre.history.records() == (IMPORTED_A,)
+        assert step1(theatre.history.records()) == (IMPORTED_A,)
 
     _assert_lock_free(theatre_dir)

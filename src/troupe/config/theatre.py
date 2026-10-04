@@ -28,6 +28,7 @@ from typing import Self
 from troupe.config import reconcile as reconciler
 from troupe.config.errors import ConfigLoadError, WrongNodeKindError
 from troupe.config.history import HistoryRecord
+from troupe.config.lineage import IMPORT_CONTEXT
 from troupe.config.loader import load_config
 from troupe.config.locate import find_config_file
 from troupe.config.lock import TheatreLock
@@ -98,7 +99,7 @@ def open_theatre(directory: Path, *, reconcile: bool = True) -> Theatre:
         document = load_config(config_file)
         history = HistoryStore.open(config_file.parent)
         acquired.callback(_quietly, history.close)
-        imported_now = history.ensure_imported(flatten_leaves(document.root))
+        imported_now = history.ensure_imported(flatten_leaves(document.root), IMPORT_CONTEXT)
         if reconcile and not imported_now:
             reconciler.reconcile(document, history)
         acquired.pop_all()  # success: the theatre owns the store and the lock now

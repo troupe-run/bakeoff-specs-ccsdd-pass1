@@ -26,7 +26,7 @@ complete. No new runtime dependency is added.
   - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
 - [ ] 2. Core and CLI: record and print lineage
-- [ ] 2.1 Store lineage with every history event and stamp each recorded batch once (integration across the history events, store, theatre opening, reconcile and `set`)
+- [x] 2.1 Store lineage with every history event and stamp each recorded batch once (integration across the history events, store, theatre opening, reconcile and `set`)
   - The three history events gain the lineage fields (fresh stores only; the schema version is raised in 2.2 together with its upcaster); history records carry their lineage; an unknown stored actor kind or origin is reported as an unreadable store (exit 4)
   - Importing and recording a batch take a context; each non-empty batch is stamped once, so all its events share time and change id; an empty batch records nothing
   - Callers pass their context in the same change (the store's signature forces it): the theatre opening passes the import context, reconcile passes the file context, and `set` passes a cli context built from the command's actor (no reason yet) through the set use case
@@ -76,3 +76,6 @@ complete. No new runtime dependency is added.
   - Add step-4 notes to config-foundation (Requirements 7 and 8), config-set-writeback (Requirements 1 and 15) and config-file-sync (Requirement 2) pointing to config-lineage, and update module docstrings that describe the history line or recorded batches (design: This Spec Owns)
   - Done when the full suite, `mypy --strict` and ruff pass and the traceability check lists no missing ID
   - _Requirements: 1.1, 3.1, 3.2, 3.3, 6.1, 7.3_
+
+## Implementation Notes
+- 2.1: `tests/support.py` has `step1()`/`Step1Record` (project records to seq/op/path/old/new), `FIXED_LINEAGE`, `lineage_fields()` and `CLI_CONTEXT`; reuse them instead of new helpers. Until 2.2 lands, a pre-step-4 store raises `AttributeError` in `to_history_record` (not mapped to exit 4); 2.2's upcaster must close that.

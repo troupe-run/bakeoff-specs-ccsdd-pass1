@@ -16,6 +16,7 @@ from pathlib import Path
 
 from troupe.config.errors import TroupeError, WriteRefusedError
 from troupe.config.history import LeafChange
+from troupe.config.lineage import ChangeContext
 from troupe.config.model import SourceFile
 from troupe.config.paths import ConfigPath
 from troupe.config.theatre import Theatre
@@ -36,8 +37,13 @@ class SetOutcome:
     changes: tuple[LeafChange, ...]
 
 
-def set_value(theatre: Theatre, path: ConfigPath, value: NewValue) -> SetOutcome:
+def set_value(
+    theatre: Theatre, path: ConfigPath, value: NewValue, context: ChangeContext
+) -> SetOutcome:
     """Set the value at ``path`` to ``value`` in the files of ``theatre`` and record the history.
+
+    The changes are recorded as one batch with ``context`` (``set`` passes a cli context carrying
+    the command's actor; config-lineage 3.3).
 
     Raises the refusal of any pure step (exit 3 or 5) before any file is written; a
     :class:`WriteRefusedError` naming the failed file and PATH when a file cannot be written (the
@@ -53,7 +59,7 @@ def set_value(theatre: Theatre, path: ConfigPath, value: NewValue) -> SetOutcome
     changes = diff_leaves(document, after)
     write_patches(patches, path)
     try:
-        theatre.history.record_changes(changes)
+        theatre.history.record_changes(changes, context)
     except Exception as error:
         unrestored = _restore([patch.file for patch in patches])
         if unrestored:

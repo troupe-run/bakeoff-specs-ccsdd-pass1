@@ -15,6 +15,7 @@ from collections.abc import Sequence
 
 from troupe.config.constants import PATH_SEPARATOR
 from troupe.config.history import LeafChange, RemoveChange, SetChange
+from troupe.config.lineage import FILE_CONTEXT
 from troupe.config.model import ConfigDocument
 from troupe.config.paths import ConfigPath
 from troupe.config.recorded import RecordedLeaf, recorded_leaves
@@ -66,5 +67,5 @@ def reconcile(document: ConfigDocument, store: HistoryStore) -> tuple[LeafChange
     :class:`~troupe.config.errors.ConfigLoadError` naming the store.
     """
     changes = reconcile_changes(document, recorded_leaves(store.records()))
-    store.record_changes(changes)
+    store.record_changes(changes, FILE_CONTEXT)
     return changes

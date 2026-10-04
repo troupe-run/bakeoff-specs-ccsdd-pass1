@@ -10,10 +10,10 @@ import pytest
 from eventsourcing.application import Application
 from eventsourcing.sqlite import SQLiteCursor
 
-from support import MakeTheatre
+from support import MakeTheatre, Step1Record, step1
 from troupe.config.constants import CONFIG_DIR_NAME, HISTORY_STORE_NAME
 from troupe.config.errors import ConfigLoadError, ExitCode
-from troupe.config.history import HistoryRecord
+from troupe.config.lineage import IMPORT_CONTEXT
 from troupe.config.loader import load_config
 from troupe.config.locate import find_config_file
 from troupe.config.paths import ConfigPath
@@ -31,12 +31,12 @@ notes: ~
 """
 
 EXPECTED_IMPORT = (
-    HistoryRecord(seq=1, op="import", path="name", old=None, new="demo"),
-    HistoryRecord(seq=2, op="import", path="agents.0.name", old=None, new="alice"),
-    HistoryRecord(seq=3, op="import", path="agents.0.temperature", old=None, new=0.5),
-    HistoryRecord(seq=4, op="import", path="agents.1.name", old=None, new="bob"),
-    HistoryRecord(seq=5, op="import", path="agents.1.enabled", old=None, new=False),
-    HistoryRecord(seq=6, op="import", path="notes", old=None, new=None),
+    Step1Record(seq=1, op="import", path="name", old=None, new="demo"),
+    Step1Record(seq=2, op="import", path="agents.0.name", old=None, new="alice"),
+    Step1Record(seq=3, op="import", path="agents.0.temperature", old=None, new=0.5),
+    Step1Record(seq=4, op="import", path="agents.1.name", old=None, new="bob"),
+    Step1Record(seq=5, op="import", path="agents.1.enabled", old=None, new=False),
+    Step1Record(seq=6, op="import", path="notes", old=None, new=None),
 )
 
 
@@ -81,12 +81,12 @@ def test_import_records_one_event_per_leaf_in_document_order(
     theatre: Path, store: HistoryStore
 ) -> None:
     assert store.is_imported() is False
-    assert store.records() == ()
+    assert step1(store.records()) == ()
 
-    assert store.ensure_imported(_leaves(theatre)) is True
+    assert store.ensure_imported(_leaves(theatre), IMPORT_CONTEXT) is True
 
     assert store.is_imported() is True
-    assert store.records() == EXPECTED_IMPORT
+    assert step1(store.records()) == EXPECTED_IMPORT
 
 
 def test_second_import_records_nothing_and_ensure_imported_never_reconciles(
@@ -97,27 +97,27 @@ def test_second_import_records_nothing_and_ensure_imported_never_reconciles(
     ``ensure_imported`` is import-only; recording hand edits is the separate reconcile step that
     the theatre runs on open (config-file-sync 1.1, 2.1-2.3), covered in ``test_reconcile.py``.
     """
-    store.ensure_imported(_leaves(theatre))
+    store.ensure_imported(_leaves(theatre), IMPORT_CONTEXT)
     changed = (Leaf(path=ConfigPath.parse("name"), value="other", node=_leaves(theatre)[0].node),)
 
-    assert store.ensure_imported(changed) is False
-    assert store.ensure_imported(()) is False
-    assert store.records() == EXPECTED_IMPORT
+    assert store.ensure_imported(changed, IMPORT_CONTEXT) is False
+    assert store.ensure_imported((), IMPORT_CONTEXT) is False
+    assert step1(store.records()) == EXPECTED_IMPORT
 
 
 def test_records_survive_reopening_and_reopened_store_does_not_reimport(theatre: Path) -> None:
     first = HistoryStore.open(_config_dir(theatre))
     try:
-        first.ensure_imported(_leaves(theatre))
+        first.ensure_imported(_leaves(theatre), IMPORT_CONTEXT)
     finally:
         first.close()
 
     second = HistoryStore.open(_config_dir(theatre))
     try:
         assert second.is_imported() is True
-        assert second.records() == EXPECTED_IMPORT
-        assert second.ensure_imported(_leaves(theatre)) is False
-        assert second.records() == EXPECTED_IMPORT
+        assert step1(second.records()) == EXPECTED_IMPORT
+        assert second.ensure_imported(_leaves(theatre), IMPORT_CONTEXT) is False
+        assert step1(second.records()) == EXPECTED_IMPORT
     finally:
         second.close()
 
@@ -127,16 +127,16 @@ def test_empty_configuration_still_counts_as_imported(make_theatre: MakeTheatre)
     store = HistoryStore.open(_config_dir(theatre))
     try:
         assert _leaves(theatre) == ()
-        assert store.ensure_imported(()) is True
+        assert store.ensure_imported((), IMPORT_CONTEXT) is True
         assert store.is_imported() is True
-        assert store.records() == ()
+        assert step1(store.records()) == ()
     finally:
         store.close()
 
     reopened = HistoryStore.open(_config_dir(theatre))
     try:
         assert reopened.is_imported() is True
-        assert reopened.ensure_imported(()) is False
+        assert reopened.ensure_imported((), IMPORT_CONTEXT) is False
     finally:
         reopened.close()
 
@@ -158,13 +158,13 @@ def test_persisted_values_round_trip_with_exact_types(make_theatre: MakeTheatre)
     )
     store = HistoryStore.open(_config_dir(theatre))
     try:
-        store.ensure_imported(_leaves(theatre))
+        store.ensure_imported(_leaves(theatre), IMPORT_CONTEXT)
     finally:
         store.close()
 
     reopened = HistoryStore.open(_config_dir(theatre))
     try:
-        values = {record.path: record.new for record in reopened.records()}
+        values = {record.path: record.new for record in step1(reopened.records())}
     finally:
         reopened.close()
 
@@ -211,7 +211,7 @@ def test_only_history_sqlite_files_appear_and_user_files_are_untouched(
     before = _snapshot(theatre)
     store = HistoryStore.open(_config_dir(theatre))
     try:
-        store.ensure_imported(_leaves(theatre))
+        store.ensure_imported(_leaves(theatre), IMPORT_CONTEXT)
         while_open = _snapshot(theatre)
     finally:
         store.close()
@@ -232,8 +232,8 @@ def test_only_history_sqlite_files_appear_and_user_files_are_untouched(
 
 def test_close_twice_leaves_no_wal_or_shm_files(theatre: Path) -> None:
     store = HistoryStore.open(_config_dir(theatre))
-    store.ensure_imported(_leaves(theatre))
-    store.records()
+    store.ensure_imported(_leaves(theatre), IMPORT_CONTEXT)
+    step1(store.records())
 
     store.close()
     store.close()
@@ -263,7 +263,7 @@ def test_corrupt_store_file_yields_a_load_error_naming_it(theatre: Path) -> None
         store = HistoryStore.open(_config_dir(theatre))
         try:
             store.is_imported()
-            store.records()
+            step1(store.records())
         finally:
             store.close()
 
@@ -301,16 +301,16 @@ def test_failure_at_the_sqlite_boundary_during_import_leaves_no_partial_import(
     monkeypatch.setattr(SQLiteCursor, "execute", failing_execute)
 
     with pytest.raises(ConfigLoadError) as caught:
-        store.ensure_imported(_leaves(theatre))
+        store.ensure_imported(_leaves(theatre), IMPORT_CONTEXT)
 
     assert inserts == 4, "the failure was not injected after the first rows were written"
     assert caught.value.file == store.location
     monkeypatch.setattr(SQLiteCursor, "execute", original_execute)
     assert store.is_imported() is False
-    assert store.records() == ()
+    assert step1(store.records()) == ()
 
-    assert store.ensure_imported(_leaves(theatre)) is True
-    assert store.records() == EXPECTED_IMPORT
+    assert store.ensure_imported(_leaves(theatre), IMPORT_CONTEXT) is True
+    assert step1(store.records()) == EXPECTED_IMPORT
 
 
 def test_close_failure_is_reported_as_a_load_error(
@@ -371,7 +371,7 @@ def test_ambient_environment_cannot_redirect_or_transform_the_store(
 
     store = HistoryStore.open(_config_dir(theatre))
     try:
-        store.ensure_imported(_leaves(theatre))
+        store.ensure_imported(_leaves(theatre), IMPORT_CONTEXT)
     finally:
         store.close()
 

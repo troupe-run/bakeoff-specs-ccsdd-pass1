@@ -11,14 +11,21 @@ history records their changes. Set and remove events come from ``set`` and, sinc
 reconcile, which records hand edits before every command except ``history`` (config-file-sync 1.1,
 1.3, 2.1-2.3). Persistence lives in ``troupe.config.store``, which projects stored
 events through :func:`to_history_record`, the single home of the event-to-record mapping.
+
+Since step 4 every history event also stores its lineage as flat fields (``actor_kind``,
+``actor_id``, ``via``, ``at``, ``reason``, ``change``; config-lineage 7.1): the store stamps each
+recorded batch once and passes the same fields to every event of the batch. A record carries them
+back as a :class:`~troupe.config.lineage.Lineage`; an unknown stored actor kind or via is a
+``ValueError``, which the store reports as an unreadable store.
 """
 
 from dataclasses import dataclass
-from typing import Final, Literal, TypeAlias
+from typing import Final, Literal, TypeAlias, get_args
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from eventsourcing.domain import Aggregate, DomainEventProtocol, event
 
+from troupe.config.lineage import Actor, ActorKind, Lineage, Via
 from troupe.config.paths import ConfigPath
 from troupe.config.scalars import ScalarValue
 
@@ -44,6 +51,13 @@ class ConfigHistory(Aggregate):
         path: str
         new: ScalarValue
 
+        actor_kind: str
+        actor_id: str | None
+        via: str
+        at: str
+        reason: str | None
+        change: str
+
     class LeafValueSet(Aggregate.Event):
         """A leaf changed or created by ``set`` or reconcile: op ``set``, ``old`` null if new."""
 
@@ -51,26 +65,74 @@ class ConfigHistory(Aggregate):
         old: ScalarValue
         new: ScalarValue
 
+        actor_kind: str
+        actor_id: str | None
+        via: str
+        at: str
+        reason: str | None
+        change: str
+
     class LeafRemoved(Aggregate.Event):
         """A leaf gone after ``set`` or found gone by reconcile: op ``remove``, ``new`` null."""
 
         path: str
         old: ScalarValue
 
+        actor_kind: str
+        actor_id: str | None
+        via: str
+        at: str
+        reason: str | None
+        change: str
+
     @event(HistoryStarted)
     def __init__(self) -> None:
         pass
 
     @event(LeafImported)
-    def import_leaf(self, path: str, new: ScalarValue) -> None:
+    def import_leaf(
+        self,
+        path: str,
+        new: ScalarValue,
+        *,
+        actor_kind: str,
+        actor_id: str | None,
+        via: str,
+        at: str,
+        reason: str | None,
+        change: str,
+    ) -> None:
         """Record that the leaf at ``path`` held ``new`` when the theatre was imported."""
 
     @event(LeafValueSet)
-    def set_leaf(self, path: str, old: ScalarValue, new: ScalarValue) -> None:
+    def set_leaf(
+        self,
+        path: str,
+        old: ScalarValue,
+        new: ScalarValue,
+        *,
+        actor_kind: str,
+        actor_id: str | None,
+        via: str,
+        at: str,
+        reason: str | None,
+        change: str,
+    ) -> None:
         """Record that ``set`` changed (or created, ``old`` None) the leaf at ``path``."""
 
     @event(LeafRemoved)
-    def remove_leaf(self, path: str, old: ScalarValue) -> None:
+    def remove_leaf(
+        self,
+        path: str,
+        old: ScalarValue,
+        *,
+        actor_kind: str,
+        actor_id: str | None,
+        via: str,
+        at: str,
+        reason: str | None,
+        change: str,
+    ) -> None:
         """Record that the leaf at ``path``, which held ``old``, no longer exists."""
 
 
@@ -105,22 +167,52 @@ class HistoryRecord:
     path: str
     old: ScalarValue
     new: ScalarValue
+    lineage: Lineage
+
+
+_ACTOR_KINDS: Final[tuple[ActorKind, ...]] = get_args(ActorKind.__value__)
+_VIAS: Final[tuple[Via, ...]] = get_args(Via.__value__)
+
+type _LineageEvent = (
+    ConfigHistory.LeafImported | ConfigHistory.LeafValueSet | ConfigHistory.LeafRemoved
+)
+
+
+def _lineage(event: _LineageEvent) -> Lineage:
+    """Rebuild the lineage stored on ``event``; an unknown actor kind or via is a ``ValueError``."""
+    kind = next((known for known in _ACTOR_KINDS if known == event.actor_kind), None)
+    if kind is None:
+        raise ValueError(f"unknown actor kind in a stored history event: {event.actor_kind!r}")
+    via = next((known for known in _VIAS if known == event.via), None)
+    if via is None:
+        raise ValueError(f"unknown via in a stored history event: {event.via!r}")
+    return Lineage(
+        actor=Actor(kind=kind, id=event.actor_id),
+        via=via,
+        at=event.at,
+        reason=event.reason,
+        change=event.change,
+    )
 
 
 def to_history_record(event: DomainEventProtocol[UUID]) -> HistoryRecord | None:
     """Map a history event to its history record; ``None`` for :class:`HistoryStarted`.
 
+    An unknown stored actor kind or via raises :class:`ValueError` (config-lineage 7.1).
     The parameter is the library's event protocol (what ``Aggregate.collect_events`` and the
     event store return) rather than ``ConfigHistory.Event``, so callers need no casts; any event
     that is not one of the four ``ConfigHistory`` events raises :class:`TypeError`.
     """
     seq = event.originator_version - 1
     if isinstance(event, ConfigHistory.LeafImported):
-        return HistoryRecord(seq=seq, op="import", path=event.path, old=None, new=event.new)
+        lineage = _lineage(event)
+        return HistoryRecord(seq, "import", event.path, None, event.new, lineage)
     if isinstance(event, ConfigHistory.LeafValueSet):
-        return HistoryRecord(seq=seq, op="set", path=event.path, old=event.old, new=event.new)
+        lineage = _lineage(event)
+        return HistoryRecord(seq, "set", event.path, event.old, event.new, lineage)
     if isinstance(event, ConfigHistory.LeafRemoved):
-        return HistoryRecord(seq=seq, op="remove", path=event.path, old=event.old, new=None)
+        lineage = _lineage(event)
+        return HistoryRecord(seq, "remove", event.path, event.old, None, lineage)
     if isinstance(event, ConfigHistory.HistoryStarted):
         return None
     raise TypeError(f"unknown configuration history event: {type(event).__name__}")

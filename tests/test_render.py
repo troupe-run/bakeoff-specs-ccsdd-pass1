@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from support import FIXED_LINEAGE
 from troupe.cli.render import format_history_line, format_show_output
 from troupe.config.history import HistoryOp, HistoryRecord
 from troupe.config.scalars import ScalarValue
@@ -63,7 +64,7 @@ def _strict_parse(line: bytes) -> Any:
 def _record(
     old: ScalarValue, new: ScalarValue, op: HistoryOp = "set", path: str = "a.b"
 ) -> HistoryRecord:
-    return HistoryRecord(seq=3, op=op, path=path, old=old, new=new)
+    return HistoryRecord(seq=3, op=op, path=path, old=old, new=new, lineage=FIXED_LINEAGE)
 
 
 def test_history_line_has_members_in_order_and_ends_with_one_newline() -> None:
@@ -120,7 +121,9 @@ def test_history_line_keeps_finite_float_values_exactly() -> None:
 
 
 def test_history_line_path_and_strings_round_trip_with_special_characters() -> None:
-    record = HistoryRecord(seq=1, op="import", path="café.☃", old=None, new="a\tb\x00")
+    record = HistoryRecord(
+        seq=1, op="import", path="café.☃", old=None, new="a\tb\x00", lineage=FIXED_LINEAGE
+    )
     parsed = _strict_parse(format_history_line(record))
     assert parsed["path"] == "café.☃"
     assert parsed["new"] == "a\tb\x00"

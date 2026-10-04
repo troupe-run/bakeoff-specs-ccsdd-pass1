@@ -6,10 +6,14 @@ Imported by ``conftest.py`` fixtures and directly by tests (``tests/`` is on the
 
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Final, Protocol, TypedDict
+
+from troupe.config.history import HistoryOp, HistoryRecord
+from troupe.config.lineage import Actor, ChangeContext, Lineage, cli_context
+from troupe.config.scalars import ScalarValue
 
 TheatreFiles = Mapping[str, str | bytes]
 
@@ -21,6 +25,65 @@ class CliResult:
     exit_code: int
     stdout: bytes
     stderr: str
+
+
+@dataclass(frozen=True)
+class Step1Record:
+    """The five step-1 members of a history record (``seq``, ``op``, ``path``, ``old``, ``new``).
+
+    Tests that pin step 1-3 facts compare records through :func:`step1`, because the lineage the
+    store stamps (time, change id) differs on every run (config-lineage 4.3, 5.1).
+    """
+
+    seq: int
+    op: HistoryOp
+    path: str
+    old: ScalarValue
+    new: ScalarValue
+
+
+def step1(records: Iterable[HistoryRecord]) -> tuple[Step1Record, ...]:
+    """Project history records onto their five step-1 members, in order."""
+    return tuple(
+        Step1Record(seq=record.seq, op=record.op, path=record.path, old=record.old, new=record.new)
+        for record in records
+    )
+
+
+class LineageFields(TypedDict):
+    """The flat lineage keyword arguments of the history aggregate's command methods."""
+
+    actor_kind: str
+    actor_id: str | None
+    via: str
+    at: str
+    reason: str | None
+    change: str
+
+
+FIXED_LINEAGE: Final = Lineage(
+    actor=Actor(kind="human", id="alice"),
+    via="cli",
+    at="2026-10-04T09:05:07.123456Z",
+    reason="a fixed reason",
+    change="fixed-change",
+)
+"""A fixed lineage for tests that build events or records by hand."""
+
+CLI_CONTEXT: Final[ChangeContext] = cli_context(FIXED_LINEAGE.actor, None)
+"""A cli context for tests that record batches the way ``set`` does."""
+
+
+def lineage_fields(lineage: Lineage = FIXED_LINEAGE) -> LineageFields:
+    """The flat event fields of ``lineage`` (what the store passes to every event of a batch)."""
+    return LineageFields(
+        actor_kind=lineage.actor.kind,
+        actor_id=lineage.actor.id,
+        via=lineage.via,
+        at=lineage.at,
+        reason=lineage.reason,
+        change=lineage.change,
+    )
 
 
 class MakeTheatre(Protocol):

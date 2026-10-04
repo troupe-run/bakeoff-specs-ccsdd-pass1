@@ -6,9 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from support import MakeTheatre
+from support import CLI_CONTEXT, MakeTheatre
 from troupe.config.constants import CONFIG_DIR_NAME
 from troupe.config.history import LeafChange, RemoveChange, SetChange
+from troupe.config.lineage import IMPORT_CONTEXT
 from troupe.config.loader import load_config
 from troupe.config.locate import find_config_file
 from troupe.config.paths import ConfigPath
@@ -33,7 +34,9 @@ def store(make_theatre: MakeTheatre) -> Iterator[HistoryStore]:
     theatre: Path = make_theatre(CONFIG)
     opened = HistoryStore.open(theatre / CONFIG_DIR_NAME)
     try:
-        opened.ensure_imported(flatten_leaves(load_config(find_config_file(theatre)).root))
+        opened.ensure_imported(
+            flatten_leaves(load_config(find_config_file(theatre)).root), IMPORT_CONTEXT
+        )
         yield opened
     finally:
         opened.close()
@@ -48,7 +51,7 @@ def _remove(path: str, old: ScalarValue) -> RemoveChange:
 
 
 def _record(store: HistoryStore, *changes: LeafChange) -> tuple[RecordedLeaf, ...]:
-    store.record_changes(changes)
+    store.record_changes(changes, CLI_CONTEXT)
     return recorded_leaves(store.records())
 
 

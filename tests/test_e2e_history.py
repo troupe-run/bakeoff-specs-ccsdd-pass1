@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from support import CliResult, MakeTheatre, RunCli
+from support import CLI_CONTEXT, CliResult, MakeTheatre, RunCli
 from troupe.config.constants import CONFIG_DIR_NAME, HISTORY_STORE_NAME
 from troupe.config.history import LeafChange, RemoveChange, SetChange
 from troupe.config.paths import ConfigPath
@@ -66,7 +66,7 @@ def _record(theatre: Path, changes: tuple[LeafChange, ...]) -> None:
     """Append ``changes`` through the recording API the set command uses."""
     store = HistoryStore.open(theatre / CONFIG_DIR_NAME)
     try:
-        store.record_changes(changes)
+        store.record_changes(changes, CLI_CONTEXT)
     finally:
         store.close()
 
