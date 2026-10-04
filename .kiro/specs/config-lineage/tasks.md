@@ -51,7 +51,7 @@ complete. No new runtime dependency is added.
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5_
 
 - [ ] 3. Validation through the real CLI and spec alignment
-- [ ] 3.1 (P) Validate the lineage of each origin, change grouping and time end to end
+- [x] 3.1 (P) Validate the lineage of each origin, change grouping and time end to end
   - First `history` gives import events with unknown actor, `via` import, null reason and one change; a hand edit then `get`/`show` gives file events with unknown actor even with `TROUPE_ACTOR` set; a `set` of a mapping changing several leaves gives one cli change with the declared actor; a hand edit then `set` gives two changes (file, then cli); successive commands never share a change; `watch` rounds are separate file changes
   - Each line's members appear in the order `seq`, `op`, `path`, `old`, `new`, `actor`, `via`, `at`, `reason`, `change`, with `actor` holding exactly `kind` and `id`
   - `at` lies between instants taken before and after the command, is identical within a change, and is UTC with `TZ` set to a non-UTC zone; reprinting `history` gives identical lines in a new process; `history PATH` lines equal their unfiltered lines; no extra file remains
