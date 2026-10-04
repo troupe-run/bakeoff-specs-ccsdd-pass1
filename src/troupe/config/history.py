@@ -17,17 +17,47 @@ Since step 4 every history event also stores its lineage as flat fields (``actor
 recorded batch once and passes the same fields to every event of the batch. A record carries them
 back as a :class:`~troupe.config.lineage.Lineage`; an unknown stored actor kind or via is a
 ``ValueError``, which the store reports as an unreadable store.
+
+The three lineage-carrying events have schema version 2 (``class_version``). Events stored before
+step 4 (version 1, no lineage fields) are upcast on read by ``upcast_v1_v2`` with a legacy lineage
+(config-lineage 7.3, research Decisions 4 and 5): actor unknown, reason null, ``at`` from the time
+the event was stored, via ``import`` with the one change ``legacy-import`` for imports, and via
+``cli`` with its own change ``legacy-<seq>`` for every set and remove. Nothing is rewritten in
+place, and the legacy lineage is deterministic, so every read gives the same records (7.2).
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final, Literal, TypeAlias, get_args
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from eventsourcing.domain import Aggregate, DomainEventProtocol, event
 
-from troupe.config.lineage import Actor, ActorKind, Lineage, Via
+from troupe.config.lineage import UNKNOWN_ACTOR, Actor, ActorKind, Lineage, Via, format_utc
 from troupe.config.paths import ConfigPath
 from troupe.config.scalars import ScalarValue
+
+LEGACY_IMPORT_CHANGE: Final = "legacy-import"
+"""The change id shared by all import events stored before step 4 (a theatre has one import)."""
+
+
+def _upcast_legacy_lineage(state: dict[str, object], *, imported: bool) -> None:
+    """Add the legacy lineage fields to the decoded ``state`` of a pre-step-4 event (7.3).
+
+    eventsourcing runs upcasters on the decoded state, after it set ``originator_version``, so
+    ``timestamp`` is an aware ``datetime`` and ``originator_version`` an ``int``.
+    """
+    timestamp = state.get("timestamp")
+    version = state.get("originator_version")
+    if not isinstance(timestamp, datetime) or not isinstance(version, int):
+        raise ValueError("a stored history event has no valid timestamp or version")
+    state["actor_kind"] = UNKNOWN_ACTOR.kind
+    state["actor_id"] = UNKNOWN_ACTOR.id
+    state["via"] = "import" if imported else "cli"
+    state["at"] = format_utc(timestamp)
+    state["reason"] = None
+    state["change"] = LEGACY_IMPORT_CHANGE if imported else f"legacy-{version - 1}"
+
 
 HISTORY_AGGREGATE_ID: Final[UUID] = uuid5(NAMESPACE_URL, "troupe:config-history")
 """The fixed identity of the one history aggregate in every theatre's store."""
@@ -58,6 +88,13 @@ class ConfigHistory(Aggregate):
         reason: str | None
         change: str
 
+        class_version = 2
+
+        @staticmethod
+        def upcast_v1_v2(state: dict[str, object]) -> None:
+            """Give an event stored before step 4 its legacy lineage (7.3)."""
+            _upcast_legacy_lineage(state, imported=True)
+
     class LeafValueSet(Aggregate.Event):
         """A leaf changed or created by ``set`` or reconcile: op ``set``, ``old`` null if new."""
 
@@ -72,6 +109,13 @@ class ConfigHistory(Aggregate):
         reason: str | None
         change: str
 
+        class_version = 2
+
+        @staticmethod
+        def upcast_v1_v2(state: dict[str, object]) -> None:
+            """Give an event stored before step 4 its legacy lineage (7.3)."""
+            _upcast_legacy_lineage(state, imported=False)
+
     class LeafRemoved(Aggregate.Event):
         """A leaf gone after ``set`` or found gone by reconcile: op ``remove``, ``new`` null."""
 
@@ -84,6 +128,13 @@ class ConfigHistory(Aggregate):
         at: str
         reason: str | None
         change: str
+
+        class_version = 2
+
+        @staticmethod
+        def upcast_v1_v2(state: dict[str, object]) -> None:
+            """Give an event stored before step 4 its legacy lineage (7.3)."""
+            _upcast_legacy_lineage(state, imported=False)
 
     @event(HistoryStarted)
     def __init__(self) -> None:

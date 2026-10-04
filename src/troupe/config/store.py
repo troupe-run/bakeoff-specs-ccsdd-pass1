@@ -178,7 +178,11 @@ class HistoryStore:
         self._run("cannot record changes in the history store", record)
 
     def records(self) -> tuple[HistoryRecord, ...]:
-        """Return the history records, oldest first."""
+        """Return the history records, oldest first.
+
+        Events stored before step 4 are read with their legacy lineage (upcast in
+        ``troupe.config.history``; config-lineage 7.3); the stored rows are never rewritten.
+        """
 
         def project(app: _HistoryApplication) -> tuple[HistoryRecord, ...]:
             projected = (to_history_record(event) for event in app.events.get(HISTORY_AGGREGATE_ID))

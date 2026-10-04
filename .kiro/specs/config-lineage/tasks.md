@@ -34,7 +34,7 @@ complete. No new runtime dependency is added.
   - Done when store tests prove one lineage per import and per batch, distinct change ids and one time per batch, nothing recorded for an empty batch, and lineage identical after close and reopen; and theatre/reconcile/setter tests prove the import, file and cli contexts reach the store
   - _Requirements: 3.1, 3.2, 3.3, 4.1, 4.2, 4.4, 5.2, 7.1, 7.4_
 
-- [ ] 2.2 Read histories recorded before step 4
+- [x] 2.2 Read histories recorded before step 4
   - The three history events get schema version 2, and events stored without lineage are upcast on read: unknown actor, null reason, `at` from the stored event time, `via` import for imports and cli otherwise, one shared change id for the imports and a separate deterministic one per other event
   - Done when a store test rewrites a real store's rows to the pre-step-4 shape (lineage fields and schema version removed from the stored state), reads it with the legacy lineage twice with identical results, and records new events with full lineage after it
   - _Requirements: 7.2, 7.3_
