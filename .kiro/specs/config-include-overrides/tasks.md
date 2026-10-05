@@ -86,7 +86,7 @@ config-lineage are complete. No new runtime dependency is added.
   - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5_
 
 - [ ] 4. Integration and validation
-- [ ] 4.1 Validate new keys below includes end to end
+- [x] 4.1 Validate new keys below includes end to end
   - E2E (byte-exact, every other file unchanged, history checked): the contract example with exactly one `set` event; a second new key after the first override; missing intermediate keys; a key below an included nested mapping; nested includes writing in the middle file; a bare `$ref` mapping gaining an override; a flow include; a `troupe.yaml` theatre.
   - Done when these e2e tests pass through the real CLI and each fails if the override is written into the included file
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 5.1, 5.2, 5.3, 5.4, 5.5, 9.1, 9.3_
