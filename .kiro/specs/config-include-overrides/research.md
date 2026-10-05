@@ -136,6 +136,19 @@ Recorded in requirements.md (Boundary Context, choices 1–11). The ones with de
 - **Rationale**: this follows the conservative default and the existing 14.9 refusals. Such layouts are rare, and
   guessing could misplace the comment or the key line.
 
+### Product owner review (2026-10-05)
+All six decisions presented (requirements.md Boundary Context choices 1, 2, 5, 7, 8, 9 and 11) are approved.
+- **Contract meaning, confirmed**:
+  - Decision 6 / choice 11: the comment position in the conversion follows the Overrides example literally. The
+    `set` end-of-line comment rule (config-set-writeback 11.5, 12.x) still applies to every other change.
+  - Choice 5: nested includes write in the file holding the reference to the include that the deepest existing
+    ancestor's content comes from, even when that file is itself included.
+  - Choice 9: removals during a collection replacement follow CR-A and the last Overrides bullet.
+- **Out of contract, our choice, accepted**:
+  - Choices 1 and 2: exit 4.
+  - Choices 7 and 8: exit 3, consistent with rule 4 under `set`.
+- **Status**: confirmed; revisit only if the contract changes.
+
 ## Synthesis Outcomes
 - **Generalization**: one placement walk serves both `AddKeyTarget` (4.x, 6.x) and the new keys of collection
   replacements (7.3). One physical-entry lookup serves replacement (7.1, 7.2), merge and deletion (7.4).

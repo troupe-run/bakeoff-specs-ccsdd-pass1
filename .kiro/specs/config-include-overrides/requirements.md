@@ -249,6 +249,18 @@ Terms used below:
       config-set-writeback 11.5 (comment kept at its previous column), which still applies to every other
       scalar → collection replacement (5.2).
 
+- **Product owner review (2026-10-05)**: all of the choices above are approved.
+  - *Confirmed as the contract's meaning*:
+    - choice 11 (the conversion follows the Overrides example literally; the `set` end-of-line comment rule
+      still applies to every other change);
+    - choice 5 (the including file is the file holding the reference to the include that the deepest existing
+      ancestor's content comes from, even when that file is itself included);
+    - choice 9 (removals follow CR-A's "existing settings still change where they live" and the last Overrides
+      bullet).
+  - *Out of contract, our choice, accepted*:
+    - choices 1 and 2 (exit 4);
+    - choices 7 and 8 (exit 3, consistent with rule 4 under `set`).
+
 ## Requirements
 
 ### Requirement 1: Mapping-form includes
