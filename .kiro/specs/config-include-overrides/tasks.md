@@ -19,7 +19,7 @@ config-lineage are complete. No new runtime dependency is added.
   - _Boundary: Model, Constants, Overrides_
   - _Requirements: 1.2, 1.3, 1.5, 7.1, 7.2_
 
-- [ ] 2. Core: loading mapping-form includes
+- [x] 2. Core: loading mapping-form includes
 - [x] 2.1 Load mapping-form includes wherever a value may be written
   - A mapping with a `$ref` key whose value is an include string becomes an include of that target, relative to the file holding it. With overrides, its value is the deep merge. Bare, it is exactly the scalar-form include (YAML or text).
   - Works in the root file and in included files, at the document root, as a list item, in block and flow style, inside overrides and inside included content. An override value that is itself an include is resolved before merging. Missing targets, cycles and unloadable targets fail as for scalar-form includes, and the targets are listed among the files read.
@@ -31,7 +31,7 @@ config-lineage are complete. No new runtime dependency is added.
   - Done when loader unit tests assert each message, and an e2e test runs `get` on each case and gets exit 4, empty stdout, the message, and no history store created
   - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-- [ ] 2.3 Validate that every command reads the merged configuration
+- [x] 2.3 Validate that every command reads the merged configuration
   - `get` and `show` print merged values. `show --sources` names the including file for overridden scalars and the included file for the others. Import and reconcile record the merged leaves: a hand-added override is recorded as `set` events of the leaves it changes, and rewriting an include between scalar and bare mapping form records nothing. `watch` follows `$ref` targets. A `$ref` segment in a `get`/`show` PATH is not found.
   - Done when e2e tests through the real CLI prove each of these, including a `watch` that reconciles an edit to a `$ref` target file
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 8.3_
