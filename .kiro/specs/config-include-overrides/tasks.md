@@ -26,7 +26,7 @@ config-lineage are complete. No new runtime dependency is added.
   - Done when loader unit tests show these cases loading to the expected values (and the same plain form as the scalar form for a bare include), with no `$ref` key anywhere in the loaded value
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8_
 
-- [ ] 2.2 Refuse mapping-form includes that cannot mean anything
+- [x] 2.2 Refuse mapping-form includes that cannot mean anything
   - A non-YAML target with overrides, a `$ref` whose value is not an include string, and overrides on a YAML target whose content is not a mapping (including an empty file) are load errors (exit 4). Each message names the file, the key path and, where there is one, the target, and states the problem.
   - Done when loader unit tests assert each message, and an e2e test runs `get` on each case and gets exit 4, empty stdout, the message, and no history store created
   - _Requirements: 2.1, 2.2, 2.3, 2.4_

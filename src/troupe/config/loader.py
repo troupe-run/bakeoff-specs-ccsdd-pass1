@@ -382,8 +382,12 @@ class _Builder:
             embedded = _Builder(target, self._loader, (*self._chain, target)).build(composed, path)
         if form is not None and has_overrides:
             if not isinstance(embedded, ConfigMapping):
+                if embedded is None:
+                    kind = "nothing (the file is empty)"
+                else:
+                    kind = "a list" if isinstance(embedded, ConfigSequence) else "a scalar"
                 raise ConfigLoadError(
-                    f"overrides need an included mapping; {target_path} does not hold a mapping",
+                    f"overrides need a mapping; the included file {target_path} holds {kind}",
                     file=self._source.path,
                     path=_text(path),
                 )

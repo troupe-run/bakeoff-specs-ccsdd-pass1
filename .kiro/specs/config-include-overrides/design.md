@@ -258,8 +258,8 @@ def written_parts(node: ConfigNode) -> tuple[ConfigNode, ...]
   - Text target: with overrides → `ConfigLoadError` naming the including file, the path and the target, "overrides
     apply only to YAML includes" (2.1). Otherwise a text include scalar with `include.form`.
   - YAML target: cycle check and read as for scalar form (1.8). For an empty target or non-mapping content with
-    overrides → `ConfigLoadError` naming the including file, the path and the included file, "overrides need an
-    included mapping" (2.3). With overrides: `deep_merge(content, form, include=ref)`. Bare:
+    overrides → `ConfigLoadError` naming the including file, the path and the included file, "overrides need a
+    mapping; the included file … holds a list | a scalar | nothing" (2.3). With overrides: `deep_merge(content, form, include=ref)`. Bare:
     `replace(content, include=ref)`.
 - `load_config` accepts a merged or bare mapping-form root (the root's value must still be a mapping).
 

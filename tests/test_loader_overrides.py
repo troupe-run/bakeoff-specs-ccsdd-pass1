@@ -491,6 +491,139 @@ def test_unloadable_ref_target_names_the_target(make_theatre: MakeTheatre) -> No
     assert info.value.file == theatre / ".troupe" / "bad.yml"
 
 
+# --- refusals (2.1, 2.2, 2.3) -----------------------------------------------------------------
+
+
+def _refusal(config_file: Path) -> ConfigLoadError:
+    with pytest.raises(ConfigLoadError) as info:
+        load_config(config_file)
+    assert info.value.exit_code is ExitCode.LOAD
+    return info.value
+
+
+@pytest.mark.parametrize(
+    ("config", "path"),
+    [
+        ("agents:\n  coder:\n    $ref: file:notes.md\n    k: 1\n", "agents.coder"),
+        ("agents:\n  coder: {$ref: file:notes.md, k: {x: 1}}\n", "agents.coder"),
+        ("items:\n  - $ref: file:notes.md\n    k: 1\n", "items.0"),
+        ("$ref: file:notes.md\nk: 1\n", None),
+    ],
+)
+def test_text_target_with_overrides_names_file_path_and_target(
+    make_theatre: MakeTheatre, config: str, path: str | None
+) -> None:
+    """Req 2.1: overrides on a non-YAML target name the including file, path and target."""
+    theatre = make_theatre(config, files={".troupe/notes.md": "notes\n"})
+    error = _refusal(_config(theatre))
+    assert error.file == _config(theatre)
+    assert error.path == path
+    assert str(theatre / ".troupe" / "notes.md") in error.problem
+    assert "overrides apply only to YAML includes" in error.problem
+
+
+def test_text_target_refusal_in_an_included_file_names_that_file(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 2.1: a refused `$ref` mapping inside an included file names the included file."""
+    theatre = make_theatre(
+        "agents: file:sub/agents.yml\n",
+        files={
+            ".troupe/sub/agents.yml": "coder:\n  $ref: file:prompt.txt\n  k: 1\n",
+            ".troupe/sub/prompt.txt": "p\n",
+        },
+    )
+    error = _refusal(_config(theatre))
+    assert error.file == theatre / ".troupe" / "sub" / "agents.yml"
+    assert error.path == "agents.coder"
+    assert str(theatre / ".troupe" / "sub" / "prompt.txt") in error.problem
+    assert "overrides apply only to YAML includes" in error.problem
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "coder.yaml",
+        "'coder.yaml'",
+        "FILE:coder.yaml",
+        " ' file:coder.yaml'",
+        "1",
+        "true",
+        "null",
+        "''",
+        "[file:coder.yaml]",
+        "{a: file:coder.yaml}",
+        "\n      - file:coder.yaml",
+    ],
+)
+def test_ref_value_that_is_not_an_include_string_names_file_and_path(
+    make_theatre: MakeTheatre, value: str
+) -> None:
+    """Req 2.2: a `$ref` value that is not a `file:` string names the file and mapping path."""
+    theatre = make_theatre(
+        f"agents:\n  coder:\n    $ref: {value}\n    k: 1\n",
+        files={".troupe/coder.yaml": CODER},
+    )
+    error = _refusal(_config(theatre))
+    assert error.file == _config(theatre)
+    assert error.path == "agents.coder"
+    assert "`$ref` must be an include string" in error.problem
+
+
+@pytest.mark.parametrize(
+    ("config", "path"),
+    [
+        ("coder: {$ref: 7}\n", "coder"),
+        ("'$ref': [a]\n", None),
+        ('items:\n  - {"$ref": null, k: 1}\n', "items.0"),
+    ],
+)
+def test_ref_refusal_is_reported_for_bare_flow_root_and_list_item_mappings(
+    make_theatre: MakeTheatre, config: str, path: str | None
+) -> None:
+    """Req 2.2: bare, flow, quoted-key, root and list item `$ref` mappings are all refused."""
+    theatre = make_theatre(config)
+    error = _refusal(_config(theatre))
+    assert (error.file, error.path) == (_config(theatre), path)
+    assert "`$ref` must be an include string" in error.problem
+
+
+@pytest.mark.parametrize(
+    ("content", "kind"),
+    [
+        ("- a\n- b\n", "a list"),
+        ("plain text\n", "a scalar"),
+        ("42\n", "a scalar"),
+        ("", "nothing (the file is empty)"),
+        ("# only a comment\n", "nothing (the file is empty)"),
+    ],
+)
+def test_overrides_on_non_mapping_yaml_content_name_file_path_and_included_file(
+    make_theatre: MakeTheatre, content: str, kind: str
+) -> None:
+    """Req 2.3: overrides on a list, scalar or empty YAML target are refused with the reason."""
+    theatre = make_theatre(
+        "agents:\n  coder:\n    $ref: file:coder.yml\n    k: 1\n",
+        files={".troupe/coder.yml": content},
+    )
+    error = _refusal(_config(theatre))
+    assert error.file == _config(theatre)
+    assert error.path == "agents.coder"
+    assert "overrides need a mapping" in error.problem
+    assert f"{theatre / '.troupe' / 'coder.yml'} holds {kind}" in error.problem
+
+
+def test_bare_ref_to_non_mapping_yaml_content_is_not_refused(make_theatre: MakeTheatre) -> None:
+    """Req 2.3: only overrides need a mapping; a bare `$ref` to a list or empty file loads."""
+    theatre = make_theatre(
+        "a: {$ref: file:list.yml}\nb: {$ref: file:empty.yml}\n",
+        files={".troupe/list.yml": "- x\n", ".troupe/empty.yml": ""},
+    )
+    document = load_config(_config(theatre))
+    assert _scalar_at(document, "a", 0).value == "x"
+    assert _scalar_at(document, "b").value is None
+
+
 def test_loading_mapping_form_includes_changes_no_file(make_theatre: MakeTheatre) -> None:
     """Req 1.8: loading `$ref` mappings creates, changes and deletes nothing."""
     theatre = make_theatre(
