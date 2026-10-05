@@ -147,16 +147,26 @@ sequenceDiagram
 ```
 
 ### Placement walk (Decision 2 of research.md)
-Given the merged node chain `root … A` (A = the deepest existing mapping) and the keys to add below A:
-1. For X = A, then each ancestor upward:
-   - X is a merged mapping (`layers`) → **place inside `X.layers.over`** with the relative keys from X to A
-     prepended. Descend through the override layer while those keys exist there as mappings, then rerun this walk
-     on that sub-chain, stopping at its top: if the top is reached, the result is the deepest written mapping
-     there.
-   - X is a YAML include root with `include.form` (bare mapping form) → mapping `include.form`, prefix = keys X→A.
-   - X is a YAML include root in scalar form → convert X, prefix = keys X→A.
-   - X is a list item (its parent in the chain is a sequence) → mapping A, prefix `()` (step 1 rule).
-2. Reaching the root without stopping → mapping A, prefix `()`.
+The walk follows the layers that actually hold A's content (A = the deepest existing mapping), so the key goes into
+the file holding the reference to the include that A's content comes from, even when that file is itself included
+(choice 5, PO-confirmed):
+1. **Holder chain.** From the root along PATH's existing keys, append each node; a node standing for YAML includes
+   is appended once per include, outermost first (`include`, then its chained `inner`s). At a merged mapping N
+   (`layers`), continue with the side holding A's content: `N.layers.over` when it holds every remaining key down
+   to A (A written in an override, including A merged itself, 4.3), else `N.layers.base` (whose own include, if
+   any, has its directive at its file's root); a side may itself be merged and gets the same choice. Children are
+   then taken from that side.
+2. **Walk up** the chain from its end (innermost first) and stop at the first element that is:
+   - a YAML include root with `include.form` (bare or with overrides) → its `$ref` mapping, prefix = keys from the
+     element to A; the `$ref` mapping is descended through the prefix keys it already holds as mappings and the
+     walk is rerun on that sub-chain, never above it (an existing override mapping takes the keys, 4.3, 4.4);
+   - a YAML include root in scalar form → convert it, same prefix; this includes an include string that is a
+     file's whole root (a root file `file:x.yaml`, or a.yaml = `file:b.yaml`), converted to `$ref: <string>`
+     followed by the entries at the string's column;
+   - an override side (reached as `over`) → the written mapping holding A's content (the chain's last node),
+     prefix `()` (4.3);
+   - a list item (its parent is a sequence) → the same, prefix `()` (step 1 rule, 6.2).
+3. Reaching the top of the chain → the same, prefix `()`.
 
 The result mapping is always a **written** mapping: none of its entries comes from another layer.
 
@@ -211,6 +221,9 @@ class IncludeRef:
     form: "ConfigMapping | None" = None
     """Mapping form: the `$ref` mapping as written in the including file (its entries: `$ref` with the raw
     include string scalar, then the overrides as loaded). None for the scalar form."""
+    inner: "IncludeRef | None" = None
+    """Without overrides: the include written as the target file's own root (a chained include), else None.
+    With overrides the inner include stays on `layers.base.include`."""
 
 @dataclass(frozen=True)
 class MergeLayers:
@@ -315,7 +328,11 @@ def resolve_target(document: ConfigDocument, path: ConfigPath, value: NewValue, 
 - `_merge_mapping` on an unmerged mapping: new keys go through `place_new_keys(at)`. When the placement is the
   mapping itself with no prefix, the existing single insertion with `deleted` styles is used.
 - `add_key` / routed additions: `placement.mapping` → `add_entries(mapping, nest(prefix, entries))`.
-  `placement.convert` → `convert_include`.
+  `placement.convert` → `convert_include` (a site with no parent is an include string that is its file's whole
+  root: `$ref: ` is inserted before it, the entries follow at its column; one not alone on one line is refused,
+  exit 3). Placements sharing a target (one written mapping, or one include site)
+  are grouped and their nested `nest(prefix, entries)` trees deep-merged by key (first-seen order) before rendering,
+  when planning ends: each written mapping gets one insertion and each include one conversion (4.4, 7.3).
 - `convert_include(site, entries)`: the written slot of the include string comes from `physical_entry` or
   `item_slot`. Then:
   - Flow parent: one INLINE edit replacing the include string with `{$ref: <raw>, <flow entries>}` (5.4).

@@ -806,3 +806,131 @@ def test_new_key_takes_no_style_from_an_entry_that_pruning_removes(tmp_path: Pat
     }
     patched = _replace(tmp_path, files, "coder.params", "{inner: {a: 1}, new: 5}")
     assert patched == {ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    new: 5\n"}
+
+
+# --- new keys sharing a placement are merged (validate-impl remediation) ------------------------
+
+SIBLINGS = "params:\n  a:\n    x: 1\n  b:\n    y: 2\n"
+"""An included file whose two sibling mappings both gain a new key in the cases below."""
+
+SIBLINGS_VALUE = "{a: {x: 1, n1: 1}, b: {y: 2, n2: 2}}"
+
+
+def test_new_keys_below_two_included_siblings_convert_the_include_once(tmp_path: Path) -> None:
+    """Req 4.4, 5.1, 7.3: new keys below two sibling mappings of a scalar-form include convert it
+    once, with one `params` override holding both (never two conversions of one include)."""
+    files = {ROOT: "coder: file:coder.yaml\n", "coder.yaml": SIBLINGS}
+    patched = _replace(tmp_path, files, "coder.params", SIBLINGS_VALUE)
+    assert patched == {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    a:\n      n1: 1\n"
+        "    b:\n      n2: 2\n"
+    }
+
+
+def test_new_keys_below_two_included_siblings_share_one_override_entry(tmp_path: Path) -> None:
+    """Req 4.3, 4.4, 4.5, 7.3: new keys below two sibling included mappings go into an existing
+    `$ref` mapping as one `params` entry holding both (never a duplicate `params` key)."""
+    files = {ROOT: "coder:\n  $ref: file:coder.yaml\n  model: z\n", "coder.yaml": SIBLINGS}
+    patched = _replace(tmp_path, files, "coder.params", SIBLINGS_VALUE)
+    assert patched == {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  model: z\n  params:\n    a:\n      n1: 1\n"
+        "    b:\n      n2: 2\n"
+    }
+
+
+def test_new_keys_below_two_included_siblings_in_a_flow_ref_mapping(tmp_path: Path) -> None:
+    """Req 4.4, 4.5, 7.3: the same in a flow `$ref` mapping: one flow `params` entry."""
+    files = {ROOT: "coder: {$ref: file:coder.yaml}\n", "coder.yaml": SIBLINGS}
+    patched = _replace(tmp_path, files, "coder.params", SIBLINGS_VALUE)
+    assert patched == {ROOT: "coder: {$ref: file:coder.yaml, params: {a: {n1: 1}, b: {n2: 2}}}\n"}
+
+
+def test_new_keys_at_and_below_an_included_mapping_share_one_override_entry(
+    tmp_path: Path,
+) -> None:
+    """Req 4.4, 7.3: a new key of `params` itself and a new key below its included `a` are merged
+    into one `params` override, in first-seen order (`a` before `c`)."""
+    files = {ROOT: "coder:\n  $ref: file:coder.yaml\n", "coder.yaml": SIBLINGS}
+    patched = _replace(tmp_path, files, "coder.params", "{a: {x: 1, n1: 1}, b: {y: 2}, c: 3}")
+    assert patched == {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    a:\n      n1: 1\n    c: 3\n"
+    }
+
+
+# --- an override on a file whose root is itself a `$ref` mapping (requirements choice 5) -------
+
+
+def test_key_from_a_chained_include_is_written_in_the_middle_file(tmp_path: Path) -> None:
+    """Req 4.2, 4.4 (choice 5): `c` overrides a.yaml, whose root is `$ref: file:b.yaml`; a key
+    below `c.sub` (from b.yaml only) goes into a.yaml's `$ref` mapping, the file holding the
+    reference to b.yaml; troupe.yml and b.yaml are unchanged."""
+    files = {
+        ROOT: "c:\n  $ref: file:a.yaml\n  x: 1\n",
+        "a.yaml": "$ref: file:b.yaml\n",
+        "b.yaml": "sub:\n  m: 1\n",
+    }
+    patched = _plan(tmp_path, files, "c.sub.n", "2")
+    assert patched == {"a.yaml": "$ref: file:b.yaml\nsub:\n  n: 2\n"}
+
+
+# --- converting an include string that is its file's whole root (choice 5, 4.1) -----------------
+
+
+@pytest.mark.parametrize(
+    ("root", "expected"),
+    [
+        ("file:base.yaml\n", "$ref: file:base.yaml\nb:\n  c: 2\n"),
+        ("file:base.yaml  # shared\n", "$ref: file:base.yaml  # shared\nb:\n  c: 2\n"),
+        (
+            '# head\n"file:base.yaml"\n# tail\n',
+            '# head\n$ref: "file:base.yaml"\nb:\n  c: 2\n# tail\n',
+        ),
+        ("file:base.yaml", "$ref: file:base.yaml\nb:\n  c: 2"),
+        ("file:base.yaml\r\n", "$ref: file:base.yaml\r\nb:\r\n  c: 2\r\n"),
+    ],
+    ids=["plain", "comment", "quoted-between-comments", "no-final-break", "crlf"],
+)
+def test_root_include_string_is_converted_to_a_root_ref_mapping(
+    tmp_path: Path, root: str, expected: str
+) -> None:
+    """Req 4.1, 5.1, 5.2, 5.5: a root file that is an include string gets `$ref: ` before the
+    string (its quoting, the whitespace before a comment and the comment kept) and the new
+    entries on the next lines at column 0, in the file's line breaks; base.yaml is unchanged."""
+    patched = _plan(tmp_path, {ROOT: root, "base.yaml": "a: 1\n"}, "b", "{c: 2}")
+    assert patched == {ROOT: expected}
+
+
+def test_middle_file_root_include_string_is_converted_once_for_two_new_keys(
+    tmp_path: Path,
+) -> None:
+    """Req 4.2, 4.4, 7.3 (choice 5): new keys below two sibling mappings coming from b.yaml,
+    included by a.yaml's root `file:b.yaml`, convert that root once with one `sub` entry."""
+    files = {
+        ROOT: "c:\n  $ref: file:a.yaml\n  x: 1\n",
+        "a.yaml": "file:b.yaml\n",
+        "b.yaml": "sub:\n  p:\n    m: 1\n  q:\n    m: 2\n",
+    }
+    patched = _replace(tmp_path, files, "c.sub", "{p: {m: 1, n: 1}, q: {m: 2, n: 2}}")
+    assert patched == {
+        "a.yaml": "$ref: file:b.yaml\nsub:\n  p:\n    n: 1\n  q:\n    n: 2\n",
+    }
+
+
+@pytest.mark.parametrize(
+    "root",
+    ["--- file:base.yaml\n", "'file:base\n  .yaml'\n"],
+    ids=["document-marker", "multi-line"],
+)
+def test_root_include_string_not_alone_on_one_line_is_refused(tmp_path: Path, root: str) -> None:
+    """Req 9.2, research.md Decision 7: a root include string sharing its line with a document
+    marker, or spread over two lines, is refused (exit 3) naming the root file and PATH."""
+    _write(tmp_path, {ROOT: root, "base.yaml": "a: 1\n", "base .yaml": "a: 1\n"})
+    document = load_config(tmp_path / ROOT)
+    config_path = ConfigPath.parse("b")
+    request = resolve_target(document, config_path, parse_value("2", config_path))
+    with pytest.raises(WriteRefusedError) as raised:
+        plan_patch(document, request)
+    assert raised.value.exit_code is ExitCode.WRITE_REFUSED
+    assert raised.value.file == tmp_path / ROOT
+    assert raised.value.path == "b"
+    assert "is not alone on its line" in raised.value.problem

@@ -6,7 +6,8 @@
   are the planner's);
 * a missing key below an existing mapping is an :class:`AddKeyTarget` naming that mapping and the
   missing intermediate mappings (rule 2), with the :class:`KeyPlacement` of the placement walk
-  (config-include-overrides Requirements 4 and 6, research.md Decision 2);
+  over the layers holding that mapping's content (config-include-overrides Requirements 4 and 6,
+  choice 5, research.md Decision 2);
 * an index equal to a list's length as the last segment is an :class:`AppendTarget` (rule 3);
 * everything else raises :class:`PathNotFoundError` (exit 5) naming PATH and the file of the
   deepest existing node, so such paths never reach :func:`splice`.
@@ -24,7 +25,6 @@ collection.
 """
 
 import dataclasses
-import itertools
 import re
 from dataclasses import dataclass
 from typing import Final, TypeAlias
@@ -37,6 +37,7 @@ from troupe.config.model import (
     ConfigScalar,
     ConfigSequence,
     IncludeKind,
+    IncludeRef,
     LineEnding,
     SourceFile,
 )
@@ -70,10 +71,24 @@ class IncludeSite:
 
     node: ConfigNode
     """The include root (the included content as loaded)."""
-    parent: ConfigMapping | ConfigSequence
-    """The (possibly merged) parent; its written entry is found through the overrides lookups."""
-    key: str | int
-    """The mapping key (``str``) or the list index (``int``) of ``node`` in ``parent``."""
+    parent: ConfigMapping | ConfigSequence | None
+    """The (possibly merged) parent; its written entry is found through the overrides lookups.
+    ``None`` when the directive is the whole root of its file (a root file, or an included file,
+    whose root is ``file:...``)."""
+    key: str | int | None
+    """The mapping key (``str``) or the list index (``int``) of ``node`` in ``parent``; ``None``
+    with no parent."""
+    include: IncludeRef | None = None
+    """The include to convert when it is not ``node.include`` (a chained include, or the include
+    kept on the included side of a merge); ``None`` for ``node.include``."""
+
+    @property
+    def ref(self) -> IncludeRef:
+        """The include to convert."""
+        ref = self.include if self.include is not None else self.node.include
+        if ref is None:  # pragma: no cover - a site is always made for an include
+            raise ValueError("not an include root")
+        return ref
 
 
 @dataclass(frozen=True)
@@ -216,7 +231,7 @@ def _target(walk: PathWalk, *, in_include: bool) -> WriteTarget:
         if in_include:
             placement = _included_placement(deepest)
         else:
-            placement = _place(_chain(walk.nodes, path.segments[: walk.consumed]))
+            placement = _place(document_root(walk), path.segments[: walk.consumed])
         return AddKeyTarget(mapping=deepest, missing=remaining, placement=placement)
     if walk.stop is WalkStop.INDEX_OUT_OF_RANGE and isinstance(deepest, ConfigSequence):
         index = int(segment)
@@ -245,12 +260,20 @@ def _target(walk: PathWalk, *, in_include: bool) -> WriteTarget:
 
 
 @dataclass(frozen=True)
-class _Link:
-    """One node of a placement chain, with how it is reached from the node before it."""
+class _Holder:
+    """One element of a holder chain (design.md "Placement walk"): a node on the way to the layer
+    that holds A's content, or one of the YAML includes such a node stands for."""
 
     node: ConfigNode
-    parent: ConfigMapping | ConfigSequence | None  # None for the top of the chain
+    include: IncludeRef | None
+    """The YAML include this element stands for (``node.include`` or a chained ``inner``)."""
+    parent: ConfigMapping | ConfigSequence | None
+    """Where the node's directive is looked up; ``None`` when it is its file's root."""
     key: str | int | None
+    over: bool
+    """Whether the node is reached as the override side of a merged mapping."""
+    depth: int
+    """How many keys lead to the node: ``keys[depth:]`` lead from it down to A."""
 
 
 def place_new_keys(
@@ -262,24 +285,28 @@ def place_new_keys(
     With ``in_include`` the walk is not run: the step 1 placement is used instead
     (:func:`_included_placement`, 10.1).
 
-    ``mapping_path`` must name an existing mapping A of the merged configuration. The walk goes up
-    from A and stops at the first of:
+    ``mapping_path`` must name an existing mapping A of the merged configuration. The walk follows
+    the layers that hold A's content (requirements choice 5: the file holding the reference to the
+    include that A's content comes from, even when that file is itself included):
 
-    * a merged mapping X: the walk continues in X's override side, descending the keys from X to
-      A through what it already holds as mappings and rerunning the walk on that sub-chain
-      (never above it); a sub-chain walk reaching its top places into its deepest mapping;
-    * a bare mapping-form include X: its ``$ref`` mapping, prefix the keys from X to A;
-    * a scalar-form YAML include X: X is converted where its directive is, same prefix;
-    * a list item: A itself (the step 1 rule).
+    1. the holder chain goes from the root along the keys to A; a node is listed once per YAML
+       include it stands for (a chained ``inner`` include after the outer one), and at a merged
+       mapping the chain continues with its override side when that holds every remaining key
+       (A written in an override), else with its included side;
+    2. walking that chain up from A's layer, the first element that is a YAML include root places
+       the keys in its ``$ref`` mapping (descended through the keys it already holds as
+       mappings, the walk rerun there, never above it) or converts it (scalar form, also a
+       file's whole root), prefix the keys from it to A; an override side or a list item places
+       them into the written mapping holding A's content, with no prefix (4.3, 6.2).
 
-    Reaching the root places into A itself.
+    Reaching the root places into that written mapping.
     """
     walk = walk_path(document.root, mapping_path)
     if walk.stop is not WalkStop.COMPLETE or not isinstance(walk.deepest, ConfigMapping):
         raise ValueError(f"{mapping_path} does not name an existing mapping")
     if in_include:
         return _included_placement(walk.deepest)
-    return _place(_chain(walk.nodes, mapping_path.segments))
+    return _place(document.root, mapping_path.segments)
 
 
 def _included_side(mapping: ConfigMapping) -> ConfigMapping:
@@ -374,67 +401,183 @@ def _reordered(plain: PlainValue, segments: tuple[str, ...], merged: ConfigMappi
     return {key: plain[key] for key in order}
 
 
-def _chain(nodes: tuple[ConfigNode, ...], segments: tuple[str, ...]) -> tuple[_Link, ...]:
-    """Return the links of a walked chain: ``nodes[i + 1]`` is reached by ``segments[i]``."""
-    links = [_Link(node=nodes[0], parent=None, key=None)]
-    for (parent, node), segment in zip(itertools.pairwise(nodes), segments, strict=True):
-        if isinstance(parent, ConfigScalar):  # pragma: no cover - a walk never passes a scalar
-            raise TypeError("a path walk never continues below a scalar")
-        key: str | int = int(segment) if isinstance(parent, ConfigSequence) else segment
-        links.append(_Link(node=node, parent=parent, key=key))
-    return tuple(links)
+def document_root(walk: PathWalk) -> ConfigMapping:
+    """The root mapping a path walk started at."""
+    root = walk.nodes[0]
+    if not isinstance(root, ConfigMapping):  # pragma: no cover - the root is always a mapping
+        raise TypeError("the root is a mapping")
+    return root
 
 
-def _place(chain: tuple[_Link, ...]) -> KeyPlacement:
-    """Run the placement walk up ``chain`` (top first, A last), never above its top."""
-    deepest = chain[-1].node
-    if not isinstance(deepest, ConfigMapping):  # pragma: no cover - A is always a mapping
-        raise TypeError("new keys are placed below a mapping")
-    for index in range(len(chain) - 1, -1, -1):
-        link = chain[index]
-        node = link.node
-        keys = tuple(str(later.key) for later in chain[index + 1 :])
-        if isinstance(node, ConfigMapping) and node.layers is not None:
-            held, rest = _override_chain(link, node.layers.over, keys)
-            placement = _place(held)
-            return dataclasses.replace(placement, prefix=placement.prefix + rest)
-        include = node.include
-        if include is not None and include.form is not None:
-            return KeyPlacement(mapping=include.form, convert=None, prefix=keys)
-        if include is not None and include.kind is IncludeKind.YAML and link.parent is not None:
-            site = IncludeSite(node=node, parent=link.parent, key=_key(link))
-            return KeyPlacement(mapping=None, convert=site, prefix=keys)
-        if isinstance(link.parent, ConfigSequence):
-            break
-    return KeyPlacement(mapping=deepest, convert=None, prefix=())
+def _place(root: ConfigMapping, keys: tuple[str, ...]) -> KeyPlacement:
+    """Run the placement walk for new keys below the mapping A that ``keys`` lead to from
+    ``root`` (design.md "Placement walk", research.md Decision 2)."""
+    holders: list[_Holder] = []
+    _holders(root, keys, holders, parent=None, key=None)
+    return _walk(holders, keys)
 
 
-def _override_chain(
-    link: _Link, over: ConfigMapping, keys: tuple[str, ...]
-) -> tuple[tuple[_Link, ...], tuple[str, ...]]:
-    """Return the sub-chain of ``over``, the override side of ``link``'s merged mapping, and the
-    keys it lacks.
+def _include_chain(node: ConfigNode) -> list[IncludeRef]:
+    """The YAML includes ``node`` stands for, outermost first (``include`` then its ``inner``s).
 
-    The sub-chain descends ``keys`` through what ``over`` already holds as mappings; its top is
-    reached from ``link``'s parent by ``link``'s key (so an override written as a scalar-form
-    include is converted at its entry). The keys after the deepest mapping held are returned as
-    the rest, to be created as intermediate mappings.
+    A nested merged mapping carries its included side's include; that include is reached through
+    the included side, so it is not listed twice.
     """
-    links = [_Link(node=over, parent=link.parent, key=link.key)]
-    current = over
-    for key in keys:
-        entry = current.get(key)
-        if entry is None or not isinstance(entry.value, ConfigMapping):
+    ref = node.include
+    if (
+        isinstance(node, ConfigMapping)
+        and node.layers is not None
+        and ref is node.layers.base.include
+    ):
+        ref = None
+    refs: list[IncludeRef] = []
+    while ref is not None:
+        if ref.kind is IncludeKind.YAML:
+            refs.append(ref)
+        ref = ref.inner
+    return refs
+
+
+def _holders(
+    node: ConfigNode,
+    keys: tuple[str, ...],
+    out: list[_Holder],
+    *,
+    parent: ConfigMapping | ConfigSequence | None,
+    key: str | int | None,
+    over: bool = False,
+    depth: int = 0,
+    lookup: ConfigMapping | None = None,
+    partial: bool = False,
+) -> int:
+    """Append to ``out`` the holder chain from ``node`` along ``keys[depth:]``; return how many
+    keys it consumed.
+
+    Each node is appended once per YAML include it stands for (outermost first), or once. A merged
+    mapping continues with the side holding A's content: its override side when that holds every
+    remaining key (A written in the override, 4.3), else its included side, whose own include (if
+    any) has its directive at its file's root. Below the override side the directive of a child is
+    looked up through the merged mapping (``lookup``). With ``partial`` the descent stops at the
+    first key missing or not leading to a mapping (an override side descended as far as it holds
+    the keys); without it every key exists.
+    """
+    refs = _include_chain(node)
+    if refs:
+        for index, ref in enumerate(refs):
+            first = index == 0
+            out.append(
+                _Holder(
+                    node=node,
+                    include=ref,
+                    parent=parent if first else None,
+                    key=key if first else None,
+                    over=over and first,
+                    depth=depth,
+                )
+            )
+    else:
+        out.append(_Holder(node=node, include=None, parent=parent, key=key, over=over, depth=depth))
+    rest = keys[depth:]
+    if isinstance(node, ConfigMapping) and node.layers is not None:
+        layers = node.layers
+        if _holds(layers.over, rest):
+            return _holders(
+                layers.over,
+                keys,
+                out,
+                parent=parent,
+                key=key,
+                over=True,
+                depth=depth,
+                lookup=node,
+                partial=partial,
+            )
+        return _holders(layers.base, keys, out, parent=None, key=None, depth=depth, partial=partial)
+    if not rest:
+        return depth
+    segment = rest[0]
+    child: ConfigNode
+    child_key: str | int
+    if isinstance(node, ConfigMapping):
+        entry = node.get(segment)
+        if entry is None or (partial and not isinstance(entry.value, ConfigMapping)):
+            if partial:
+                return depth
+            raise ValueError(f"no key {segment!r} on the way to A")  # pragma: no cover
+        child, child_key = entry.value, segment
+    elif isinstance(node, ConfigSequence) and not partial:
+        child, child_key = node.items[int(segment)], int(segment)
+    elif partial:
+        return depth
+    else:  # pragma: no cover - a path walk never continues below a scalar
+        raise TypeError("a path walk never continues below a scalar")
+    return _holders(
+        child,
+        keys,
+        out,
+        parent=lookup if lookup is not None else node,
+        key=child_key,
+        depth=depth + 1,
+        partial=partial,
+    )
+
+
+def _holds(mapping: ConfigMapping, keys: tuple[str, ...]) -> bool:
+    """Whether ``keys`` all exist below ``mapping`` (A's content is written there)."""
+    node: ConfigNode = mapping
+    for segment in keys:
+        if isinstance(node, ConfigMapping):
+            entry = node.get(segment)
+            if entry is None:
+                return False
+            node = entry.value
+        elif isinstance(node, ConfigSequence) and is_index_segment(segment):
+            index = int(segment)
+            if index >= len(node.items):
+                return False
+            node = node.items[index]
+        else:
+            return False
+    return True
+
+
+def _walk(holders: list[_Holder], keys: tuple[str, ...]) -> KeyPlacement:
+    """Walk the holder chain up from A's layer (innermost first) and stop at the first element
+    that is a YAML include root (its ``$ref`` mapping, or a conversion, prefix the keys from it to
+    A), an override side or a list item (the written mapping holding A's content, no prefix).
+    Reaching the top of the chain also places into that mapping."""
+    last = holders[-1].node
+    if not isinstance(last, ConfigMapping):  # pragma: no cover - A is always a mapping
+        raise TypeError("new keys are placed below a mapping")
+    for holder in reversed(holders):
+        prefix = keys[holder.depth :]
+        include = holder.include
+        if include is not None:
+            if include.form is not None:
+                return _into_form(include.form, prefix)
+            site = IncludeSite(
+                node=holder.node,
+                parent=holder.parent,
+                key=holder.key,
+                include=None if include is holder.node.include else include,
+            )
+            return KeyPlacement(mapping=None, convert=site, prefix=prefix)
+        if holder.over or isinstance(holder.parent, ConfigSequence):
             break
-        links.append(_Link(node=entry.value, parent=current, key=key))
-        current = entry.value
-    return tuple(links), keys[len(links) - 1 :]
+    return KeyPlacement(mapping=last, convert=None, prefix=())
 
 
-def _key(link: _Link) -> str | int:
-    if link.key is None:  # pragma: no cover - only the top of a chain has no key
-        raise TypeError("the top of a chain has no key")
-    return link.key
+def _into_form(form: ConfigMapping, prefix: tuple[str, ...]) -> KeyPlacement:
+    """Place new keys, below the keys ``prefix``, into the ``$ref`` mapping ``form``.
+
+    The form is descended through the prefix keys it already holds as mappings and the walk is
+    rerun on that sub-chain, never above the form (4.3, 4.4: an existing override mapping takes
+    the keys instead of a duplicate); the keys it lacks stay the prefix.
+    """
+    holders: list[_Holder] = []
+    consumed = _holders(form, prefix, holders, parent=None, key=None, partial=True)
+    placement = _walk(holders, prefix[:consumed])
+    return dataclasses.replace(placement, prefix=placement.prefix + prefix[consumed:])
 
 
 def _scalar_kind(walk: PathWalk) -> str:

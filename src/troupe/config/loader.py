@@ -401,7 +401,11 @@ class _Builder:
                 origin=Origin(target, Span(0, 0)),
                 include=ref,
             )
-        return dataclasses.replace(embedded, include=ref)
+        # A target whose root is itself an include keeps that include as ``inner``, so writers can
+        # reach the file holding its reference (config-include-overrides choice 5).
+        return dataclasses.replace(
+            embedded, include=dataclasses.replace(ref, inner=embedded.include)
+        )
 
     def _refuse_cycle(self, target_path: Path) -> None:
         """Refuse a YAML include of a file already on the chain, listing the cycle (4.6)."""

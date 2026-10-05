@@ -1,10 +1,12 @@
 """Unit tests of where new keys are written and of the ``$ref`` PATH refusal (task 3.3).
 
 ``resolve_target`` gives every :class:`AddKeyTarget` a :class:`KeyPlacement` computed by the
-placement walk (design.md "Placement walk", research.md Decision 2): it goes up from the deepest
-existing mapping A and stops at the first merged mapping (into its override side), bare
-mapping-form include (into its ``$ref`` mapping), scalar-form YAML include (to convert) or list
-item (A itself); reaching the root keeps A. A set PATH with a ``$ref`` segment is refused first.
+placement walk (design.md "Placement walk", research.md Decision 2): it follows the layers that
+hold the content of the deepest existing mapping A (an override side when it holds A, else the
+included side, chained includes included) and, going up from A's layer, stops at the first YAML
+include root (into its ``$ref`` mapping, or to convert, also a file's whole root), override side or
+list item (the written mapping holding A); reaching the root keeps it. The remediation cases pin
+requirements choice 5 with chained includes. A set PATH with a ``$ref`` segment is refused first.
 
 Each case loads real files from a temporary theatre.
 
@@ -266,6 +268,151 @@ def test_nested_mapping_form_includes_choose_the_innermost_ref_mapping(tmp_path:
     assert placement.mapping is _override_side(inner)
     assert _file(tmp_path, placement.mapping) == Path("a.yaml")
     assert placement.prefix == ("deep",)
+
+
+# --- an override on a file whose root is itself a `$ref` mapping (requirements choice 5) -------
+
+CHAINED_ROOT = "c:\n  $ref: file:a.yaml\n  x: 1\n"
+CHAINED_INNER = "sub:\n  m: 1\n"
+
+
+def test_key_from_a_chained_bare_include_goes_into_the_middle_ref_mapping(tmp_path: Path) -> None:
+    """Req 4.2, 4.4 (choice 5): `c` overrides a.yaml, whose root is the bare `$ref: file:b.yaml`;
+    `c.sub` comes from b.yaml only, so `c.sub.n` goes into a.yaml's `$ref` mapping (the file
+    holding the reference to b.yaml) with `sub` as prefix, not into troupe.yml's override."""
+    document = _load(
+        tmp_path, CHAINED_ROOT, {"a.yaml": "$ref: file:b.yaml\n", "b.yaml": CHAINED_INNER}
+    )
+    c = _mapping_at(document, "c")
+    assert c.layers is not None
+    placement = _placement(document, "c.sub.n")
+    assert placement.mapping is _form(c.layers.base)
+    assert _file(tmp_path, placement.mapping) == Path("a.yaml")
+    assert placement.prefix == ("sub",)
+    assert placement.convert is None
+
+
+def test_key_from_a_chained_include_with_overrides_goes_into_the_middle_override(
+    tmp_path: Path,
+) -> None:
+    """Req 4.2, 4.3, 4.4 (choice 5): when a.yaml's root `$ref` mapping has overrides of its own,
+    the key coming from b.yaml goes into that override side in a.yaml, prefix `sub`."""
+    document = _load(
+        tmp_path,
+        CHAINED_ROOT,
+        {"a.yaml": "$ref: file:b.yaml\nk: 1\n", "b.yaml": CHAINED_INNER},
+    )
+    c = _mapping_at(document, "c")
+    assert c.layers is not None
+    placement = _placement(document, "c.sub.n")
+    assert placement.mapping is _override_side(c.layers.base)
+    assert _file(tmp_path, placement.mapping) == Path("a.yaml")
+    assert placement.prefix == ("sub",)
+
+
+def test_key_directly_below_a_chained_include_stays_in_the_outer_override(tmp_path: Path) -> None:
+    """Req 4.3: with A the merged mapping `c` itself, the key goes into troupe.yml's override."""
+    document = _load(
+        tmp_path, CHAINED_ROOT, {"a.yaml": "$ref: file:b.yaml\n", "b.yaml": CHAINED_INNER}
+    )
+    placement = _placement(document, "c.n")
+    assert placement.mapping is _override_side(_mapping_at(document, "c"))
+    assert _file(tmp_path, placement.mapping) == Path("troupe.yml")
+    assert placement.prefix == ()
+
+
+def test_key_below_a_mapping_the_outer_override_writes_stays_there(tmp_path: Path) -> None:
+    """Req 4.3: when the deepest mapping is also written in troupe.yml's override, the key goes
+    there even though a.yaml's root is a `$ref` mapping."""
+    document = _load(
+        tmp_path,
+        CHAINED_ROOT + "  sub:\n    o: 1\n",
+        {"a.yaml": "$ref: file:b.yaml\n", "b.yaml": CHAINED_INNER},
+    )
+    placement = _placement(document, "c.sub.n")
+    assert placement.mapping is _override_side(_mapping_at(document, "c.sub"))
+    assert _file(tmp_path, placement.mapping) == Path("troupe.yml")
+    assert placement.prefix == ()
+
+
+def _ref_mapping_of(tmp_path: Path, placement: KeyPlacement, file: str) -> ConfigMapping:
+    """The placement's mapping, asserted to be the `$ref` mapping written as the root of
+    ``file`` (its first entry is `$ref`, at the start of the file)."""
+    mapping = placement.mapping
+    assert mapping is not None
+    assert _file(tmp_path, mapping) == Path(file)
+    assert mapping.entries[0].key == "$ref"
+    assert mapping.origin.span.start == 0
+    return mapping
+
+
+@pytest.mark.parametrize(
+    "outer",
+    ["c:\n  $ref: file:a.yaml\n", "c: file:a.yaml\n", "c: {$ref: file:a.yaml}\n"],
+    ids=["bare-outer", "scalar-outer", "flow-bare-outer"],
+)
+def test_key_from_a_chained_include_without_outer_overrides_goes_into_the_middle_file(
+    tmp_path: Path, outer: str
+) -> None:
+    """Req 4.2, 4.4 (choice 5): whatever the form of troupe.yml's include of a.yaml (bare, scalar,
+    flow), when a.yaml's root is `$ref: file:b.yaml` and `c.sub` comes from b.yaml, `c.sub.n`
+    goes into a.yaml's `$ref` mapping with prefix `sub`; troupe.yml is not converted."""
+    document = _load(tmp_path, outer, {"a.yaml": "$ref: file:b.yaml\n", "b.yaml": CHAINED_INNER})
+    placement = _placement(document, "c.sub.n")
+    _ref_mapping_of(tmp_path, placement, "a.yaml")
+    assert placement.convert is None
+    assert placement.prefix == ("sub",)
+
+
+@pytest.mark.parametrize(
+    "outer",
+    [CHAINED_ROOT, "c:\n  $ref: file:a.yaml\n", "c: file:a.yaml\n"],
+    ids=["outer-with-overrides", "bare-outer", "scalar-outer"],
+)
+def test_key_from_a_scalar_middle_root_converts_the_middle_files_root(
+    tmp_path: Path, outer: str
+) -> None:
+    """Req 4.2, 4.4, 5.1 (choice 5): when a.yaml's whole root is the scalar `file:b.yaml`, the key
+    coming from b.yaml converts that root include in a.yaml (a root-level site, no parent),
+    prefix `sub`."""
+    document = _load(tmp_path, outer, {"a.yaml": "file:b.yaml\n", "b.yaml": CHAINED_INNER})
+    placement = _placement(document, "c.sub.n")
+    assert placement.mapping is None
+    site = placement.convert
+    assert site is not None
+    assert site.parent is None and site.key is None
+    assert site.ref.directive.file.path == tmp_path / "a.yaml"
+    assert site.ref.target.path == tmp_path / "b.yaml"
+    assert placement.prefix == ("sub",)
+
+
+def test_key_below_an_override_mapping_lacking_it_follows_the_content_into_the_middle_file(
+    tmp_path: Path,
+) -> None:
+    """Req 4.2, 4.4 (choice 5): troupe.yml overrides `c.sub` (`k: 1`) but `c.sub.deep` comes from
+    b.yaml, referenced by a.yaml's root `$ref`; `c.sub.deep.n` goes into a.yaml's `$ref`
+    mapping with prefix `sub`, `deep` (not into troupe.yml's `sub` override)."""
+    document = _load(
+        tmp_path,
+        "c:\n  $ref: file:a.yaml\n  sub:\n    k: 1\n",
+        {"a.yaml": "$ref: file:b.yaml\n", "b.yaml": "sub:\n  deep:\n    m: 1\n"},
+    )
+    placement = _placement(document, "c.sub.deep.n")
+    _ref_mapping_of(tmp_path, placement, "a.yaml")
+    assert placement.prefix == ("sub", "deep")
+
+
+def test_key_below_a_scalar_form_root_include_converts_the_root_file(tmp_path: Path) -> None:
+    """Req 4.1, 5.1: a root file that is the scalar `file:base.yaml` gets the new key as an
+    override: its root include is converted (a root-level site), base.yaml is not written."""
+    document = _load(tmp_path, "file:base.yaml\n", {"base.yaml": CODER})
+    placement = _placement(document, "extra")
+    site = placement.convert
+    assert site is not None and placement.mapping is None
+    assert site.parent is None and site.key is None
+    assert site.ref.directive.file.path == tmp_path / "troupe.yml"
+    assert placement.prefix == ()
+    assert _placement(document, "params.top_p").prefix == ("params",)
 
 
 # --- lists -------------------------------------------------------------------------------------

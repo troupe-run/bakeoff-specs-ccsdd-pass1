@@ -886,3 +886,157 @@ def test_ref_value_that_does_not_read_back_as_an_include_is_refused(
     problem = _assert_refused(theatre, result, theatre / ROOT, "agents.coder", start)
     assert str(theatre / named) in problem
     assert snapshot_tree(theatre) == before
+
+
+# ---- 4.4, 7.3: new keys sharing a placement are merged (validate-impl remediation) ----
+
+SIBLINGS_CODER = "params:\n  a:\n    x: 1\n  b:\n    y: 2\n"
+SIBLINGS_ADDED = "    params:\n      a:\n        n1: 1\n      b:\n        n2: 2\n"
+
+
+@pytest.mark.parametrize(
+    "root",
+    [
+        "agents:\n  coder: file:agents/coder.yaml\n",
+        "agents:\n  coder:\n    $ref: file:agents/coder.yaml\n    model: z\n",
+    ],
+    ids=["scalar-form", "ref-mapping"],
+)
+def test_new_keys_below_two_included_siblings_are_written_as_one_override(
+    make_theatre: MakeTheatre, root: str
+) -> None:
+    """Req 4.4, 7.3, 4.7, 5.1, 9.1, 9.3: `set agents.coder.params {a: {x: 1, n1: 1}, b: {y: 2,
+    n2: 2}}`, where `a` and `b` come from coder.yaml only, writes one `params` override holding
+    both new keys (the scalar-form include converted once, or one entry in the `$ref` mapping);
+    coder.yaml is unchanged; two `set` events in one change."""
+    theatre = make_theatre(root, files={CODER_FILE: SIBLINGS_CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    result = run_set(theatre, "agents.coder.params", "{a: {x: 1, n1: 1}, b: {y: 2, n2: 2}}")
+
+    _assert_success(result)
+    converted = "agents:\n  coder:\n    $ref: file:agents/coder.yaml\n"
+    expected = (converted if root.endswith("coder.yaml\n") else root) + SIBLINGS_ADDED
+    _assert_only_changed(theatre, before, ROOT, expected)
+    _assert_set_events(
+        theatre,
+        start,
+        [
+            ("set", "agents.coder.params.a.n1", None, 1, "cli"),
+            ("set", "agents.coder.params.b.n2", None, 2, "cli"),
+        ],
+    )
+    assert _show(theatre, "agents.coder.params") == b"a:\n  x: 1\n  n1: 1\nb:\n  y: 2\n  n2: 2\n"
+
+
+# ---- choice 5: an override on a file whose root is itself a `$ref` mapping ----
+
+CHAINED_ROOT = "c:\n  $ref: file:a.yaml\n  x: 1\n"
+CHAINED_MIDDLE_FILE = ".troupe/a.yaml"
+CHAINED_INNER_FILE = ".troupe/b.yaml"
+
+
+def test_key_from_a_chained_include_is_written_in_the_file_holding_its_reference(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 4.2, 4.4, 4.7, 9.1, 9.3 (choice 5): troupe.yml overrides a.yaml, whose root is the bare
+    `$ref: file:b.yaml`; `set c.sub.n 2`, where `c.sub` comes from b.yaml only, writes the
+    override into a.yaml (the file holding the reference to b.yaml), not into troupe.yml;
+    troupe.yml and b.yaml are unchanged; one `set` event."""
+    theatre = make_theatre(
+        CHAINED_ROOT,
+        files={CHAINED_MIDDLE_FILE: "$ref: file:b.yaml\n", CHAINED_INNER_FILE: "sub:\n  m: 1\n"},
+    )
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "c.sub.n", "2"))
+
+    _assert_only_changed(theatre, before, CHAINED_MIDDLE_FILE, "$ref: file:b.yaml\nsub:\n  n: 2\n")
+    _assert_set_events(theatre, start, [("set", "c.sub.n", None, 2, "cli")])
+    assert _show(theatre, "c") == b"sub:\n  m: 1\n  n: 2\nx: 1\n"
+
+
+CHAINED_RESULT = "$ref: file:b.yaml\nsub:\n  n: 2\n"
+
+
+@pytest.mark.parametrize(
+    ("outer", "middle"),
+    [
+        ("c:\n  $ref: file:a.yaml\n", "$ref: file:b.yaml\n"),
+        ("c: file:a.yaml\n", "$ref: file:b.yaml\n"),
+        (CHAINED_ROOT, "file:b.yaml\n"),
+        ("c:\n  $ref: file:a.yaml\n", "file:b.yaml\n"),
+        ("c: file:a.yaml\n", "file:b.yaml\n"),
+    ],
+    ids=[
+        "bare-outer",
+        "scalar-outer",
+        "scalar-middle-root",
+        "bare-outer-scalar-middle-root",
+        "scalar-outer-scalar-middle-root",
+    ],
+)
+def test_key_from_a_chained_include_is_written_in_the_middle_file_whatever_the_forms(
+    make_theatre: MakeTheatre, outer: str, middle: str
+) -> None:
+    """Req 4.2, 4.4, 4.7, 5.1, 5.5, 9.1, 9.3 (choice 5): whatever the form of troupe.yml's include
+    of a.yaml, and whether a.yaml's root is the bare `$ref: file:b.yaml` or the scalar
+    `file:b.yaml` (converted to mapping form at column 0), `set c.sub.n 2` writes the override
+    into a.yaml, which becomes `$ref: file:b.yaml` / `sub:` / `n: 2`; troupe.yml and b.yaml are
+    unchanged; one `set` event; the merged `c.sub` keeps `m` and gains `n`."""
+    theatre = make_theatre(
+        outer, files={CHAINED_MIDDLE_FILE: middle, CHAINED_INNER_FILE: "sub:\n  m: 1\n"}
+    )
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "c.sub.n", "2"))
+
+    _assert_only_changed(theatre, before, CHAINED_MIDDLE_FILE, CHAINED_RESULT)
+    _assert_set_events(theatre, start, [("set", "c.sub.n", None, 2, "cli")])
+    assert _show(theatre, "c.sub") == b"m: 1\nn: 2\n"
+
+
+def test_key_below_an_override_lacking_it_is_written_where_its_content_comes_from(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 4.2, 4.4, 4.7, 9.1, 9.3 (choice 5): troupe.yml overrides `c.sub` with `k: 1`, but
+    `c.sub.deep` comes from b.yaml, referenced by a.yaml's root `$ref`; `set c.sub.deep.n 2`
+    writes `sub:` / `deep:` / `n: 2` into a.yaml, not into troupe.yml's `sub` override."""
+    theatre = make_theatre(
+        "c:\n  $ref: file:a.yaml\n  sub:\n    k: 1\n",
+        files={
+            CHAINED_MIDDLE_FILE: "$ref: file:b.yaml\n",
+            CHAINED_INNER_FILE: "sub:\n  deep:\n    m: 1\n",
+        },
+    )
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "c.sub.deep.n", "2"))
+
+    _assert_only_changed(
+        theatre, before, CHAINED_MIDDLE_FILE, "$ref: file:b.yaml\nsub:\n  deep:\n    n: 2\n"
+    )
+    _assert_set_events(theatre, start, [("set", "c.sub.deep.n", None, 2, "cli")])
+    assert _show(theatre, "c.sub") == b"deep:\n  m: 1\n  n: 2\nk: 1\n"
+
+
+def test_key_below_a_scalar_form_root_include_converts_the_root_file(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 4.1, 4.7, 5.1, 5.5, 9.1, 9.3: a root file that is the scalar `file:base.yaml` gets the
+    new key as an override: it becomes `$ref: file:base.yaml` / `extra: 2` at column 0, and
+    base.yaml is unchanged; one `set` event."""
+    theatre = make_theatre("file:base.yaml\n", files={".troupe/base.yaml": "a: 1\n"})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "extra", "2"))
+
+    _assert_only_changed(theatre, before, ROOT, "$ref: file:base.yaml\nextra: 2\n")
+    _assert_set_events(theatre, start, [("set", "extra", None, 2, "cli")])
+    shown = run_config("show", "--theatre", str(theatre), cwd=theatre)
+    assert (shown.exit_code, shown.stdout, shown.stderr) == (0, b"a: 1\nextra: 2\n", "")

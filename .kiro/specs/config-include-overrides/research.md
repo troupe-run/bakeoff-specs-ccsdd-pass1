@@ -84,6 +84,18 @@
   include winning for nested includes (choice 5) and an already-written override winning (choice 6). Overrides
   cannot address list items, so a list item stops the walk (6.2, 6.3).
 - **Follow-up**: none.
+- **Revision (validate-impl remediation)**: the first walk (stop at the first merged mapping, into its override
+  side) did not implement choice 5 (PO-confirmed: "the file holding the reference to the include that the deepest
+  existing ancestor's content comes from, even when that file is itself included") for chained includes: with
+  a.yaml = `$ref: file:b.yaml` (or `file:b.yaml`) and `c.sub` only in b.yaml, `set c.sub.n` wrote into troupe.yml.
+  The walk now follows the layers holding A's content (design.md "Placement walk"): at a merged mapping it takes
+  the override side only when that holds A, else the included side; going up from A's layer the innermost YAML
+  include root wins (its `$ref` mapping, or a conversion, also of a file's whole root), and an override side or
+  list item places into the written mapping holding A. The loader keeps a chained include as `IncludeRef.inner`
+  so the walk can see it. A consequence under 4.1: a root file that is itself `file:x.yaml` now takes new keys as
+  overrides in the root file (`$ref: file:x.yaml` plus the entries) instead of in x.yaml.
+  **Alternatives**: keep writing into the outermost including file (refused by the PO's
+  reading of choice 5). **Revisit**: if included files must never change at all.
 
 ### Decision 3: Choices where the contract is silent
 Recorded in requirements.md (Boundary Context, choices 1–11). The ones with design weight:

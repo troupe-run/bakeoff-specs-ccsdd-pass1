@@ -32,7 +32,9 @@ file, and the ``file:`` string it replaced is ``include.directive`` (in the incl
 nested inside an included YAML file that are not themselves include roots have ``include=None`` and
 an ``origin`` in the target file. A text include is a ``ConfigScalar`` whose ``value`` is the
 target's exact text, with ``style=None``, ``origin=Origin(target, Span(0, len(target.text)))`` and
-``include.kind == IncludeKind.TEXT``.
+``include.kind == IncludeKind.TEXT``. When an included file's root is itself an include (a
+chained include such as ``c: file:a.yaml`` with a.yaml holding ``$ref: file:b.yaml``), the node
+carries the outer include, whose ``inner`` is the include written as a.yaml's root.
 
 Mapping-form includes and merged mappings
 -----------------------------------------
@@ -113,6 +115,11 @@ class IncludeRef:
     """Mapping form: the ``$ref`` mapping as written in the including file (its entries: ``$ref``
     with the raw include string scalar, then the overrides as loaded). ``None`` for the scalar
     form."""
+    inner: "IncludeRef | None" = None
+    """When the target file's root is itself an include and this include has no overrides (so the
+    node is the target root's content, not a merge), that inner include, whose directive is the
+    target file's root; ``None`` otherwise. With overrides the inner include is kept on the merged
+    mapping's included side (``layers.base.include``) instead."""
 
 
 class ScalarStyle(Enum):
@@ -156,7 +163,10 @@ class MappingEntry:
 class MergeLayers:
     """The two written sides of a merged mapping (a mapping-form include with overrides)."""
 
-    base: "ConfigMapping"  # the included side as loaded (an include root's base has include=None)
+    base: "ConfigMapping"
+    """The included side as loaded. For an include root its ``include`` is the target root's own
+    include (``None`` unless the target file's root is itself a ``$ref`` mapping), never the
+    include whose overrides are merged."""
     over: "ConfigMapping"  # the override side as loaded; for an include root, its ``$ref`` mapping
 
 

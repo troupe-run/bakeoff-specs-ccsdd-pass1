@@ -68,6 +68,7 @@ from troupe.config.model import (
     ConfigScalar,
     ConfigSequence,
     IncludeKind,
+    IncludeRef,
     MappingEntry,
     ScalarStyle,
     SourceFile,
@@ -190,6 +191,9 @@ class _Planner:
         self._receivers: set[int] = set()
         # New entries for written mappings, added once pruning is known (sibling styles).
         self._additions: dict[int, tuple[ConfigMapping, list[tuple[str, NewValue]]]] = {}
+        # Scalar-form includes to convert, keyed by the ``id`` of their ``IncludeRef``, with their
+        # new entries merged, converted once planning ends (one conversion per include).
+        self._conversions: dict[int, tuple[IncludeSite, list[tuple[str, NewValue]]]] = {}
 
     # --- entry point -----------------------------------------------------------------------------
 
@@ -241,15 +245,20 @@ class _Planner:
 
         A written mapping receives them after its last remaining entry (config-include-overrides
         4.5) when planning ends, so that its sibling styles skip the entries removed or pruned by
-        the same set; a scalar-form include is converted to mapping form holding them (5.1-5.5).
+        the same set; a scalar-form include is converted to mapping form holding them (5.1-5.5),
+        also when planning ends. The entries of every placement sharing a target (one written
+        mapping, or one include) are merged first (:func:`_merge_new`), so a mapping VALUE adding
+        keys below several included mappings gets one insertion or one conversion holding all of
+        them (4.4, 7.3).
         """
         entries = _nest(placement.prefix, entries)
         if placement.convert is not None:
-            self.convert_include(placement.convert, entries, path)
+            site = placement.convert
+            _merge_new(self._conversions.setdefault(id(site.ref), (site, []))[1], entries)
         elif placement.mapping is not None:
             mapping = placement.mapping
             self._receivers.add(id(mapping))
-            self._additions.setdefault(id(mapping), (mapping, []))[1].extend(entries)
+            _merge_new(self._additions.setdefault(id(mapping), (mapping, []))[1], entries)
         else:  # pragma: no cover - a placement always names a mapping or an include
             raise ValueError("the placement names neither a mapping nor an include")
 
@@ -398,10 +407,14 @@ class _Planner:
         entries follow on the next lines one indentation step deeper than the key (5.1), or two
         columns right of the ``-`` (5.3). A list item without a comment is compact: ``$ref:
         <string>`` replaces the include string on the ``-`` line.
+
+        A site with no parent is an include string that is its file's whole root
+        (:meth:`_convert_root`).
         """
-        include = site.node.include
-        if include is None:  # pragma: no cover - the placement walk only converts include roots
-            raise ValueError("not an include root")
+        include = site.ref
+        if site.parent is None:
+            self._convert_root(include, entries, path)
+            return
         file = include.directive.file
         layout = self._guard(file, path, lambda: self._layout(file))
         slot = self._guard(file, path, lambda: self._include_slot(layout, site, path))
@@ -448,6 +461,49 @@ class _Planner:
         )
         self._add(layout, edits)
 
+    def _convert_root(
+        self, include: IncludeRef, entries: Sequence[tuple[str, NewValue]], path: ConfigPath
+    ) -> None:
+        """Convert an include string that is its file's whole root to a root ``$ref`` mapping.
+
+        ``$ref: `` is inserted before the include string on its line, so the string, the
+        whitespace before an end-of-line comment and the comment keep their bytes (the comment is
+        not re-aligned, as in 5.2), and the entries follow on the next lines at the string's
+        column (0 when the string starts its line), as for a compact list item (5.1, 5.3). An
+        include string that
+        does not stay on one line or shares its line with anything before it (``--- file:...``)
+        is refused (exit 3, research.md Decision 7).
+        """
+        file = include.directive.file
+        layout = self._guard(file, path, lambda: self._layout(file))
+        span = include.directive.span
+        raw = file.text[span.start : span.end]
+        line = layout.line_of(span.start)
+        start = layout.line_start(line)
+        if layout.line_of(span.end) != line or file.text[start : span.start].strip(" "):
+            _refuse(
+                path,
+                file,
+                f"this layout cannot be written: the include string {raw} is not alone on its "
+                "line as the file's root",
+            )
+        siblings = SiblingStyles(key=ScalarStyle.PLAIN, value=_raw_style(raw))
+        ctx = self._context(layout, self._following_start(layout, span.end), path)
+        column = span.start - start
+        following = self._render(
+            lambda: render_ref_form_lines(raw, entries, column, siblings, ctx, with_ref=False),
+            layout,
+            path,
+        )
+        strip = not _needs_final_break(entries[-1][1])
+        self._add(
+            layout,
+            [
+                TextEdit(span.start, span.start, f"{INCLUDE_REF_KEY}: ", EditKind.LINES),
+                self._following_edit(layout, span.end, following, ctx.line_break, strip=strip),
+            ],
+        )
+
     @staticmethod
     def _include_slot(layout: FileLayout, site: IncludeSite, path: ConfigPath) -> ValueSlot:
         """The written slot of the include string at ``site`` (its parent may be merged)."""
@@ -455,6 +511,8 @@ class _Planner:
         if isinstance(parent, ConfigMapping):
             written, entry = physical_entry(parent, str(site.key))
             return layout.entry_slot(written, entry, path)
+        if parent is None or site.key is None:  # pragma: no cover - see _convert_root
+            raise ValueError("a root include string has no slot")
         return layout.item_slot(parent, int(site.key), path)
 
     # --- slot change decision --------------------------------------------------------------------
@@ -763,7 +821,8 @@ class _Planner:
         not emptied; its own entry is deleted from the mapping holding it instead, which may in
         turn be pruned. A ``$ref`` mapping keeps its ``$ref`` entry, so pruning never passes it.
 
-        Then each receiving mapping gets its new entries in one insertion, styled after its last
+        Then each scalar-form include receiving new entries is converted once, and each receiving
+        mapping gets its new entries in one insertion, styled after its last
         entry that remains (4.5). A flow mapping that loses every entry is rendered anew with
         them. Each other mapping gets one deletion (5.3, 5.4), except that a mapping losing
         every entry and receiving none becomes ``{}`` at its written entry: emptied lines would
@@ -787,6 +846,8 @@ class _Planner:
             holding, index, parent_at, is_override = link
             self._remove(holding, index, parent_at, is_override=is_override)
             pending.append(self._removals[id(holding)])
+        for site, converted in self._conversions.values():
+            self.convert_include(site, converted, self._path)
         rendered: set[int] = set()
         for key, (mapping, entries) in self._additions.items():
             losing = self._removals.get(key)
@@ -1305,6 +1366,26 @@ def _nest(
     for key in reversed(rest):
         value = NewMapping(entries=((key, value),))
     return ((first, value),)
+
+
+def _merge_new(merged: list[tuple[str, NewValue]], entries: Sequence[tuple[str, NewValue]]) -> None:
+    """Merge new ``entries`` into ``merged`` (new entries of one placement), in place.
+
+    A key already there whose two values are mappings gets their entries merged the same way;
+    any other key is appended, so the first-seen order is kept. Keys created by one set never
+    meet with two values that are not both mappings (they come from one VALUE).
+    """
+    for key, value in entries:
+        index = next((i for i, (seen, _) in enumerate(merged) if seen == key), None)
+        if index is None:
+            merged.append((key, value))
+            continue
+        existing = merged[index][1]
+        if not (isinstance(existing, NewMapping) and isinstance(value, NewMapping)):
+            raise ValueError(f"the new key {key!r} is created twice")  # pragma: no cover
+        nested = list(existing.entries)
+        _merge_new(nested, value.entries)
+        merged[index] = (key, NewMapping(entries=tuple(nested)))
 
 
 def _index_of(mapping: ConfigMapping, entry: object) -> int:
