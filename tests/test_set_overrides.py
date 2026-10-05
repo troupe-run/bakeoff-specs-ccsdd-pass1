@@ -1040,3 +1040,24 @@ def test_key_below_a_scalar_form_root_include_converts_the_root_file(
     _assert_set_events(theatre, start, [("set", "extra", None, 2, "cli")])
     shown = run_config("show", "--theatre", str(theatre), cwd=theatre)
     assert (shown.exit_code, shown.stdout, shown.stderr) == (0, b"a: 1\nextra: 2\n", "")
+
+
+@pytest.mark.parametrize("middle", ["$ref: file:leaf.yaml\n", "file:leaf.yaml\n"])
+def test_key_from_a_middle_file_shared_by_two_includes_is_refused(
+    make_theatre: MakeTheatre, middle: str
+) -> None:
+    """Req 4.2, 9.2 (choice 5): when the file holding the reference (mid.yaml) is included at two
+    places, writing the override there would change both, so the read-back differs from the
+    intended configuration: exit 3 naming that file and PATH, no file changed, no event."""
+    theatre = make_theatre(
+        "a: file:mid.yaml\nb: file:mid.yaml\n",
+        files={".troupe/mid.yaml": middle, ".troupe/leaf.yaml": "sub:\n  m: 1\n"},
+    )
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    result = run_set(theatre, "a.sub.n", "1")
+
+    problem = _assert_refused(theatre, result, theatre / ".troupe" / "mid.yaml", "a.sub.n", start)
+    assert "differs from the intended configuration" in problem
+    assert snapshot_tree(theatre) == before
