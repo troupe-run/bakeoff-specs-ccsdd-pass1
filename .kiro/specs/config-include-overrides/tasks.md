@@ -37,7 +37,7 @@ config-lineage are complete. No new runtime dependency is added.
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 8.3_
 
 - [ ] 3. File layer: writing below mapping-form includes
-- [ ] 3.1 Teach the file layout about `$ref` mappings and merged mappings
+- [x] 3.1 Teach the file layout about `$ref` mappings and merged mappings
   - At a slot whose value is a mapping-form include root, the layout uses the `$ref` mapping as written (inline extent, body lines, content end). The walks that find token ends (comment detection), indentation step, dash offset and block-scalar owner columns visit the written parts of merged mappings and `$ref` mappings.
   - Done when layout unit tests on files with block and flow `$ref` mappings show the right comment positions, indentation step, content ends, and insertion point of a `$ref` mapping, and an existing-value change next to such a mapping leaves its lines untouched
   - _Requirements: 5.5, 9.1_
@@ -112,3 +112,4 @@ config-lineage are complete. No new runtime dependency is added.
 ## Implementation Notes
 - 1.1: merged entries for a key that is a mapping on both sides keep the base entry's key/key_origin; writers must locate written positions through `physical_entry`/`physical_holders`, never merged entries. Pruning (3.7) uses `Holder.is_override` and `holder_of(parent, key, written)`. `ConfigMapping` equality includes `layers`: never compare merged and plain trees with `==` (use plain trees).
 - 2.1: a mapping-form root now loads with `root.include` set; writeback must unwrap it (3.2 root plain, 3.3 resolve_target). Guards for 2.2's three refusals already raise ConfigLoadError in loader.py; 2.2 adds their tests and final messages.
+- 3.1: layout `_local(node)` resolves what is written at a slot; walks use `written_parts`. Planner callers must pass written (physical) mappings to `content_end`/`insertion_point`, never merged ones. Open: loader drops an inner bare `$ref` mapping when an outer include with overrides targets a file whose root is that mapping (`replace(embedded, include=None)`); fix before the e2e validation tasks.

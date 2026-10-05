@@ -27,6 +27,7 @@ from troupe.config.model import (
     SourceFile,
     Span,
 )
+from troupe.config.overrides import written_parts
 from troupe.config.paths import ConfigPath
 
 DEFAULT_INDENT_STEP: Final = 2
@@ -290,10 +291,9 @@ class FileLayout:
         list item) the text from its start to the line's content end without the end-of-line
         comment and the spaces before it.
         """
-        node = slot.node
-        directive = self._directive(node)
-        if directive is not None:
-            return directive
+        node = self._local(slot.node)
+        if isinstance(node, Span):
+            return node
         span = node.origin.span
         if _is_empty_null(node):
             return Span(slot.indicator_end, slot.indicator_end)
@@ -317,8 +317,8 @@ class FileLayout:
         Only block scalars and block collections have body lines: from the line after the inline
         extent's end through the line of the content end.
         """
-        node = slot.node
-        if self._directive(node) is not None:
+        node = self._local(slot.node)
+        if isinstance(node, Span):
             return None
         block = _is_block_scalar(node) or (
             not isinstance(node, ConfigScalar) and node.style is CollectionStyle.BLOCK
@@ -326,7 +326,7 @@ class FileLayout:
         if not block:
             return None
         first = self.line_of(self.inline_extent(slot).end) + 1
-        last = self.line_of(self.content_end(node, slot))
+        last = self.line_of(self.content_end(slot.node, slot))
         if first > last:
             return None
         return Span(self._line_starts[first], self._next_line_start(last))
@@ -393,12 +393,24 @@ class FileLayout:
         if not self._here(file):
             raise ValueError(f"the {what} is not written in {self._file.path}")
 
-    def _directive(self, node: ConfigNode) -> Span | None:
-        """The ``file:`` directive span of an include root whose directive is in this file."""
+    def _local(self, node: ConfigNode) -> ConfigNode | Span:
+        """What is written in this file at the slot holding ``node``.
+
+        A mapping-form include root gives its ``$ref`` mapping as written (when written here); a
+        scalar-form include root gives its ``file:`` directive span (when here); any other node
+        gives itself (when here). Raises :class:`ValueError` otherwise.
+        """
+        include = node.include
+        if (
+            include is not None
+            and include.form is not None
+            and self._here(include.form.origin.file)
+        ):
+            return include.form
         if self._here(node.origin.file):
-            return None
-        if node.include is not None and self._here(node.include.directive.file):
-            return node.include.directive.span
+            return node
+        if include is not None and self._here(include.directive.file):
+            return include.directive.span
         raise ValueError(f"the node is not written in {self._file.path}")
 
     def _colon_end(self, entry: MappingEntry) -> int:
@@ -416,8 +428,8 @@ class FileLayout:
         return index + 1 if self._text.startswith(_COLON, index) else None
 
     def _value_start(self, node: ConfigNode) -> int:
-        directive = self._directive(node)
-        return node.origin.span.start if directive is None else directive.start
+        local = self._local(node)
+        return local.start if isinstance(local, Span) else local.origin.span.start
 
     def _collection_start(self, node: ConfigMapping | ConfigSequence) -> int:
         """First key of a block mapping, first ``-`` of a block sequence, else the span start."""
@@ -461,9 +473,10 @@ class FileLayout:
 
     def _value_end(self, node: ConfigNode, indicator_end: int | None) -> int:
         """Content end of ``node``; ``indicator_end`` locates an empty null value."""
-        directive = self._directive(node)
-        if directive is not None:
-            return directive.end
+        local = self._local(node)
+        if isinstance(local, Span):
+            return local.end
+        node = local
         if _is_empty_null(node):
             if indicator_end is None:
                 raise ValueError("an empty value is located only through its slot")
@@ -534,7 +547,7 @@ class FileLayout:
     def _block_scalar_key_columns(self) -> dict[int, int]:
         """Header index of every block scalar mapping value written here -> its key's column."""
         columns: dict[int, int] = {}
-        stack: list[ConfigNode] = [self._document.root]
+        stack: list[ConfigNode] = list(_written(self._document.root))
         while stack:
             node = stack.pop()
             if isinstance(node, ConfigMapping):
@@ -560,6 +573,11 @@ class FileLayout:
             floors[last] = max(floors.get(last, end), end)
 
         def visit(node: ConfigNode) -> None:
+            parts = _parts(node)
+            if parts is not None:
+                for part in parts:
+                    visit(part)
+                return
             if not self._here(node.origin.file):
                 if node.include is not None and self._here(node.include.directive.file):
                     directive = node.include.directive.span
@@ -647,21 +665,19 @@ def _block_entries_in_file(
     The value is yielded only when it was also written in ``file`` (an include root's value lies in
     the included file and is skipped). The order is not document order; see :func:`_ordered`.
     """
-    stack: list[ConfigNode] = [document.root]
+    stack: list[ConfigNode] = list(_written(document.root))
     while stack:
         node = stack.pop()
-        children: list[ConfigNode]
-        if isinstance(node, ConfigMapping):
-            children = [entry.value for entry in node.entries]
-            if node.style is CollectionStyle.BLOCK and _in_file(node, file):
-                for entry in node.entries:
-                    if _in_file(entry.value, file):
-                        yield entry.key_origin.span.start, entry.value
-        elif isinstance(node, ConfigSequence):
-            children = list(node.items)
-        else:
-            children = []
-        stack.extend(reversed(children))
+        if (
+            isinstance(node, ConfigMapping)
+            and node.style is CollectionStyle.BLOCK
+            and _in_file(node, file)
+        ):
+            for entry in node.entries:
+                value = _local_value(entry.value, file)
+                if value is not None:
+                    yield entry.key_origin.span.start, value
+        stack.extend(_children(node))
 
 
 def _detect_indent_step(
@@ -701,12 +717,42 @@ def _ordered(entries: Iterator[tuple[int, ConfigNode]]) -> list[tuple[int, Confi
     return sorted(entries, key=lambda pair: pair[0])
 
 
+def _parts(node: ConfigNode) -> tuple[ConfigNode, ...] | None:
+    """The written parts of a merged mapping or a bare mapping-form include, else ``None``."""
+    parts = written_parts(node)
+    return None if len(parts) == 1 and parts[0] is node else parts
+
+
+def _written(node: ConfigNode) -> tuple[ConfigNode, ...]:
+    """The nodes written in files for ``node``: its written parts, recursively.
+
+    A merged mapping's entries are never all written in one file, so walks over files visit its
+    two sides instead; a mapping-form include root gives its ``$ref`` mapping as well.
+    """
+    parts = _parts(node)
+    if parts is None:
+        return (node,)
+    return tuple(written for part in parts for written in _written(part))
+
+
 def _children(node: ConfigNode) -> tuple[ConfigNode, ...]:
+    """The written children of a node written in one file (see :func:`_written`)."""
+    values: tuple[ConfigNode, ...]
     if isinstance(node, ConfigMapping):
-        return tuple(entry.value for entry in node.entries)
-    if isinstance(node, ConfigSequence):
-        return node.items
-    return ()
+        values = tuple(entry.value for entry in node.entries)
+    elif isinstance(node, ConfigSequence):
+        values = node.items
+    else:
+        return ()
+    return tuple(written for value in values for written in _written(value))
+
+
+def _local_value(node: ConfigNode, file: SourceFile) -> ConfigNode | None:
+    """What ``file`` holds for an entry value: its ``$ref`` mapping, itself, or ``None``."""
+    include = node.include
+    if include is not None and include.form is not None and _in_file(include.form, file):
+        return include.form
+    return node if _in_file(node, file) else None
 
 
 def _is_empty_null(node: ConfigNode) -> bool:
