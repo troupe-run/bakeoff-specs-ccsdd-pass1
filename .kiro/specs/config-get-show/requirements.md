@@ -53,6 +53,11 @@ We are changing `show`. From now on:
   holds a scalar, where `<file>` is the file the scalar comes from, relative to the theatre directory, with
   `/` separators. A text include's value comes from the included file.
 
+> **Note (step 5):** the contract above is kept verbatim. "Includes resolved" now includes mapping-form
+> includes: `get` and `show` print the merged value of an include and its overrides, and `--sources` names the
+> including file for a scalar written as an override, the included file for one that is not overridden (spec
+> config-include-overrides, requirements 3.1 and 3.2). The output format is unchanged.
+
 Approach, scope, boundaries and open choices: see `brief.md`.
 
 ## Introduction
@@ -127,6 +132,7 @@ Terms used below:
 
 #### Acceptance Criteria
 1. When `troupe config get PATH` runs and PATH resolves to a scalar, the troupe CLI shall print the value exactly as config-foundation 6.1–6.6 specify (strings exactly, with a newline added unless the string already ends with one; `true`/`false`; `null`; integers in decimal; floats in Python `repr()` form; a text include as the included file's exact text) and exit with code 0.
+   *Note (step 5): at or below a mapping-form include the value printed is the merged value of the include and its overrides (spec config-include-overrides, requirement 3.1); a PATH with a `$ref` segment below such an include is not found (exit 5, config-include-overrides requirement 8.3).*
 2. If PATH given to `get` resolves to a mapping or a list, then the troupe CLI shall exit with code 5 and write a stderr message that names PATH and the file that holds it and mentions `config show` as the command that prints mappings and lists.
 3. If PATH given to `get` is not found, then the troupe CLI shall exit with code 5 and write a stderr message that names PATH and the file holding the deepest part of PATH that exists.
 4. If the `get` command line has no PATH, more than one PATH, or an unknown option (including `--sources`), then the troupe CLI shall exit with code 2 and write a stderr message describing the usage problem.
@@ -149,6 +155,7 @@ Terms used below:
 
 #### Acceptance Criteria
 1. The troupe CLI shall print every non-empty mapping and every non-empty list in the YAML output in block style, one entry or item per line start, and shall not use flow style (`{…}`, `[…]`) for any non-empty collection.
+   *Note (step 5): the node printed at or below a mapping-form include is its merged value, with no `$ref` key and with the keys in merged order (spec config-include-overrides, requirements 1.2, 1.3, 1.5 and 3.1).*
 2. The troupe CLI shall print mapping entries in document order as `key: value`. When the value is a non-empty mapping or list, the entry line shall be `key:` and the nested content shall start on the following lines, indented two spaces more than the key.
 3. The troupe CLI shall print list items in document order as `- item`, indented two spaces more than the key of the list that holds them (at column 0 when the printed node itself is a list). A mapping or list that is a list item shall start on the item's dash line, with its later entries or items aligned under its first.
 4. When a value reached through a YAML include is printed, the troupe CLI shall print the included content in place of the include, as if it were written there, and shall not print the `file:` string. A text include shall be printed as its text (Requirement 4).
@@ -176,6 +183,7 @@ Terms used below:
 1. Where `--sources` is given, the troupe CLI shall end every output line that holds a scalar with one space followed by `# from <file>`, where `<file>` is that scalar's source file. Such lines are a `key: value` line, a `- value` list item line, the line of a scalar printed on its own, and the header line of a literal block.
 2. Where `--sources` is given, the troupe CLI shall add no comment to a line that holds no scalar (a `key:` line introducing a nested mapping or list, a line holding `{}` or `[]`) or to the content lines of a literal block.
 3. Where `--sources` is given, the troupe CLI shall name as `<file>` the root configuration file for a scalar written there, the included YAML file for a scalar written in that file, and the included text file for a text include.
+   *Note (step 5): for a scalar that is an overridden value of a mapping-form include, `<file>` is the including file in which the override is written; a scalar that is not overridden still names the included file (spec config-include-overrides, requirement 3.2).*
 4. Where `--sources` is given, the troupe CLI shall write `<file>` relative to the theatre directory, with `/` separators, with no `.` segments and with `..` segments only at its start, taken from the paths as reached through the theatre directory and the include strings, without resolving symbolic links (for example `.troupe/troupe.yml`, `.troupe/agents/lead.yml`, `../shared/prompt.md`).
 5. Where `--sources` is given and PATH resolves to a mapping or a list, or PATH is omitted, the troupe CLI shall print output that equals the output without `--sources` once the ` # from <file>` suffixes are removed.
 

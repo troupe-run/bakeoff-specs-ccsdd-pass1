@@ -3,6 +3,10 @@
 Includes are transparent: included nodes are embedded in the tree, so a path passes through an
 included YAML file exactly as if its content were written in place (5.4). A text include is a
 scalar; no segment can be applied to it (5.5).
+
+Since step 5 a mapping-form include is embedded as its merged value (config-include-overrides 1.2,
+1.5): paths and leaves are those of the merge, never a ``$ref`` segment, so ``get``, ``show``,
+import and reconcile all see the merged configuration (3.1, 3.3, 8.3).
 """
 
 from dataclasses import dataclass

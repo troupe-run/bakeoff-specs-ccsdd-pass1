@@ -363,7 +363,7 @@ Terms used below:
 2. When PATH resolves to a value below a mapping-form include that is not overridden, the troupe CLI shall change it in the file it comes from, as config-set-writeback Requirement 2.6 specifies.
 3. When VALUE replaces a mapping at or below a mapping-form include, the troupe CLI shall apply 7.1 and 7.2 to each changed entry, Requirement 4 to each added key, and 7.4 to each removed key.
 4. When a collection replacement removes a key below an include, the troupe CLI shall remove it from every file in which it is written (the override, the included file, or both), under config-set-writeback's removal rules.
-5. If PATH names the place of a mapping-form include and VALUE differs from its merged value, then the troupe CLI shall exit with code 3, name PATH and the included file, and change no file, as for a scalar-form include (config-set-writeback 2.5).
+5. If PATH names the place of a mapping-form include and VALUE differs from its merged value, then the troupe CLI shall exit with code 3, name PATH and the included file, and change no file, as for a scalar-form include (config-set-writeback 2.5). "Differs" is judged as for a scalar-form include (step 1 rule 4, config-set-writeback 2.5): the place holds an include, and a VALUE that is not an include never equals it, so a mapping equal to the merged mapping still differs (exit 3).
 6. When PATH names a text include in bare mapping form and VALUE is a string, the troupe CLI shall replace the target file's content as for a scalar-form text include (config-set-writeback 2.2–2.4).
 
 ### Requirement 8: `$ref` in PATH and VALUE

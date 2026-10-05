@@ -39,6 +39,8 @@ intended one. If it does not, the write is refused (exit 3) rather than risk cor
   set/remove event emission; atomic writes; byte-exact preservation tests.
 - **Out**: loading/includes/path semantics (config-foundation); step 5's change to the new-key target rule;
   anchors/aliases; TAB-before-comment files; concurrent writers.
+  *Note (step 5): that change is specified by spec config-include-overrides (requirements 4–7), and
+  `set --in-include` keeps this spec's new-key rule on request (config-include-overrides requirement 10).*
 
 ### Constraints
 - Byte-surgical: after a successful `set`, only the required bytes differ in any file.
@@ -67,6 +69,15 @@ intended one. If it does not, the write is refused (exit 3) rather than risk cor
   - When a scalar is replaced by a block collection, the key's line keeps its bytes up to and including its end-of-line comment.
   - End-of-line comments: when a changed value's length changes, the comment on that line is moved back to its previous column; if the new value reaches that column, exactly one space separates value and comment. No other line changes. Columns count Unicode code points.
 - **history**: A set emits one `set` event per leaf whose value it changes or creates, and one `remove` event (new null) per leaf that no longer exists. A set that changes nothing emits nothing (and should not modify files). The first command run against a theatre imports it (import events); set must also trigger import first if never imported.
+
+> **Note (step 5):** the contract above is kept verbatim. Its rule 2 under "Where the change is written" is
+> replaced by the step 5 section "Overrides" (spec config-include-overrides, requirements 4–6): a new key whose
+> deepest existing ancestor comes from an included file is written as an override in the including file,
+> turning a scalar-form include into a mapping-form `$ref` include when needed, and the included file stays
+> unchanged; lists keep their items in the file holding the list. Rule 2 as written still applies when the
+> ancestor comes from no include, and on request with `set --in-include` (config-include-overrides
+> requirement 10, CR-B). Rule 1 is refined for values below a mapping-form include (config-include-overrides
+> requirement 7), and rule 4 applies to a mapping-form include as to a scalar-form one (7.5).
 
 ## Introduction
 This specification covers the write side of the troupe configuration subsystem (contract step 1, section
@@ -131,6 +142,7 @@ shared error conventions are provided by config-foundation and are used unchange
 #### Acceptance Criteria
 1. When a developer runs `uv run troupe config set PATH VALUE [--theatre DIR]` from the repository root and the set succeeds, the troupe CLI shall change the configuration value at PATH to VALUE, write nothing to stdout and exit with code 0.
    *Note (step 4): `set` also accepts `--reason TEXT` (or `--reason=TEXT`, before, between or after the positional arguments); TEXT is recorded exactly as the `reason` of the set's own events, and `--reason` without TEXT is a usage error (exit 2) under 1.5 (spec config-lineage, requirement 6).*
+   *Note (step 5): `set` also accepts `--in-include` (no value; before, between or after the positional arguments, together with `--reason`), which writes a new key below an include by 3.1–3.2 instead of as an override; `--in-include=TEXT` is a usage error (exit 2) under 1.5 (spec config-include-overrides, requirement 10, CR-B).*
 2. The troupe CLI shall interpret VALUE as a single YAML 1.2 core-schema flow node, so that `0.2` is a float, `true` a boolean, `null` null, `abc` and `"0.2"` strings, `{a: 1}` a mapping, `[a, b]` a list and `"line one\nline two\n"` the two-line string `line one⏎line two⏎`.
 3. If VALUE is not valid YAML, is empty or contains only whitespace or comments, contains more than one document, contains a block-style node (block mapping, block list, literal or folded scalar), or uses a tag, an anchor or an alias, then the troupe CLI shall exit with code 2 and write a stderr message that names PATH and states that VALUE is not a single flow node.
 4. If a mapping inside VALUE has two equal keys, an empty key or a key that is not a scalar, then the troupe CLI shall exit with code 2 and write a stderr message that names PATH and the offending key.
@@ -142,11 +154,14 @@ shared error conventions are provided by config-foundation and are used unchange
 
 #### Acceptance Criteria
 1. When PATH resolves to an existing value, the troupe CLI shall write the change into the file that contains that value, including a file reached through YAML includes, and shall leave the including files unchanged.
+   *Note (step 5): below a mapping-form include, an overridden value is changed in the override in the including file and a value that is not overridden in the file it comes from, and a mapping replaced at or below such an include is merged across the files that write it (spec config-include-overrides, requirements 7.1–7.4).*
 2. When PATH resolves to a text include and VALUE is a string, the troupe CLI shall replace the text-include target file's whole content with VALUE exactly and leave the file containing the `file:` directive unchanged.
 3. While the text-include target file uses CRLF for every line break, when its content is replaced, the troupe CLI shall write each line break of VALUE that is not already CRLF as CRLF.
 4. If PATH resolves to a text include and VALUE is not a string, then the troupe CLI shall exit with code 3, name PATH and the text-include target file, and change no file.
 5. If PATH resolves to a value whose whole value comes from a YAML include (for example `agents.coder` when it is `file:agents/coder.yaml`) and VALUE differs from it, then the troupe CLI shall exit with code 3, name PATH and the included file, and change no file.
+   *Note (step 5): this applies to a mapping-form include as to a scalar-form one, and whether VALUE differs is judged as for a scalar-form include, so a mapping equal to the merged value differs (spec config-include-overrides, requirement 7.5); a bare text include in mapping form is set under 2.2–2.4 (7.6).*
 6. When PATH resolves to a value inside a YAML-included file that is not itself the include's whole value, the troupe CLI shall change it inside the included file under the same rules as any other existing value.
+   *Note (step 5): when such a value is overridden by a mapping-form include, the override in the including file is changed instead and the included file is left unchanged (spec config-include-overrides, requirements 7.1 and 7.2).*
 7. When VALUE is, or contains, a string starting with `file:` that is written into a YAML file, the troupe CLI shall write it as a string scalar under the same rules as any other string, so that the configuration read back contains the include's content at that place.
 8. When a string starting with `file:` is set at a place that already holds an include written with exactly that string, the troupe CLI shall treat that place as unchanged.
 
@@ -155,7 +170,9 @@ shared error conventions are provided by config-foundation and are used unchange
 
 #### Acceptance Criteria
 1. When PATH does not exist and the deepest existing value along PATH is a mapping, the troupe CLI shall add the missing key to that mapping in the file that contains that mapping.
+   *Note (step 5): when that mapping comes from an included file, the key is written as an override in the including file of the nearest include above it, converting a scalar-form include to mapping form when needed, and the included file is left unchanged; a list item reached before any include keeps the key in the file holding the list (spec config-include-overrides, requirements 4–6). 3.1–3.2 as worded still apply to a mapping that comes from no include, and to every new key with `set --in-include` (config-include-overrides requirement 10).*
 2. When more than one segment of PATH is missing below that mapping, the troupe CLI shall create the missing intermediate mappings in the same file, nested under the new key, with VALUE at the last segment.
+   *Note (step 5): below an include, the missing intermediate mappings are created in the override in the including file, together with the mappings of the included content along the path that the overrides do not yet contain (spec config-include-overrides, requirements 4.1 and 4.4).*
 3. When the root configuration file is empty or contains only comments, the troupe CLI shall add the new key to the root configuration file.
 4. If the deepest existing value along PATH is a scalar (including null and a text include), then the troupe CLI shall exit with code 5 and write a stderr message that names PATH and the file holding that scalar.
 5. If a non-digit segment of PATH is applied to an existing list, then the troupe CLI shall exit with code 5 and write a stderr message that names PATH and the file holding the list.
@@ -247,6 +264,7 @@ shared error conventions are provided by config-foundation and are used unchange
 3. When a new entry is added to a flow collection, the troupe CLI shall insert it after the last entry, on that entry's line, separated by `, `, and keep any trailing comma and the closing bracket after it.
 4. When a scalar is replaced by a block collection, the troupe CLI shall keep the key's line (or list item's line) unchanged up to and including its end-of-line comment except that the scalar itself is removed, and shall start the collection on the following line.
 5. When the scalar removed from a line was followed by an end-of-line comment, the troupe CLI shall keep that comment at its previous column; when no comment followed, the troupe CLI shall also remove the spaces between the key's `:` (or the `-`) and the removed scalar.
+   *Note (step 5): converting a scalar-form include to mapping form when its first override is added is the one exception: the key's line keeps the `:` followed by the whitespace that preceded the comment and the comment itself, so the comment moves next to the `:` as in the step 5 contract example (spec config-include-overrides, requirement 5.2; research.md Decision 6, choice 11). Every other replacement follows 11.5.*
 6. When a new entry is added after the last line of a file that does not end with a line break, the troupe CLI shall insert a line break before the new entry and leave the file still ending without a line break.
 
 ### Requirement 12: End-of-line comments

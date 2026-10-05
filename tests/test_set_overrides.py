@@ -23,6 +23,9 @@ mapping-form include root (7.5), a bare text include (7.6) and ``$ref`` in PATH 
 8.2). Refusals assert exit 3, empty stdout, a stderr line naming the file and PATH, no file
 changed and no event (9.2, 9.3).
 
+Task 4.4 pins how 7.5 judges "differs": as for a scalar-form include (rule 4), so a mapping
+equal to the merged value is refused.
+
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
 
@@ -736,6 +739,28 @@ def test_replacing_a_mapping_form_include_root_is_refused(
     before = snapshot_tree(theatre)
 
     result = run_set(theatre, "agents.coder", value)
+
+    problem = _assert_refused(theatre, result, theatre / CODER_FILE, "agents.coder", start)
+    assert "file:agents/coder.yaml" in problem
+    assert snapshot_tree(theatre) == before
+
+
+def test_mapping_equal_to_the_merged_value_is_refused_like_a_scalar_form_include(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 7.5, 9.1: "differs" is judged as for a scalar-form include (rule 4), so a mapping VALUE
+    equal to the merged value of `agents.coder` (same keys, values and order) still differs from
+    the include and exits 3 naming PATH and the included file; no file changes, nothing is
+    recorded."""
+    theatre = make_theatre(PARAMS_ROOT, files={CODER_FILE: PARAMS_CODER})
+    merged = "{model: big, params: {top_k: 40, seed: 9, temp: 0.3}, max_tokens: 100}"
+    assert _show(theatre, "agents.coder") == (
+        b"model: big\nparams:\n  top_k: 40\n  seed: 9\n  temp: 0.3\nmax_tokens: 100\n"
+    )
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    result = run_set(theatre, "agents.coder", merged)
 
     problem = _assert_refused(theatre, result, theatre / CODER_FILE, "agents.coder", start)
     assert "file:agents/coder.yaml" in problem

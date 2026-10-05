@@ -89,6 +89,12 @@ Approach Decision). The CLI uses a standard argument parser, with usage errors m
 > `via`, `at`, `reason` and `change` after `new` (spec config-lineage, requirement 1). Import events carry
 > `via` `"import"` and actor unknown, and the events of one import or one `set` share one `change`
 > (config-lineage requirements 3 and 4).
+>
+> **Note (step 5):** the contract's "Includes" section also has a mapping form: a mapping with a key `$ref`
+> whose value is an include string is an include of that string, and its other keys are overrides deep-merged
+> over the included YAML content (spec config-include-overrides, requirement 1). A non-YAML target with
+> overrides, a YAML target whose content is not a mapping with overrides, and a `$ref` that is not an include
+> string are further exit-4 cases (config-include-overrides requirement 2).
 
 ## Introduction
 This specification covers the read side of the troupe configuration subsystem (contract step 1): the
@@ -176,14 +182,18 @@ and is owned by config-get-show.)*
 ### Requirement 4: File includes
 **Objective:** As a developer, I want to split my configuration across files with `file:` includes, so that large or shared settings can live in their own files.
 
+*Note (step 5): includes also have a mapping form, `{$ref: "file:...", <overrides>}`, specified by spec config-include-overrides (requirements 1 and 2). The criteria below stand as worded for the include string, whether written as a scalar or as the value of `$ref`.*
+
 #### Acceptance Criteria
 1. When a string value starts with `file:`, the troupe CLI shall treat the rest of the string as the path of an include target, relative to the directory of the file that contains the string.
 2. When an include target's name ends in `.yml` or `.yaml`, the troupe CLI shall use the target's YAML content in place of the include string, as if it had been written there.
+   *Note (step 5): in a mapping-form include with overrides, the value at that place is the target's content deep-merged with the overrides (mappings merged recursively, every other override value replacing the included one, included key order kept and override-only keys appended), and no `$ref` key is part of the value; a bare `$ref` mapping has the same value as the scalar form (spec config-include-overrides, requirements 1.2–1.5).*
 3. When an include target's name ends in anything other than `.yml` or `.yaml`, the troupe CLI shall use the target file's exact text, byte for byte including its line endings, as a string value in place of the include string.
 4. When an included YAML file itself contains include strings, the troupe CLI shall resolve them in the same way, relative to the directory of the included file, to any depth.
 5. If an include target does not exist or cannot be read, then the troupe CLI shall exit with code 4 and write a stderr message that names the missing target and the file containing the include.
 6. If following YAML includes leads back to a file that is already being included on the same chain, then the troupe CLI shall exit with code 4 and write a stderr message that names the files forming the cycle.
 7. If an included YAML file cannot be loaded for any reason listed in Requirement 3, then the troupe CLI shall exit with code 4 and write a stderr message that names the included file.
+   *Note (step 5): 4.5–4.7 apply to the `$ref` include string as to any include string (spec config-include-overrides, requirement 1.8). Exit 4 is also given for overrides on a non-YAML target, for overrides on a YAML target whose content is not a mapping, and for a `$ref` value that is not an include string, with no file or history state changed (config-include-overrides requirements 2.1–2.4).*
 
 ### Requirement 5: Path addressing
 **Objective:** As a developer, I want to address any value with a dotted path, so that I can name settings consistently across commands.

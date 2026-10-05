@@ -5,7 +5,8 @@ config-file-sync 3.4, 3.5, 4.2, 4.4, 4.9, 5.1-5.7.
 The watcher observes the theatre by polling byte snapshots, without any file-watching dependency:
 
 - The **watch set** is the display path of every file the last successful load read (the root
-  configuration file and every YAML or text include, at any depth), plus both root candidates
+  configuration file and every YAML or text include, scalar or mapping form, at any depth;
+  config-include-overrides 3.5), plus both root candidates
   ``<theatre>/.troupe/troupe.yml`` and ``troupe.yaml``, so an added or renamed root is seen (5.2).
   Files outside the watch set are never read (5.6).
 - A **snapshot** maps each watched path to its bytes, read by path so that a replace-by-rename is

@@ -692,6 +692,11 @@ def render_flow_value(value: NewValue, ctx: RenderContext) -> str: ...
     `PathNotFoundError` (4.2, 4.3).
   - `NOT_AN_INDEX`, `SCALAR` → `PathNotFoundError` (3.4, 3.5).
   - Errors carry `file=deepest.origin.file.path` and `path=str(path)` (16.3).
+- *Note (step 5): rule 2 (3.1, 3.2) is replaced below includes by the placement walk of spec
+  config-include-overrides (design "Placement walk", requirements 4–6): `AddKeyTarget` also carries where the new
+  key is written, which is an override in the including file (converting a scalar-form include) when the
+  deepest existing mapping comes from an included file. The deepest existing mapping as described here is kept
+  for no include and for `set --in-include` (config-include-overrides requirement 10).*
 - Text includes (2.2, 2.3): the new plain value at a text-include target is VALUE with every LF not preceded by
   CR replaced by CRLF when `include.target.line_ending is LineEnding.CRLF`; VALUE exactly otherwise.
 - Intended configuration: `splice(node_to_plain(root), path, new_plain, text_content)`; at a text-include target, at PATH or at

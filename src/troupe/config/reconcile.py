@@ -11,6 +11,10 @@ change a leaf, so they give no change (2.4).
 recorded all or nothing (2.7). It never reads or writes user files. Since step 4 the batch is
 recorded with the file context, so a reconcile is one change with ``via`` ``file``, actor unknown
 and no reason, whichever command runs it (config-lineage 3.2, 4.1, 6.3).
+
+Since step 5 the leaves are those of the merged configuration, so adding, changing or removing an
+override records the events of the merged leaves it changes, and rewriting a scalar-form include
+as a bare ``$ref`` mapping (or back) records nothing (config-include-overrides 3.3, 3.4).
 """
 
 from collections.abc import Sequence

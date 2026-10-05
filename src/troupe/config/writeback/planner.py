@@ -37,7 +37,11 @@ decision":
   (the override pruned, the included mapping written as ``{}``) or is refused.
 
 A new key (with any missing intermediate mappings nested under it) or an appended list item goes
-through :meth:`_Planner.add_entries` into the file holding the collection (3.1, 3.2, 4.1): in a
+through :meth:`_Planner.add_entries` into the written collection its target names (3.1, 3.2,
+4.1): for a new key below an include that is the override mapping in the including file chosen by
+the placement walk (config-include-overrides 4.1-4.6, 6.2, 6.3), with ``set --in-include`` the
+included side of the deepest existing mapping (step 1 rule 2, 10.1), and otherwise the file holding
+the mapping or list as in step 1 (4.6, 6.1). In a
 block collection as whole lines at its insertion point and entries column with the quote styles of
 its last remaining entry (7.1-7.3, 11.1, 11.2, 11.6), in a flow collection right after its last
 entry on that entry's line (11.3). A new key whose placement is a scalar-form include goes through

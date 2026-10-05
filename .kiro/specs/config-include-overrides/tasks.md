@@ -85,7 +85,7 @@ config-lineage are complete. No new runtime dependency is added.
   - Done when target and planner unit tests show the exact texts for: a scalar-form include, a merged mapping (with the merged order checked after reload), nested includes (innermost file), an ancestor written only in an override, a mapping VALUE with new keys, and a plain root mapping (same as without the choice)
   - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5_
 
-- [ ] 4. Integration and validation
+- [x] 4. Integration and validation
 - [x] 4.1 Validate new keys below includes end to end
   - E2E (byte-exact, every other file unchanged, history checked): the contract example with exactly one `set` event; a second new key after the first override; missing intermediate keys; a key below an included nested mapping; nested includes writing in the middle file; a bare `$ref` mapping gaining an override; a flow include; a `troupe.yaml` theatre.
   - Done when these e2e tests pass through the real CLI and each fails if the override is written into the included file
@@ -104,7 +104,7 @@ config-lineage are complete. No new runtime dependency is added.
   - _Depends: 3.8_
   - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7_
 
-- [ ] 4.4 Align the earlier specs, docstrings and roadmap with step 5 and check traceability
+- [x] 4.4 Align the earlier specs, docstrings and roadmap with step 5 and check traceability
   - Add step-5 notes to config-foundation Requirement 4, config-set-writeback rule 2 / Requirements 2 and 3 and 11.5 (the conversion exception), and config-get-show (merged view, override provenance), and the `--in-include` option on config-set-writeback's `set` usage (CR-B). Update module docstrings that describe includes or the new-key rule. Tick the step-5 items in the roadmap.
   - The spec, docstring and roadmap edits are the bookkeeping of the same change (collaboration.md). This task adds no behaviour.
   - Done when every requirement ID of this spec is named by at least one test docstring, the notes are in place, and the full test suite, mypy and ruff pass

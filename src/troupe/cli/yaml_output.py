@@ -13,7 +13,9 @@ lines that open a nested collection and literal block content lines). It then jo
 ``\\n`` plus a final ``\\n``; with a labeler, a line holding a scalar gets `` # from <label>``
 (design Decision 2, 5.1), so the output with labels equals the output without them once the
 suffixes are removed (5.5). A scalar's file is ``node.origin.file``: the root file, the YAML include
-it is written in, or the included file of a text include (5.3).
+it is written in, or the included file of a text include (5.3). Below a mapping-form include the
+merged value is printed, and a scalar written as an override has its origin in the including file,
+so the override's file is named (config-include-overrides 3.1, 3.2).
 
 Layout (3.1-3.5, 3.7): two spaces per level; ``key: value`` in document order; a non-empty
 collection value is a ``key:`` line followed by its content two spaces deeper; list items are

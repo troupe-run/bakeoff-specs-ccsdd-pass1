@@ -61,7 +61,7 @@ rules). The write side carries most of the risk and rules, so it gets its own sp
 - [x] config-file-sync -- (step 2) reconcile files against the recorded configuration (set/remove per differing leaf), reconcile-first for every command except `history`, `troupe config watch` (polling, readiness line, include following, SIGINT/SIGTERM → 0), inter-process lock so a `set`'s write-back is never re-recorded. Dependencies: config-foundation, config-set-writeback
 - [x] config-get-show -- (step 3) `get PATH` (scalar; mapping/list → 5 mentioning `config show`), `show [PATH]` (scalar as `get`; otherwise block YAML with includes resolved, text includes as literal blocks; whole config without PATH), `--sources` end-of-line `# from <file>` provenance. Dependencies: config-foundation, config-set-writeback, config-file-sync
 - [x] config-lineage -- (step 4) actor/via/at/reason/change on every history event; `TROUPE_ACTOR` (exit 2 when invalid) and login-name default; `set --reason`; one change id per command, reconcile or import; persisted, legacy stores readable. Dependencies: config-foundation, config-set-writeback, config-file-sync, config-get-show
-- [ ] config-include-overrides -- (step 5) mapping-form includes with `$ref` and deep-merged overrides, new keys under includes written as overrides in the including file (scalar-form → mapping-form conversion), list exceptions, overridden vs non-overridden existing values, exit 4 for non-YAML overrides; CR-B: `set --in-include` keeps the step 1 rule for new keys. Dependencies: config-foundation, config-set-writeback, config-get-show
+- [x] config-include-overrides -- (step 5) mapping-form includes with `$ref` and deep-merged overrides, new keys under includes written as overrides in the including file (scalar-form → mapping-form conversion), list exceptions, overridden vs non-overridden existing values, exit 4 for non-YAML overrides; CR-B: `set --in-include` keeps the step 1 rule for new keys. Dependencies: config-foundation, config-set-writeback, config-get-show
 
 ## Product owner decisions (2026-10-01)
 Full records (decision, alternatives, why, revisit trigger, status) are in each spec's `research.md`.
@@ -196,9 +196,9 @@ comes from.
   of truth); always writing overrides in the root file (contradicts "the file that contains the include reference").
 
 ### Existing Spec Updates
-- [ ] config-foundation -- Requirement 4 (Includes) gains a step-5 note pointing to config-include-overrides for mapping-form includes, the merge and the new exit-4 cases. Dependencies: config-include-overrides
-- [ ] config-set-writeback -- rule 2 / Requirement 3.1–3.2 (new keys) and Requirement 2.1/2.6 (existing values) gain step-5 notes; the test pinning the old rule 2 is updated inside config-include-overrides' tasks. Dependencies: config-include-overrides
-- [ ] config-get-show -- step-5 note: `show` prints the merged view and `--sources` names the including file for overridden scalars (no format change). Dependencies: config-include-overrides
+- [x] config-foundation -- Requirement 4 (Includes) gains a step-5 note pointing to config-include-overrides for mapping-form includes, the merge and the new exit-4 cases. Dependencies: config-include-overrides
+- [x] config-set-writeback -- rule 2 / Requirement 3.1–3.2 (new keys) and Requirement 2.1/2.6 (existing values) gain step-5 notes; the test pinning the old rule 2 is updated inside config-include-overrides' tasks. Dependencies: config-include-overrides
+- [x] config-get-show -- step-5 note: `show` prints the merged view and `--sources` names the including file for overridden scalars (no format change). Dependencies: config-include-overrides
 
 ### Direct Implementation Candidates
 - (none) -- test and docstring updates for the replaced rule 2 are done inside config-include-overrides' tasks, in the same change as the behaviour (collaboration.md).
@@ -221,5 +221,5 @@ PATH VALUE` writes a new key into the included file instead (the step 1 rule).
      combines with it. It does not change events or lineage.
 
 ### Existing Spec Updates (CR-B)
-- [ ] config-include-overrides -- add the In-include requirement, the option's effect on placement and its tests (before implementation starts). Dependencies: none
-- [ ] config-set-writeback -- step-5 note: `set` accepts `--in-include` (config-include-overrides). Dependencies: config-include-overrides
+- [x] config-include-overrides -- add the In-include requirement, the option's effect on placement and its tests (before implementation starts). Dependencies: none
+- [x] config-set-writeback -- step-5 note: `set` accepts `--in-include` (config-include-overrides). Dependencies: config-include-overrides
