@@ -27,7 +27,14 @@ decision":
   entries go through the slot change, absent ones are deleted (block: whole lines through the last
   content line, refused when the entry shares its first line with remaining content, 5.3, 5.7;
   flow: the entry with one adjoining separator on one line, 5.4) and new ones are added in one
-  insertion; a flow mapping none of whose entries stays is rendered anew.
+  insertion; a flow mapping none of whose entries stays is rendered anew. New keys go through the
+  placement walk (config-include-overrides 7.3), so below an include they become overrides;
+* a mapping over a mapping merged from an include and its overrides is merged across the layers
+  (7.3, 7.4): kept keys change at their written entry, removed keys are deleted from every written
+  mapping holding them, an override mapping that would lose every entry is pruned from its holder
+  instead, never past a ``$ref`` mapping (research.md Decision 4), any other written mapping
+  losing every key and gaining none becomes ``{}`` (never a null), and ``{}`` removes every key
+  (the override pruned, the included mapping written as ``{}``) or is refused.
 
 A new key (with any missing intermediate mappings nested under it) or an appended list item goes
 through :meth:`_Planner.add_entries` into the file holding the collection (3.1, 3.2, 4.1): in a
@@ -57,11 +64,18 @@ from troupe.config.model import (
     ConfigScalar,
     ConfigSequence,
     IncludeKind,
+    MappingEntry,
     ScalarStyle,
     SourceFile,
 )
-from troupe.config.overrides import physical_entry
+from troupe.config.overrides import (
+    holder_of,
+    is_ref_key,
+    physical_entry,
+    physical_holders,
+)
 from troupe.config.paths import ConfigPath
+from troupe.config.resolve import walk_path
 from troupe.config.writeback.block_scalar import (
     Chomping,
     literal_fits,
@@ -91,8 +105,10 @@ from troupe.config.writeback.target import (
     AddKeyTarget,
     AppendTarget,
     IncludeSite,
+    KeyPlacement,
     ReplaceTarget,
     SetRequest,
+    place_new_keys,
     text_include_value,
 )
 from troupe.config.writeback.value import NewMapping, NewScalar, NewSequence, NewValue
@@ -108,6 +124,22 @@ _COMPACT_INDENT: Final = 2
 """Entries of a list-item mapping start this many columns right of its ``-`` (8.4, 5.3)."""
 
 _T = TypeVar("_T")
+
+
+@dataclass
+class _Removal:
+    """Entries of one written mapping that a layered merge removes (deleted when planning ends).
+
+    ``at`` is the path of the merged node of which ``mapping`` is a written layer and
+    ``is_override`` whether that layer was reached through an override side: such a mapping
+    losing every entry may be pruned (research.md Decision 4).
+    """
+
+    mapping: ConfigMapping
+    indexes: set[int]
+    at: ConfigPath
+    is_override: bool
+    pruned: bool = False
 
 
 @dataclass(frozen=True)
@@ -147,6 +179,11 @@ class _Planner:
         self._layouts: dict[Path, FileLayout] = {}
         self._edits: dict[Path, list[TextEdit]] = {}
         self._whole: dict[Path, tuple[SourceFile, str]] = {}
+        # Layered-merge removals and the mappings receiving new entries, keyed by ``id``.
+        self._removals: dict[int, _Removal] = {}
+        self._receivers: set[int] = set()
+        # New entries for written mappings, added once pruning is known (sibling styles).
+        self._additions: dict[int, tuple[ConfigMapping, list[tuple[str, NewValue]]]] = {}
 
     # --- entry point -----------------------------------------------------------------------------
 
@@ -186,14 +223,27 @@ class _Planner:
         The first key is the new entry; the keys after it become nested new mappings with VALUE
         at the last one, rendered as one new collection value (7.4).
         """
-        placement = target.placement
-        first, *intermediates = (*placement.prefix, *target.missing)
+        first, *intermediates = target.missing
         for key in reversed(intermediates):
             value = NewMapping(entries=((key, value),))
+        self._place(target.placement, ((first, value),), self._path)
+
+    def _place(
+        self, placement: KeyPlacement, entries: Sequence[tuple[str, NewValue]], path: ConfigPath
+    ) -> None:
+        """Write new ``entries`` at ``placement``, below its ``prefix`` keys created as mappings.
+
+        A written mapping receives them after its last remaining entry (config-include-overrides
+        4.5) when planning ends, so that its sibling styles skip the entries removed or pruned by
+        the same set; a scalar-form include is converted to mapping form holding them (5.1-5.5).
+        """
+        entries = _nest(placement.prefix, entries)
         if placement.convert is not None:
-            self.convert_include(placement.convert, ((first, value),), self._path)
+            self.convert_include(placement.convert, entries, path)
         elif placement.mapping is not None:
-            self.add_entries(placement.mapping, ((first, value),), self._path)
+            mapping = placement.mapping
+            self._receivers.add(id(mapping))
+            self._additions.setdefault(id(mapping), (mapping, []))[1].extend(entries)
         else:  # pragma: no cover - a placement always names a mapping or an include
             raise ValueError("the placement names neither a mapping nor an include")
 
@@ -219,6 +269,7 @@ class _Planner:
         """
         file = collection.origin.file
         layout = self._guard(file, path, lambda: self._layout(file))
+        self._receivers.add(id(collection))
         siblings = _sibling_styles(collection, deleted)
         if collection.style is CollectionStyle.FLOW:
             edit = self._guard(
@@ -448,14 +499,12 @@ class _Planner:
         preferred: QuoteStyle | None = None
         if isinstance(node, ConfigMapping) and node.layers is not None:
             if isinstance(value, NewMapping):
-                # Kept, removed and new keys of a merged mapping live in several files; replacing
-                # only the override would leave the included keys in the merged value.
-                _refuse(
-                    path,
-                    layout.file,
-                    "this change cannot be written: a mapping merged from an include and its "
-                    "overrides cannot be replaced by a mapping",
-                )
+                # Kept, removed and new keys of a merged mapping live in several files.
+                if value.entries:
+                    self._merge_layered(node, value, path, at)
+                else:
+                    self._empty_layered(layout, node, path, at)
+                return True
             # Another kind replaces the override's own value only; the merged value is then it.
             self._replace_value(layout, slot, value, path, preferred)
             return True
@@ -548,11 +597,31 @@ class _Planner:
         path: ConfigPath,
         at: ConfigPath,
     ) -> None:
+        """Merge into an unmerged mapping; its new keys go through the placement walk (7.3).
+
+        When the placement is the mapping itself, they are added in one insertion styled after
+        its last remaining entry (step 1). A flow mapping none of whose entries stays is rendered
+        anew as ``value`` when the placement is the mapping itself. A mapping none of whose
+        entries stays while its new keys are written at another placement becomes ``{}`` (a
+        block mapping emptied of its lines would read back as null).
+        """
         new = dict(value.entries)
         deleted = [index for index, entry in enumerate(node.entries) if entry.key not in new]
-        if node.style is CollectionStyle.FLOW and len(deleted) == len(node.entries):
-            self._render_flow_anew(layout, slot, value, path)
-            return
+        existing = {entry.key for entry in node.entries}
+        added = [(key, item) for key, item in value.entries if key not in existing]
+        placement = self._placement(node, at) if added else None
+        if len(deleted) == len(node.entries):
+            empty = NewMapping(entries=())
+            if placement is not None:
+                if node.style is CollectionStyle.FLOW:
+                    self._render_flow_anew(layout, slot, empty, path)
+                else:
+                    self._replace_value(layout, slot, empty, path, None)
+                self._place(placement, added, path)
+                return
+            if node.style is CollectionStyle.FLOW:
+                self._render_flow_anew(layout, slot, value, path)
+                return
         for entry in node.entries:
             if entry.key in new:
                 self.change_slot(
@@ -564,10 +633,217 @@ class _Planner:
                     at.child(entry.key),
                 )
         self._delete_entries(layout, node, deleted, path)
+        if placement is None:
+            if added:
+                self.add_entries(node, added, path, deleted)
+        else:
+            self._place(placement, added, path)
+
+    def _placement(self, node: ConfigMapping, at: ConfigPath) -> KeyPlacement | None:
+        """Where new keys of ``node`` (at ``at``) go; ``None`` for ``node`` itself (step 1)."""
+        placement = place_new_keys(self._document, at)
+        if placement.mapping is node and not placement.prefix:
+            return None
+        return placement
+
+    # --- mappings merged across layers -----------------------------------------------------------
+
+    def _merge_layered(
+        self, node: ConfigMapping, value: NewMapping, path: ConfigPath, at: ConfigPath
+    ) -> None:
+        """Merge a non-empty mapping into the merged mapping ``node`` at ``at`` (7.3, 7.4).
+
+        Each removed key is removed from every written mapping holding it (the override, the
+        included side, or both); the deletions are made when planning ends, so that an override
+        mapping losing every entry and gaining none is pruned instead (research.md Decision 4).
+        Each kept key changes at its physical entry (7.1, 7.2). New keys go through the placement
+        walk (Requirement 4): they are written last in the override, so they come last in the
+        merged order as in the intended configuration.
+        """
+        new = dict(value.entries)
+        for entry in node.entries:
+            if entry.key not in new:
+                for holder in physical_holders(node, entry.key):
+                    index = _index_of(holder.mapping, holder.entry)
+                    self._remove(holder.mapping, index, at, is_override=holder.is_override)
+        for entry in node.entries:
+            if entry.key in new:
+                written, physical = physical_entry(node, entry.key)
+                file = written.origin.file
+                layout = self._guard(file, path, partial(self._layout, file))
+                self.change_slot(
+                    layout,
+                    entry.value,
+                    partial(layout.entry_slot, written, physical, path),
+                    new[entry.key],
+                    path,
+                    at.child(entry.key),
+                )
         existing = {entry.key for entry in node.entries}
         added = [(key, item) for key, item in value.entries if key not in existing]
         if added:
-            self.add_entries(node, added, path, deleted)
+            self._place(place_new_keys(self._document, at), added, path)
+
+    def _empty_layered(
+        self, layout: FileLayout, node: ConfigMapping, path: ConfigPath, at: ConfigPath
+    ) -> None:
+        """Replace the merged mapping ``node`` by ``{}``: remove every key from every layer.
+
+        The override is pruned (its own entry deleted, upward as for a merge) and the included
+        mapping is written as ``{}``: emptied lines would leave a null there, which does not read
+        back as ``{}``. Only a merge of two plain written mappings can be emptied this way; any
+        other (an override or included side that is itself an include or a merge, or an override
+        that cannot be pruned) is refused (exit 3) naming PATH.
+        """
+        layers = node.layers
+        if layers is None:  # pragma: no cover - only called for merged mappings
+            raise ValueError("not a merged mapping")
+        base, over = layers.base, layers.over
+        parent = self._merged_parent(at)
+        base_holder = None if parent is None else holder_of(parent, at.segments[-1], base)
+        prune = self._prune_link(over, at, is_override=True)
+        if (
+            any(side.layers is not None or side.include is not None for side in (base, over))
+            or base_holder is None
+            or prune is None
+        ):
+            _refuse(
+                path,
+                layout.file,
+                "this change cannot be written: this mapping merged from an include and its "
+                "overrides cannot be replaced by an empty mapping",
+            )
+        holding, index, parent_at, is_override = prune
+        self._remove(holding, index, parent_at, is_override=is_override)
+        if base.entries:
+            self._replace_written(base_holder.mapping, base_holder.entry, NewMapping(entries=()))
+
+    def _replace_written(
+        self, holding: ConfigMapping, entry: MappingEntry, value: NewMapping
+    ) -> None:
+        """Replace the value of the written ``entry`` of ``holding`` by the mapping ``value``.
+
+        A flow mapping is rendered anew in place; any other value is replaced in its slot.
+        """
+        file = holding.origin.file
+        path = self._path
+        layout = self._guard(file, path, partial(self._layout, file))
+        slot = self._guard(file, path, lambda: layout.entry_slot(holding, entry, path))
+        if isinstance(entry.value, ConfigMapping) and entry.value.style is CollectionStyle.FLOW:
+            self._render_flow_anew(layout, slot, value, path)
+        else:
+            self._guard(file, path, lambda: self._replace_value(layout, slot, value, path, None))
+
+    def _remove(
+        self, mapping: ConfigMapping, index: int, at: ConfigPath, *, is_override: bool
+    ) -> None:
+        """Record the removal of entry ``index`` of the written ``mapping`` (:class:`_Removal`)."""
+        removal = self._removals.get(id(mapping))
+        if removal is None:
+            removal = _Removal(mapping=mapping, indexes=set(), at=at, is_override=is_override)
+            self._removals[id(mapping)] = removal
+        removal.indexes.add(index)
+
+    def _removed(self, mapping: ConfigMapping) -> Collection[int]:
+        """Indices of the entries of ``mapping`` that a layered merge removes."""
+        removal = self._removals.get(id(mapping))
+        return () if removal is None else removal.indexes
+
+    def _flush_removals(self) -> None:
+        """Make the recorded removals and additions, pruning emptied overrides (Decision 4).
+
+        A mapping reached through an override side that loses every entry and receives none is
+        not emptied; its own entry is deleted from the mapping holding it instead, which may in
+        turn be pruned. A ``$ref`` mapping keeps its ``$ref`` entry, so pruning never passes it.
+
+        Then each receiving mapping gets its new entries in one insertion, styled after its last
+        entry that remains (4.5). A flow mapping that loses every entry is rendered anew with
+        them. Each other mapping gets one deletion (5.3, 5.4), except that a mapping losing
+        every entry and receiving none becomes ``{}`` at its written entry: emptied lines would
+        read back as null, which an override could hide from the read-back. Such a mapping
+        without a written entry holding it is refused (exit 3) naming PATH.
+        """
+        pending = list(self._removals.values())
+        while pending:
+            removal = pending.pop()
+            mapping = removal.mapping
+            if (
+                removal.pruned
+                or id(mapping) in self._receivers
+                or len(removal.indexes) < len(mapping.entries)
+            ):
+                continue
+            link = self._prune_link(mapping, removal.at, is_override=removal.is_override)
+            if link is None:
+                continue
+            removal.pruned = True
+            holding, index, parent_at, is_override = link
+            self._remove(holding, index, parent_at, is_override=is_override)
+            pending.append(self._removals[id(holding)])
+        rendered: set[int] = set()
+        for key, (mapping, entries) in self._additions.items():
+            losing = self._removals.get(key)
+            emptied = losing is not None and len(losing.indexes) == len(mapping.entries)
+            if losing is not None and emptied and mapping.style is CollectionStyle.FLOW:
+                holder = self._written_entry(losing)
+                self._replace_written(holder[0], holder[1], NewMapping(entries=tuple(entries)))
+                rendered.add(key)
+            else:
+                self.add_entries(mapping, entries, self._path, self._removed(mapping))
+        for key, removal in list(self._removals.items()):
+            if removal.pruned or key in rendered:
+                continue
+            mapping = removal.mapping
+            if key not in self._receivers and len(removal.indexes) == len(mapping.entries):
+                holding, entry = self._written_entry(removal)
+                self._replace_written(holding, entry, NewMapping(entries=()))
+                continue
+            file = mapping.origin.file
+            layout = self._guard(file, self._path, partial(self._layout, file))
+            self._delete_entries(layout, mapping, sorted(removal.indexes), self._path)
+
+    def _written_entry(self, removal: _Removal) -> tuple[ConfigMapping, MappingEntry]:
+        """The written mapping and entry holding ``removal.mapping``, or a refusal (exit 3)."""
+        parent = self._merged_parent(removal.at)
+        holder = (
+            None if parent is None else holder_of(parent, removal.at.segments[-1], removal.mapping)
+        )
+        if holder is None:
+            _refuse(
+                self._path,
+                removal.mapping.origin.file,
+                "this change cannot be written: a mapping that loses every key has no written "
+                "entry to hold an empty mapping",
+            )
+        return holder.mapping, holder.entry
+
+    def _prune_link(
+        self, mapping: ConfigMapping, at: ConfigPath, *, is_override: bool
+    ) -> tuple[ConfigMapping, int, ConfigPath, bool] | None:
+        """The written entry holding the override ``mapping`` (a layer of the merged node at
+        ``at``): its mapping and index, that mapping's merged path and whether it is an override.
+
+        ``None`` when ``mapping`` is not an override, is a ``$ref`` mapping, or is the top of its
+        own written tree.
+        """
+        if not is_override or any(is_ref_key(entry.key) for entry in mapping.entries):
+            return None
+        parent = self._merged_parent(at)
+        if parent is None:
+            return None
+        holder = holder_of(parent, at.segments[-1], mapping)
+        if holder is None:
+            return None
+        parent_at = ConfigPath(at.segments[:-1])
+        index = _index_of(holder.mapping, holder.entry)
+        return holder.mapping, index, parent_at, holder.is_override
+
+    def _merged_parent(self, at: ConfigPath) -> ConfigMapping | None:
+        """The (merged) mapping holding the node at ``at``; ``None`` for the root or a list."""
+        if not at.segments:
+            return None
+        parent = walk_path(self._document.root, ConfigPath(at.segments[:-1])).deepest
+        return parent if isinstance(parent, ConfigMapping) else None
 
     def _merge_sequence(
         self,
@@ -944,6 +1220,7 @@ class _Planner:
 
     def patches(self) -> tuple[FilePatch, ...]:
         """One patch per changed file, in ``document.files`` order (root file first)."""
+        self._flush_removals()
         patches: list[FilePatch] = []
         for file in self._document.files:
             key = file.real_path
@@ -1008,6 +1285,27 @@ def _sibling_styles(
     if not items:
         return SiblingStyles(key=None, value=None)
     return SiblingStyles(key=None, value=_value_style(items[-1]))
+
+
+def _nest(
+    prefix: Sequence[str], entries: Sequence[tuple[str, NewValue]]
+) -> Sequence[tuple[str, NewValue]]:
+    """``entries`` below the keys ``prefix`` created as nested new mappings (4.4)."""
+    if not prefix:
+        return entries
+    first, *rest = prefix
+    value = NewMapping(entries=tuple(entries))
+    for key in reversed(rest):
+        value = NewMapping(entries=((key, value),))
+    return ((first, value),)
+
+
+def _index_of(mapping: ConfigMapping, entry: object) -> int:
+    """The index of ``entry`` (by identity) in ``mapping``."""
+    for index, candidate in enumerate(mapping.entries):
+        if candidate is entry:
+            return index
+    raise ValueError("the entry is not in the mapping")  # pragma: no cover
 
 
 def _raw_style(raw: str) -> QuoteStyle:

@@ -73,7 +73,7 @@ config-lineage are complete. No new runtime dependency is added.
   - Done when planner unit tests show the exact file texts for an overridden scalar change (included file unchanged), a non-overridden change inside the include (including file unchanged), a merged mapping replaced by a scalar (only the override changes), the mapping-form root refusal and the bare text include replacement
   - _Requirements: 7.1, 7.2, 7.5, 7.6_
 
-- [ ] 3.7 Merge mappings across layers: removals, pruning and new keys
+- [x] 3.7 Merge mappings across layers: removals, pruning and new keys
   - A mapping placed over a merged mapping changes kept keys at their written place and removes dropped keys from every layer that writes them. An override mapping that would lose every entry is removed from its holder instead, never past a `$ref` mapping.
   - New keys of any mapping replacement (merged or not) go through the placement walk, into a written mapping or through the conversion.
   - Done when planner unit tests show the exact texts for a merge with removals in both layers, pruning of an emptied override, a merge whose new key becomes an override in an existing `$ref` mapping, and one whose new key converts a scalar-form include
@@ -116,3 +116,4 @@ config-lineage are complete. No new runtime dependency is added.
 - 3.2: `plain_equal` containment for VALUE `$ref` directives ignores key order (the renderer writes VALUE order); a contentless directive (plain `file:` VALUE, or `$ref` without overrides) still equals any loaded include with the same text, so such a `set` over an include with overrides is a no-op rather than a removal of the overrides (pre-existing leniency, recorded for validation).
 - 3.5: `_Planner.convert_include(site, entries, path)` is the single conversion entry point (3.7 routes merge additions to it). A list item written with extra spaces after `-` cannot be converted (read-back refuses, exit 3), as step 1 already behaves for scalar → block mapping on such items.
 - 3.6: `_change_value` has an interim exit-3 refusal for a merged mapping replaced by a mapping (`node.layers is not None and isinstance(value, NewMapping)`) and its test `test_merged_mapping_replaced_by_a_mapping_is_refused_for_now`; 3.7 must replace both with the layered merge.
+- 3.7: removals and additions into written mappings are deferred to `_flush_removals` (start of `patches()`), so pruning and sibling styles see the final picture; emptied non-prunable mappings become `{}` (research Decision 9). The 3.6 interim refusal is gone.

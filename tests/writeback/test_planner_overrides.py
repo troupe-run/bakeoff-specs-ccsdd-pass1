@@ -548,17 +548,261 @@ def test_bare_text_include_in_mapping_form_replaces_its_target(tmp_path: Path) -
     assert patched == {"prompt.txt": "new\n"}
 
 
-@pytest.mark.parametrize("value", ["{}", "{t: 1}", "{u: 4, t: 1}"])
-def test_merged_mapping_replaced_by_a_mapping_is_refused_for_now(
-    tmp_path: Path, value: str
+# --- mappings merged across layers (task 3.7) -----------------------------------------------------
+
+
+def test_merge_removes_keys_from_every_layer_that_writes_them(tmp_path: Path) -> None:
+    """Req 7.3, 7.4: a mapping placed over a merged mapping removes `c` (included only) from the
+    included file, `e` (override only) from the override and `b` (both) from both; the kept `a`
+    is changed in the included file and the kept override `d` stays."""
+    files = {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    b: 20\n    d: 4\n    e: 5\n"
+        "other: 1\n",
+        "coder.yaml": "model: y\nparams:\n  a: 1\n  b: 2\n  c: 3\n",
+    }
+    patched = _replace(tmp_path, files, "coder.params", "{a: 9, d: 4}")
+    assert patched == {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    d: 4\nother: 1\n",
+        "coder.yaml": "model: y\nparams:\n  a: 9\n",
+    }
+
+
+def test_merge_below_a_root_include_removes_keys_in_both_files(tmp_path: Path) -> None:
+    """Req 7.3, 7.4: below a root mapping-form include the override in the root file and the
+    included file both lose the removed key."""
+    files = {
+        ROOT: "$ref: file:base.yaml\ndb:\n  port: 2\n  user: u\n",
+        "base.yaml": "db:\n  host: h\n  port: 1\n",
+    }
+    patched = _replace(tmp_path, files, "db", "{host: h, user: v}")
+    assert patched == {
+        ROOT: "$ref: file:base.yaml\ndb:\n  user: v\n",
+        "base.yaml": "db:\n  host: h\n",
+    }
+
+
+def test_override_that_loses_every_entry_is_pruned(tmp_path: Path) -> None:
+    """Req 7.4 (research.md Decision 4): the override `params: {b: 2}` losing `b` and gaining
+    nothing is removed with its key instead of being left as a null `params:`; the included file
+    is unchanged."""
+    files = {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    b: 2\nother: 1\n",
+        "coder.yaml": "model: y\nparams:\n  a: 1\n",
+    }
+    patched = _replace(tmp_path, files, "coder.params", "{a: 1}")
+    assert patched == {ROOT: "coder:\n  $ref: file:coder.yaml\nother: 1\n"}
+
+
+def test_pruning_also_removes_the_key_from_the_included_file(tmp_path: Path) -> None:
+    """Req 7.4: a key in both layers is removed from the included file while the emptied
+    override holding it is pruned."""
+    files = {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    b: 2\n",
+        "coder.yaml": "model: y\nparams:\n  a: 1\n  b: 0\n",
+    }
+    patched = _replace(tmp_path, files, "coder.params", "{a: 1}")
+    assert patched == {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n",
+        "coder.yaml": "model: y\nparams:\n  a: 1\n",
+    }
+
+
+def test_pruning_repeats_upward_but_keeps_the_ref_mapping(tmp_path: Path) -> None:
+    """Req 7.4 (Decision 4): the emptied nested override `inner` is pruned from the override
+    `params`, which is then empty and pruned from the `$ref` mapping; the `$ref` mapping stays."""
+    files = {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    inner:\n      b: 2\n",
+        "coder.yaml": "params:\n  inner:\n    a: 1\n  z: 0\n",
+    }
+    patched = _replace(tmp_path, files, "coder.params", "{inner: {a: 1}, z: 0}")
+    assert patched == {ROOT: "coder:\n  $ref: file:coder.yaml\n"}
+
+
+def test_pruning_in_a_flow_ref_mapping(tmp_path: Path) -> None:
+    """Req 7.4 (Decision 4): a flow override entry is removed with its separator."""
+    files = {
+        ROOT: "coder: {$ref: file:coder.yaml, params: {b: 2}}\n",
+        "coder.yaml": "model: y\nparams:\n  a: 1\n",
+    }
+    patched = _replace(tmp_path, files, "coder.params", "{a: 1}")
+    assert patched == {ROOT: "coder: {$ref: file:coder.yaml}\n"}
+
+
+def test_merge_new_key_goes_into_the_existing_override(tmp_path: Path) -> None:
+    """Req 7.3, 4.3, 4.5: a key the merged mapping lacks is added to its override, after the last
+    remaining override entry and in its style (`'c'` is removed, so `b` is the sibling); it is
+    last in the merged order."""
+    files = {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    b: 2\n    'c': 'q'\n",
+        "coder.yaml": "model: y\nparams:\n  a: 1\n",
+    }
+    patched = _replace(tmp_path, files, "coder.params", "{a: 1, b: 2, d: r}")
+    assert patched == {ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    b: 2\n    d: r\n"}
+
+
+def test_merge_new_key_becomes_an_override_in_a_bare_ref_mapping(tmp_path: Path) -> None:
+    """Req 7.3, 4.1, 4.4: a mapping replaced below a bare `$ref` mapping gets its new key as an
+    override in the `$ref` mapping, with the intermediate `params`; the included file only gets
+    the change of the kept key."""
+    files = {ROOT: "coder:\n  $ref: file:coder.yaml\n", "coder.yaml": CODER_PARAMS}
+    patched = _replace(tmp_path, files, "coder.params", "{t: 5, k: 2}")
+    assert patched == {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    k: 2\n",
+        "coder.yaml": "model: y\nparams:\n  t: 5\n",
+    }
+
+
+def test_merge_new_key_below_a_kept_included_mapping_goes_into_the_override(
+    tmp_path: Path,
 ) -> None:
-    """Req 7.1, 7.3: a mapping present in both layers is not replaced by a mapping through the
-    override alone (that would keep the included keys); until the layered merge exists such a
-    change is refused with exit 3, naming PATH and the file of the override."""
-    root = "coder:\n  $ref: file:coder.yaml\n  params:\n    u: 3\n"
-    error = _refused_replace(
-        tmp_path, {ROOT: root, "coder.yaml": CODER_PARAMS}, "coder.params", value
-    )
+    """Req 7.3, 4.3, 4.4: a kept key whose mapping is only included gains its new key in the
+    override, which creates the intermediate mapping; the merged order keeps `a` first."""
+    files = {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    b: 2\n",
+        "coder.yaml": "params:\n  a:\n    x: 1\n",
+    }
+    patched = _replace(tmp_path, files, "coder.params", "{a: {x: 1, y: 2}, b: 2}")
+    assert patched == {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    b: 2\n    a:\n      y: 2\n"
+    }
+
+
+def test_merge_new_key_converts_a_scalar_form_include(tmp_path: Path) -> None:
+    """Req 7.3, 4.4, 5.1, 5.2: a mapping replaced inside the content of a scalar-form include
+    converts the include to mapping form with the new key as an override; the kept key is
+    changed in the included file."""
+    files = {ROOT: "coder: file:coder.yaml  # c\n", "coder.yaml": CODER_PARAMS}
+    patched = _replace(tmp_path, files, "coder.params", "{t: 5, k: 2}")
+    assert patched == {
+        ROOT: "coder:  # c\n  $ref: file:coder.yaml\n  params:\n    k: 2\n",
+        "coder.yaml": "model: y\nparams:\n  t: 5\n",
+    }
+
+
+def test_merge_of_a_flow_mapping_in_an_included_file_with_only_new_keys(tmp_path: Path) -> None:
+    """Req 7.3, 7.4, 4.4: an included flow mapping losing every key becomes `{}` there and the
+    new key is written as an override."""
+    files = {ROOT: "coder: file:coder.yaml\n", "coder.yaml": "model: y\nparams: {t: 1}\n"}
+    patched = _replace(tmp_path, files, "coder.params", "{k: 2}")
+    assert patched == {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    k: 2\n",
+        "coder.yaml": "model: y\nparams: {}\n",
+    }
+
+
+def test_merge_of_an_unmerged_mapping_in_the_root_file_is_unchanged(tmp_path: Path) -> None:
+    """Req 4.6, 7.3: a mapping reached through no include is merged in its own file as before."""
+    root = "db:\n  host: a\n  'port': '1'\nother: 1\n"
+    patched = _replace(tmp_path, {ROOT: root}, "db", "{host: b, user: u}")
+    assert patched == {ROOT: "db:\n  host: b\n  user: u\nother: 1\n"}
+
+
+def test_flow_mapping_in_the_root_file_losing_every_key_is_rendered_anew(tmp_path: Path) -> None:
+    """Req 4.6: a flow mapping reached through no include is still rendered anew."""
+    patched = _replace(tmp_path, {ROOT: "db: {a: 1}  # c\n"}, "db", "{b: 2}")
+    assert patched == {ROOT: "db: {b: 2}  # c\n"}
+
+
+@pytest.mark.parametrize(
+    ("value", "root", "included"),
+    [
+        pytest.param(
+            "{t: 1}", "coder:\n  $ref: file:coder.yaml\nother: 1\n", None, id="override-pruned"
+        ),
+        pytest.param(
+            "{u: 4, t: 1}",
+            "coder:\n  $ref: file:coder.yaml\n  params:\n    u: 4\nother: 1\n",
+            None,
+            id="override-changed",
+        ),
+        pytest.param(
+            "{}",
+            "coder:\n  $ref: file:coder.yaml\nother: 1\n",
+            "model: y\nparams: {}\n",
+            id="empty",
+        ),
+    ],
+)
+def test_merged_mapping_replaced_by_a_mapping(
+    tmp_path: Path, value: str, root: str, included: str | None
+) -> None:
+    """Req 7.3, 7.4: a mapping present in both layers replaced by a mapping keeps, changes and
+    removes keys in each layer. `{}` removes every key from every layer: the override is pruned
+    and the included mapping is written as `{}` (a null there would not read back as `{}`)."""
+    files = {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    u: 3\nother: 1\n",
+        "coder.yaml": CODER_PARAMS,
+    }
+    patched = _replace(tmp_path, files, "coder.params", value)
+    expected = {ROOT: root} if included is None else {ROOT: root, "coder.yaml": included}
+    assert patched == expected
+
+
+def test_empty_mapping_over_a_merged_mapping_whose_override_is_an_include_is_refused(
+    tmp_path: Path,
+) -> None:
+    """Req 7.4: `{}` over a merged mapping whose override is itself a mapping-form include
+    cannot remove every key from every layer (the override cannot be pruned through its `$ref`
+    mapping); it is refused with exit 3 naming PATH and the including file."""
+    files = {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    $ref: file:p.yaml\n    u: 3\n",
+        "coder.yaml": CODER_PARAMS,
+        "p.yaml": "v: 1\n",
+    }
+    error = _refused_replace(tmp_path, files, "coder.params", "{}")
     assert error.file == tmp_path / ROOT
     assert error.path == "coder.params"
-    assert "cannot be replaced by a mapping" in str(error)
+    assert "cannot be replaced by an empty mapping" in str(error)
+
+
+# --- mappings emptied without pruning, sibling styles after pruning (task 3.7 review) -----------
+
+
+@pytest.mark.parametrize(
+    ("root", "patched_root"),
+    [
+        pytest.param(
+            "agents:\n  coder: {$ref: file:coder.yaml, params: {b: 20}}\n",
+            "agents:\n  coder: {$ref: file:coder.yaml, params: {n: 7}}\n",
+            id="flow-override",
+        ),
+        pytest.param(
+            "agents:\n  coder:\n    $ref: file:coder.yaml\n    params:\n      b: 20\n",
+            "agents:\n  coder:\n    $ref: file:coder.yaml\n    params:\n      n: 7\n",
+            id="block-override",
+        ),
+    ],
+)
+def test_included_mapping_losing_every_key_becomes_an_empty_mapping(
+    tmp_path: Path, root: str, patched_root: str
+) -> None:
+    """Req 7.3, 7.4: the included `params` loses every key and gains none, so it is written as
+    `{}` rather than left as a null `params:` (which only the override would hide); the override
+    losing its only key and gaining the new one keeps its style."""
+    files = {ROOT: root, "coder.yaml": "params:\n  a: 1\n"}
+    patched = _replace(tmp_path, files, "agents.coder.params", "{n: 7}")
+    assert patched == {ROOT: patched_root, "coder.yaml": "params: {}\n"}
+
+
+def test_unmerged_included_mapping_losing_every_key_becomes_an_empty_mapping(
+    tmp_path: Path,
+) -> None:
+    """Req 7.3, 7.4, 5.1: a block mapping inside a scalar-form include's content that loses every
+    key becomes `{}` there; its new key converts the include and is written as an override."""
+    files = {ROOT: "coder: file:coder.yaml\n", "coder.yaml": "model: y\nparams:\n  t: 1\n"}
+    patched = _replace(tmp_path, files, "coder.params", "{k: 2}")
+    assert patched == {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    k: 2\n",
+        "coder.yaml": "model: y\nparams: {}\n",
+    }
+
+
+def test_new_key_takes_no_style_from_an_entry_that_pruning_removes(tmp_path: Path) -> None:
+    """Req 4.5, 7.3: the override `'inner'` is pruned, so it is no preceding sibling; with no
+    remaining entry the new key gets the minimal style."""
+    files = {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    'inner':\n      b: 2\n",
+        "coder.yaml": "params:\n  inner:\n    a: 1\n",
+    }
+    patched = _replace(tmp_path, files, "coder.params", "{inner: {a: 1}, new: 5}")
+    assert patched == {ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    new: 5\n"}

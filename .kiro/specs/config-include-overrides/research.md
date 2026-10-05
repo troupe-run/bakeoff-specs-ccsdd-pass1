@@ -152,6 +152,21 @@ Recorded in requirements.md (Boundary Context, choices 1–11). The ones with de
   needs no new write machinery: the step 1 insertion code writes into a written mapping.
 - **Revisit**: if the product owner wants `--in-include` to also move existing overrides into the included file.
 
+### Decision 9: A mapping that loses every key becomes `{}`, never null (found in implementation, task 3.7)
+- **Context**: in a collection replacement, a written mapping (often in the included file) can lose every entry
+  and gain none. For example, VALUE replaces a merged mapping, or `{}` is placed over one. Deleting its lines
+  would leave `key:`, which is null. The read-back check can miss that when an override hides the null.
+- **Selected Approach**:
+  - A nested override that empties is pruned (Decision 4).
+  - Any other written mapping that empties is rewritten as `{}` at its written entry.
+  - `{}` placed over a merged mapping prunes the override and writes `{}` on the included side.
+  - When no written entry can hold the `{}`, the set is refused with exit 3.
+- **Alternatives**: refuse with exit 3 (safe but rejects valid requests); leave null (changes the type of the
+  included value, which nobody asked for).
+- **Rationale**: the file keeps the requested type, and the result matches the flow-style behaviour (step 1 writes
+  `{}` for an emptied flow mapping).
+- **Revisit**: if removals must never touch shared files.
+
 ### Product owner review (2026-10-05)
 All six decisions presented (requirements.md Boundary Context choices 1, 2, 5, 7, 8, 9 and 11) are approved.
 - **Contract meaning, confirmed**:
