@@ -151,17 +151,26 @@ class _Planner:
     # --- entry point -----------------------------------------------------------------------------
 
     def replace(self, target: ReplaceTarget, value: NewValue) -> None:
-        """Plan the change of the existing value ``target.node`` to ``value``."""
+        """Plan the change of the existing value ``target.node`` to ``value`` where it is written.
+
+        Below a mapping-form include the parent's written entry comes from
+        :func:`~troupe.config.overrides.physical_entry`: the override when the key is overridden,
+        else the entry in the file it comes from (config-include-overrides 7.1, 7.2). The slot is
+        in that entry's file; ``target.node`` (the merged value) drives comparisons and kind
+        decisions, while the slot holds the written value (the override's own mapping when a
+        mapping present in both layers is replaced).
+        """
         parent = target.parent
-        file = parent.origin.file
+        if isinstance(parent, ConfigMapping):
+            written, entry = physical_entry(parent, str(target.key))
+            file = written.origin.file
+        else:
+            file = parent.origin.file
         layout = self._guard(file, self._path, lambda: self._layout(file))
 
         def slot() -> ValueSlot:
             if isinstance(parent, ConfigMapping):
-                entry = parent.get(str(target.key))
-                if entry is None:  # pragma: no cover - the target was resolved on this mapping
-                    raise ValueError(f"no entry {target.key!r}")
-                return layout.entry_slot(parent, entry, self._path)
+                return layout.entry_slot(written, entry, self._path)
             return layout.item_slot(parent, int(target.key), self._path)
 
         self.change_slot(layout, target.node, slot, value, self._path, self._path)
@@ -437,6 +446,19 @@ class _Planner:
         caller turns that into a refusal (14.9).
         """
         preferred: QuoteStyle | None = None
+        if isinstance(node, ConfigMapping) and node.layers is not None:
+            if isinstance(value, NewMapping):
+                # Kept, removed and new keys of a merged mapping live in several files; replacing
+                # only the override would leave the included keys in the merged value.
+                _refuse(
+                    path,
+                    layout.file,
+                    "this change cannot be written: a mapping merged from an include and its "
+                    "overrides cannot be replaced by a mapping",
+                )
+            # Another kind replaces the override's own value only; the merged value is then it.
+            self._replace_value(layout, slot, value, path, preferred)
+            return True
         if isinstance(node, ConfigScalar) and isinstance(value, NewScalar):
             if node.style in _QUOTED_OR_PLAIN:
                 self._replace_scalar(layout, slot, node, value, path)

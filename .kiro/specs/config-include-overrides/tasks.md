@@ -68,7 +68,7 @@ config-lineage are complete. No new runtime dependency is added.
   - Done when render unit tests cover the helpers, and planner unit tests reproduce the contract example byte for byte and cover no comment, a list item with and without a comment, a flow mapping, a quoted include string kept verbatim, nested intermediate keys and the refused layout
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 6.3_
 
-- [ ] 3.6 Change existing values at their written place
+- [x] 3.6 Change existing values at their written place
   - An existing value is changed where it is written: in the override when it is overridden, otherwise in the file it comes from. A whole mapping-form include root that would change is still refused, and a bare text include is still replaced in its target.
   - Done when planner unit tests show the exact file texts for an overridden scalar change (included file unchanged), a non-overridden change inside the include (including file unchanged), a merged mapping replaced by a scalar (only the override changes), the mapping-form root refusal and the bare text include replacement
   - _Requirements: 7.1, 7.2, 7.5, 7.6_
@@ -115,3 +115,4 @@ config-lineage are complete. No new runtime dependency is added.
 - 3.1: layout `_local(node)` resolves what is written at a slot; walks use `written_parts`. Planner callers must pass written (physical) mappings to `content_end`/`insertion_point`, never merged ones. The loader now keeps a target root's own `$ref` include on the included side of a merge (fixed after 3.1).
 - 3.2: `plain_equal` containment for VALUE `$ref` directives ignores key order (the renderer writes VALUE order); a contentless directive (plain `file:` VALUE, or `$ref` without overrides) still equals any loaded include with the same text, so such a `set` over an include with overrides is a no-op rather than a removal of the overrides (pre-existing leniency, recorded for validation).
 - 3.5: `_Planner.convert_include(site, entries, path)` is the single conversion entry point (3.7 routes merge additions to it). A list item written with extra spaces after `-` cannot be converted (read-back refuses, exit 3), as step 1 already behaves for scalar → block mapping on such items.
+- 3.6: `_change_value` has an interim exit-3 refusal for a merged mapping replaced by a mapping (`node.layers is not None and isinstance(value, NewMapping)`) and its test `test_merged_mapping_replaced_by_a_mapping_is_refused_for_now`; 3.7 must replace both with the layered merge.

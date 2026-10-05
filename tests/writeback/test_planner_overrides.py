@@ -1,13 +1,18 @@
-"""Unit tests of the PatchPlanner writing new keys at their placement (config-include-overrides
-tasks 3.4 and 3.5): ``troupe.config.writeback.planner.plan_patch`` for add-key targets whose
-placement is a written mapping or a scalar-form include to convert to mapping form.
+"""Unit tests of the PatchPlanner writing new keys at their placement and changing existing values
+at their written place (config-include-overrides tasks 3.4, 3.5 and 3.6):
+``troupe.config.writeback.planner.plan_patch`` for add-key targets whose placement is a written
+mapping or a scalar-form include to convert to mapping form, and for replace targets below
+mapping-form includes.
 
 A new key below an include is written as an override in the including file: into an existing
 override (the override side of a merged mapping), into a bare ``$ref`` mapping, or with the
 intermediate mappings the override lacks; the step 1 rules for new keys in that mapping apply
 (insertion point, sibling styles, block or flow). A scalar-form include is first converted to
 mapping form in the file holding its include string (the contract example, research.md Decisions 6
-and 7). A key below a plain mapping is written as before.
+and 7). A key below a plain mapping is written as before. An existing value is changed where it
+is written: in the override when it is overridden, otherwise in the file it comes from; a whole
+mapping-form include root that would change is refused, and a bare text include in mapping form
+has its target's content replaced.
 
 Each case loads a real theatre configuration (root file and included files on disk), resolves the
 set with the real TargetResolver, plans the patch, compares the patched files byte-exactly (the
@@ -27,7 +32,7 @@ from troupe.config.loader import load_config
 from troupe.config.paths import ConfigPath
 from troupe.config.writeback.compare import plain_equal, root_plain
 from troupe.config.writeback.planner import plan_patch
-from troupe.config.writeback.target import AddKeyTarget, resolve_target
+from troupe.config.writeback.target import AddKeyTarget, ReplaceTarget, resolve_target
 from troupe.config.writeback.value import parse_value
 
 ROOT = "troupe.yml"
@@ -35,17 +40,24 @@ CODER = "model: y\ntools: 1\n"
 CODER_PARAMS = "model: y\nparams:\n  t: 1\n"
 
 
-def _plan(tmp_path: Path, files: Mapping[str, str], path: str, value: str) -> dict[str, str]:
-    """Plan an add-key set; return each patched file's name and new text.
+def _plan(
+    tmp_path: Path,
+    files: Mapping[str, str],
+    path: str,
+    value: str,
+    target: type[AddKeyTarget | ReplaceTarget] = AddKeyTarget,
+) -> dict[str, str]:
+    """Plan a set; return each patched file's name and new text.
 
-    Also proves that the target is a new key, that every patch changes its file and that the
-    patched texts, re-loaded together, are the intended configuration (including key order).
+    Also proves that the target is of the ``target`` kind (a new key by default), that every
+    patch changes its file and that the patched texts, re-loaded together, are the intended
+    configuration (including key order).
     """
     _write(tmp_path, files)
     document = load_config(tmp_path / ROOT)
     config_path = ConfigPath.parse(path)
     request = resolve_target(document, config_path, parse_value(value, config_path))
-    assert isinstance(request.target, AddKeyTarget)
+    assert isinstance(request.target, target)
     patches = plan_patch(document, request)
     assert all(patch.new_text != patch.file.text for patch in patches)
     reloaded = load_config(
@@ -370,3 +382,183 @@ def test_conversion_of_an_include_string_on_the_line_after_its_key_is_refused(
     assert str(tmp_path / ROOT) in message
     assert "coder.temp" in message
     assert "this layout cannot be written" in message
+
+
+# --- existing values at their written place (task 3.6) -------------------------------------------
+
+
+def _replace(tmp_path: Path, files: Mapping[str, str], path: str, value: str) -> dict[str, str]:
+    """Plan the change of an existing value; see :func:`_plan`."""
+    return _plan(tmp_path, files, path, value, ReplaceTarget)
+
+
+def _refused_replace(
+    tmp_path: Path, files: Mapping[str, str], path: str, value: str
+) -> WriteRefusedError:
+    """Plan the change of an existing value that must be refused; return the refusal."""
+    _write(tmp_path, files)
+    document = load_config(tmp_path / ROOT)
+    config_path = ConfigPath.parse(path)
+    request = resolve_target(document, config_path, parse_value(value, config_path))
+    assert isinstance(request.target, ReplaceTarget)
+    with pytest.raises(WriteRefusedError) as raised:
+        plan_patch(document, request)
+    assert raised.value.exit_code is ExitCode.WRITE_REFUSED
+    return raised.value
+
+
+def test_overridden_scalar_is_changed_in_the_override(tmp_path: Path) -> None:
+    """Req 7.1: an overridden scalar is changed in the override in the including file; the
+    included file is unchanged."""
+    root = "coder:\n  $ref: file:coder.yaml\n  model: z  # mine\nother: 1\n"
+    patched = _replace(tmp_path, {ROOT: root, "coder.yaml": CODER}, "coder.model", "w")
+    assert patched == {ROOT: "coder:\n  $ref: file:coder.yaml\n  model: w  # mine\nother: 1\n"}
+
+
+def test_overridden_scalar_in_a_flow_ref_mapping_is_changed_there(tmp_path: Path) -> None:
+    """Req 7.1: an override in a flow `$ref` mapping is changed in place, keeping its quotes."""
+    root = "coder: {$ref: file:coder.yaml, model: 'z'}\n"
+    patched = _replace(tmp_path, {ROOT: root, "coder.yaml": CODER}, "coder.model", "w")
+    assert patched == {ROOT: "coder: {$ref: file:coder.yaml, model: 'w'}\n"}
+
+
+def test_value_that_is_not_overridden_is_changed_in_the_included_file(tmp_path: Path) -> None:
+    """Req 7.2: a value below a mapping-form include that is not overridden is changed in the
+    included file; the including file is unchanged."""
+    root = "coder:\n  $ref: file:coder.yaml\n  model: z\n"
+    patched = _replace(tmp_path, {ROOT: root, "coder.yaml": CODER}, "coder.tools", "2")
+    assert patched == {"coder.yaml": "model: y\ntools: 2\n"}
+
+
+def test_value_below_a_bare_ref_mapping_is_changed_in_the_included_file(tmp_path: Path) -> None:
+    """Req 7.2: below a `$ref` mapping without overrides a value is changed where it comes from."""
+    root = "coder:\n  $ref: file:coder.yaml\n"
+    patched = _replace(tmp_path, {ROOT: root, "coder.yaml": CODER}, "coder.model", "w")
+    assert patched == {"coder.yaml": "model: w\ntools: 1\n"}
+
+
+def test_nested_override_is_changed_in_the_override(tmp_path: Path) -> None:
+    """Req 7.1: a key of a mapping present in both layers that the override holds is changed in
+    the override's nested mapping."""
+    root = "coder:\n  $ref: file:coder.yaml\n  params:\n    t: 2\n"
+    patched = _replace(tmp_path, {ROOT: root, "coder.yaml": CODER_PARAMS}, "coder.params.t", "3")
+    assert patched == {ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    t: 3\n"}
+
+
+def test_key_of_a_merged_nested_mapping_only_included_is_changed_there(tmp_path: Path) -> None:
+    """Req 7.2: a key of a mapping present in both layers that only the included side holds is
+    changed in the included file."""
+    root = "coder:\n  $ref: file:coder.yaml\n  params:\n    u: 3\n"
+    patched = _replace(tmp_path, {ROOT: root, "coder.yaml": CODER_PARAMS}, "coder.params.t", "4")
+    assert patched == {"coder.yaml": "model: y\nparams:\n  t: 4\n"}
+
+
+def test_merged_mapping_replaced_by_a_scalar_changes_only_the_override(tmp_path: Path) -> None:
+    """Req 7.1: a mapping present in both layers replaced by a scalar replaces the override's
+    mapping; the included mapping stays and the merged value reads back as the scalar."""
+    root = "coder:\n  $ref: file:coder.yaml\n  params:\n    u: 3\n    v: 4\nother: 1\n"
+    patched = _replace(tmp_path, {ROOT: root, "coder.yaml": CODER_PARAMS}, "coder.params", "5")
+    assert patched == {ROOT: "coder:\n  $ref: file:coder.yaml\n  params: 5\nother: 1\n"}
+
+
+def test_merged_mapping_replaced_by_a_list_changes_only_the_override(tmp_path: Path) -> None:
+    """Req 7.1: a mapping present in both layers replaced by a list replaces the override's
+    flow mapping in flow style."""
+    root = "coder: {$ref: file:coder.yaml, params: {u: 3}}\n"
+    patched = _replace(tmp_path, {ROOT: root, "coder.yaml": CODER_PARAMS}, "coder.params", "[a, b]")
+    assert patched == {ROOT: "coder: {$ref: file:coder.yaml, params: [a, b]}\n"}
+
+
+def test_overridden_list_is_replaced_in_the_override(tmp_path: Path) -> None:
+    """Req 7.1: an overridden list is changed item-wise in the override; the included list is
+    unchanged."""
+    files = {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  tools:\n    - b\n",
+        "coder.yaml": "model: y\ntools:\n  - a\n  - x\n",
+    }
+    patched = _replace(tmp_path, files, "coder.tools", "[c, d]")
+    assert patched == {ROOT: "coder:\n  $ref: file:coder.yaml\n  tools:\n    - c\n    - d\n"}
+
+
+def test_overridden_list_replaced_by_a_scalar(tmp_path: Path) -> None:
+    """Req 7.1: an overridden list replaced by a scalar is replaced in the override."""
+    files = {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  tools:\n    - b\nother: 1\n",
+        "coder.yaml": "model: y\ntools:\n  - a\n",
+    }
+    patched = _replace(tmp_path, files, "coder.tools", "none")
+    assert patched == {ROOT: "coder:\n  $ref: file:coder.yaml\n  tools: none\nother: 1\n"}
+
+
+def test_existing_value_in_a_nested_override_in_an_included_file(tmp_path: Path) -> None:
+    """Req 7.1: an override written in an included file (nested includes) is changed in that
+    file; the root file and the innermost included file are unchanged."""
+    files = {
+        ROOT: "a: file:mid.yaml\n",
+        "mid.yaml": "b:\n  $ref: file:leaf.yaml\n  x: 1\n",
+        "leaf.yaml": "x: 0\ny: 2\n",
+    }
+    patched = _replace(tmp_path, files, "a.b.x", "5")
+    assert patched == {"mid.yaml": "b:\n  $ref: file:leaf.yaml\n  x: 5\n"}
+
+
+def test_value_below_a_nested_include_is_changed_in_the_innermost_file(tmp_path: Path) -> None:
+    """Req 7.2: a value not overridden below an include in an included file is changed in the
+    innermost file it comes from."""
+    files = {
+        ROOT: "a: file:mid.yaml\n",
+        "mid.yaml": "b:\n  $ref: file:leaf.yaml\n  x: 1\n",
+        "leaf.yaml": "x: 0\ny: 2\n",
+    }
+    patched = _replace(tmp_path, files, "a.b.y", "3")
+    assert patched == {"leaf.yaml": "x: 0\ny: 3\n"}
+
+
+def test_overridden_value_of_a_root_include_is_changed_in_the_root_file(tmp_path: Path) -> None:
+    """Req 7.1: an override of a root mapping-form include is changed in the root file."""
+    root = "$ref: file:base.yaml\nname: x\n"
+    patched = _replace(tmp_path, {ROOT: root, "base.yaml": "name: b\nport: 1\n"}, "name", "y")
+    assert patched == {ROOT: "$ref: file:base.yaml\nname: y\n"}
+
+
+@pytest.mark.parametrize(
+    "root",
+    [
+        pytest.param("coder:\n  $ref: file:coder.yaml\n  model: z\n", id="with-overrides"),
+        pytest.param("coder:\n  $ref: file:coder.yaml\n", id="bare"),
+        pytest.param("coder: {$ref: file:coder.yaml, model: z}\n", id="flow"),
+    ],
+)
+def test_mapping_form_include_root_that_would_change_is_refused(tmp_path: Path, root: str) -> None:
+    """Req 7.5: a whole mapping-form include whose value would change is refused with exit 3,
+    naming PATH and the included file."""
+    error = _refused_replace(tmp_path, {ROOT: root, "coder.yaml": CODER}, "coder", "5")
+    assert error.file == tmp_path / "coder.yaml"
+    assert error.path == "coder"
+    message = str(error)
+    assert "coder.yaml" in message
+    assert "change the included file instead" in message
+
+
+def test_bare_text_include_in_mapping_form_replaces_its_target(tmp_path: Path) -> None:
+    """Req 7.6: a text include in bare mapping form set to a string has its target's content
+    replaced; the including file is unchanged."""
+    files = {ROOT: "prompt:\n  $ref: file:prompt.txt\nother: 1\n", "prompt.txt": "old\n"}
+    patched = _replace(tmp_path, files, "prompt", '"new\\n"')
+    assert patched == {"prompt.txt": "new\n"}
+
+
+@pytest.mark.parametrize("value", ["{}", "{t: 1}", "{u: 4, t: 1}"])
+def test_merged_mapping_replaced_by_a_mapping_is_refused_for_now(
+    tmp_path: Path, value: str
+) -> None:
+    """Req 7.1, 7.3: a mapping present in both layers is not replaced by a mapping through the
+    override alone (that would keep the included keys); until the layered merge exists such a
+    change is refused with exit 3, naming PATH and the file of the override."""
+    root = "coder:\n  $ref: file:coder.yaml\n  params:\n    u: 3\n"
+    error = _refused_replace(
+        tmp_path, {ROOT: root, "coder.yaml": CODER_PARAMS}, "coder.params", value
+    )
+    assert error.file == tmp_path / ROOT
+    assert error.path == "coder.params"
+    assert "cannot be replaced by a mapping" in str(error)
