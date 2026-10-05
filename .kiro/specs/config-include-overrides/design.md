@@ -94,7 +94,7 @@ src/troupe/config/
 ├── overrides.py          # NEW: deep_merge, is_ref_key, override_entries, physical_entry, physical_holders, written_parts
 ├── loader.py             # $ref recognition, validation (2.1-2.3), building merged/bare include roots
 └── writeback/
-    ├── compare.py        # IncludeDirective.overrides, VALUE $ref, containment equality, root_plain
+    ├── compare.py        # IncludeDirective.overrides, VALUE $ref, written-overrides equality, root_plain
     ├── target.py         # KeyPlacement walk, AddKeyTarget.placement, $ref PATH refusal (8.1)
     ├── planner.py        # physical replace, layered merge/deletion/pruning, routed additions, conversion
     ├── collection_render.py  # render_ref_form_lines / render_flow_ref_form for the conversion
@@ -282,8 +282,11 @@ def written_parts(node: ConfigNode) -> tuple[ConfigNode, ...]
 - `IncludeDirective` gains `overrides: PlainMapping | None = field(default=None, compare=False)`.
 - `new_to_plain(NewMapping)` with a `$ref` entry whose value is a `file:` string →
   `IncludeDirective(text, None, overrides=<other entries>)`.
-- `plain_equal`: when one directive has `overrides` and the other has content, the content must contain the
-  overrides (mapping into mapping recursively, otherwise `plain_equal`).
+- `node_to_plain` records on a loaded include root's directive its written overrides (the other entries of its
+  `$ref` mapping as loaded; `{}` for a scalar-form or bare include).
+- `plain_equal`: when either directive has no content (an include from VALUE), the texts must be equal and the
+  overrides exactly equal (unordered; a `file:` string has none), so the include's own string over an include
+  with overrides differs (choice 16, research Decision 10); two directives with content compare their contents.
 - `root_plain(document) -> PlainMapping`: the root's plain mapping, unwrapping a root include directive. Used by
   `resolve_target` (current) and `verify_patch` (after).
 
@@ -400,7 +403,7 @@ A load error is raised before any history state is opened (2.4, existing `open_t
   routed additions; conversion edits (comment / no comment / list item / flow / directive on next line refused).
 - Layout: comment detection and indentation step in files with `$ref` mappings; slot extents for a mapping-form
   include root.
-- Compare: directive overrides containment equality; `root_plain`.
+- Compare: directive equality by written overrides; `root_plain`.
 
 ### E2E Tests (real `troupe` console script, real files)
 - The contract example byte for byte: `coder: file:agents/coder.yaml  # c` + `set agents.coder.temperature 0.3`

@@ -4,15 +4,16 @@ This module is the single definition of "same configuration" used for no-op dete
 decisions, verification and the leaf diff:
 
 * :func:`node_to_plain` turns a loaded node into an ordered plain tree in which every include root
-  is an :class:`IncludeDirective` carrying its ``file:`` text and its expanded content;
+  is an :class:`IncludeDirective` carrying its ``file:`` text, its expanded content and its
+  written overrides;
 * :func:`root_plain` is the plain root mapping of a document, unwrapping a mapping-form root
   include;
 * :func:`new_to_plain` turns a parsed VALUE into a plain tree in which every string starting with
   :data:`~troupe.config.constants.INCLUDE_PREFIX` is a directive without content and every mapping
   whose ``$ref`` is such a string is a directive without content carrying its overrides;
 * :func:`plain_equal` compares by type and value (floats by ``repr``), using
-  :func:`~troupe.config.scalars.scalar_equal` (re-exported here) for scalars, and a directive with
-  overrides by containment in the loaded content;
+  :func:`~troupe.config.scalars.scalar_equal` (re-exported here) for scalars, and a VALUE
+  directive by its text and overrides against an include's written overrides;
 * :func:`splice` builds the intended configuration: the value at a path replaced, with mappings and
   lists merged entry-wise and strings placed over text includes kept as the include.
 """
@@ -28,6 +29,7 @@ from troupe.config.model import (
     ConfigScalar,
     IncludeKind,
 )
+from troupe.config.overrides import override_entries
 from troupe.config.paths import ConfigPath, is_index_segment
 from troupe.config.scalars import ScalarValue
 from troupe.config.scalars import scalar_equal as scalar_equal  # re-exported for existing imports
@@ -49,10 +51,12 @@ class IncludeDirective:
     text include without re-deciding the include kind outside the loader.
     """
     overrides: "PlainMapping | None" = field(default=None, compare=False)
-    """For a VALUE mapping-form include (``{$ref: file:..., <overrides>}``): the other entries in
-    VALUE order; ``None`` otherwise.
+    """The overrides written with the include: for a VALUE mapping-form include
+    (``{$ref: file:..., <overrides>}``) the other entries in VALUE order; for a loaded include root
+    the other entries of its ``$ref`` mapping as written (``{}`` for a scalar-form or bare
+    include); ``None`` for a VALUE ``file:`` string, which counts as no overrides.
 
-    Not part of ``==``; :func:`plain_equal` requires a loaded content to contain them.
+    Not part of ``==``; :func:`plain_equal` compares them when one side has no content.
     """
 
 
@@ -72,12 +76,19 @@ def node_to_plain(node: ConfigNode) -> PlainValue:
     An include root becomes ``IncludeDirective(INCLUDE_PREFIX + include.spec, <expanded content>)``
     (a text include's content is the target's exact text). A YAML include whose whole content is
     another ``file:`` string carries only the outer include, so it is one YAML directive whose
-    content is the inner include's value.
+    content is the inner include's value. The directive's ``overrides`` are the plain trees of the
+    other entries of the include's ``$ref`` mapping as written (empty for the scalar form).
     """
     plain = _node_value(node)
-    if node.include is None:
+    include = node.include
+    if include is None:
         return plain
-    return IncludeDirective(INCLUDE_PREFIX + node.include.spec, plain, node.include.kind)
+    written: PlainMapping = {}
+    if include.form is not None:
+        written = {
+            entry.key: node_to_plain(entry.value) for entry in override_entries(include.form)
+        }
+    return IncludeDirective(INCLUDE_PREFIX + include.spec, plain, include.kind, overrides=written)
 
 
 def root_plain(document: ConfigDocument) -> PlainMapping:
@@ -138,10 +149,13 @@ def _include_text(value: NewValue) -> str | None:
 def plain_equal(a: PlainValue, b: PlainValue, *, ordered: bool) -> bool:
     """Return whether two plain trees are the same configuration.
 
-    Directives are equal when their texts are equal and, unless either content is ``None``, their
-    contents are equal; a directive never equals a non-directive value. A contentless directive
-    with ``overrides`` (a VALUE ``$ref`` mapping) and a directive with content are equal when the
-    texts are equal and the content contains the overrides (see :func:`_contains`). With
+    Directives are equal when their texts are equal and their contents are equal; a directive
+    never equals a non-directive value. When either content is ``None`` (an include from VALUE,
+    "whatever the include loads"), the overrides are compared instead: a VALUE include equals a
+    loaded one only with exactly its written overrides (none for a scalar-form or bare include),
+    so the include's own string over an include with overrides differs (choice 16). Overrides
+    are compared ignoring mapping key order (a VALUE written over an existing mapping keeps that
+    mapping's key order) and absent overrides count as none. With
     ``ordered=True`` mappings must also list their keys in the same order (verification);
     ``ordered=False`` ignores mapping key order (no-op detection and merge decisions).
     """
@@ -150,12 +164,8 @@ def plain_equal(a: PlainValue, b: PlainValue, *, ordered: bool) -> bool:
             return False
         if a.text != b.text:
             return False
-        if a.content is None and a.overrides is not None and b.content is not None:
-            return _contains(b.content, a.overrides, ordered=ordered)
-        if b.content is None and b.overrides is not None and a.content is not None:
-            return _contains(a.content, b.overrides, ordered=ordered)
         if a.content is None or b.content is None:
-            return True
+            return plain_equal(a.overrides or {}, b.overrides or {}, ordered=False)
         return plain_equal(a.content, b.content, ordered=ordered)
     if isinstance(a, dict) or isinstance(b, dict):
         if not (isinstance(a, dict) and isinstance(b, dict)):
@@ -172,49 +182,6 @@ def plain_equal(a: PlainValue, b: PlainValue, *, ordered: bool) -> bool:
             return False
         return all(plain_equal(x, y, ordered=ordered) for x, y in zip(a, b, strict=True))
     return scalar_equal(a, b)
-
-
-def _contains(content: PlainValue, overrides: PlainMapping, *, ordered: bool) -> bool:
-    """Return whether the loaded ``content`` contains the mapping ``overrides``.
-
-    ``content`` must be a mapping (or an include directive whose content is one) holding every
-    override key. A mapping override is contained recursively in the content's value, an include
-    override merged into a mapping as :func:`_contains_value` says; any other override must be
-    :func:`plain_equal` (with ``ordered``) to it. Containment ignores the order of
-    keys: the merge decides where override keys land among the included keys, and extra content
-    keys come from the included file.
-    """
-    if isinstance(content, IncludeDirective):
-        content = content.content
-    if not isinstance(content, dict):
-        return False
-    for key, override in overrides.items():
-        if key not in content:
-            return False
-        if not _contains_value(content[key], override, ordered=ordered):
-            return False
-    return True
-
-
-def _contains_value(loaded: PlainValue, override: PlainValue, *, ordered: bool) -> bool:
-    """Return whether the loaded value at an override's key holds the ``override``.
-
-    An include override (a contentless directive) whose key holds a mapping in the included file
-    is merged into that mapping by the loader (1.7), so the loaded value is a plain mapping: a
-    scalar-form include then holds (its content is not known here) and a ``$ref`` form needs its
-    own overrides contained in that mapping.
-    """
-    if isinstance(override, dict):
-        return _contains(loaded, override, ordered=ordered)
-    if (
-        isinstance(override, IncludeDirective)
-        and override.content is None
-        and isinstance(loaded, dict)
-    ):
-        if override.overrides is None:
-            return True
-        return _contains(loaded, override.overrides, ordered=ordered)
-    return plain_equal(override, loaded, ordered=ordered)
 
 
 def splice(

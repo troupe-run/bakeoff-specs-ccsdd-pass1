@@ -26,6 +26,9 @@ changed and no event (9.2, 9.3).
 Task 4.4 pins how 7.5 judges "differs": as for a scalar-form include (rule 4), so a mapping
 equal to the merged value is refused.
 
+Task 5.1 (choice 16) pins the include's own string (or a `$ref` VALUE with other overrides) over an
+include with overrides as refused, and exactly the written overrides as a no-op.
+
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
 
@@ -765,6 +768,92 @@ def test_mapping_equal_to_the_merged_value_is_refused_like_a_scalar_form_include
     problem = _assert_refused(theatre, result, theatre / CODER_FILE, "agents.coder", start)
     assert "file:agents/coder.yaml" in problem
     assert snapshot_tree(theatre) == before
+
+
+# ---- 7.5, choice 16: an include's own string over its overrides ----
+
+PARAMS_WRITTEN = "{$ref: file:agents/coder.yaml, params: {seed: 9, temp: 0.3}, model: big}"
+"""VALUE naming the include of `agents.coder` in PARAMS_ROOT with exactly its written overrides."""
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "file:agents/coder.yaml",
+        "{$ref: file:agents/coder.yaml}",
+        "{$ref: file:agents/coder.yaml, model: big}",
+        "{$ref: file:agents/coder.yaml, params: {seed: 9}, model: big}",
+        "{$ref: file:agents/coder.yaml, params: {seed: 9, temp: 0.3}, model: big, max_tokens: 100}",
+        "{$ref: file:agents/coder.yaml, params: {seed: 9, temp: 0.3}, model: small}",
+    ],
+    ids=["own-string", "bare-ref", "fewer", "fewer-nested", "more", "other"],
+)
+def test_own_include_string_over_an_include_with_overrides_is_refused(
+    make_theatre: MakeTheatre, value: str
+) -> None:
+    """Req 7.5, 8.2, 9.1: over `agents.coder`, a mapping-form include with overrides, the include's
+    own string, `{$ref: <same>}`, or a `$ref` VALUE with fewer, more or other overrides than are
+    written exits 3 with empty stdout and a stderr line naming PATH and the included file; no
+    file changes and nothing is recorded (choice 16)."""
+    theatre = make_theatre(PARAMS_ROOT, files={CODER_FILE: PARAMS_CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    result = run_set(theatre, "agents.coder", value)
+
+    problem = _assert_refused(theatre, result, theatre / CODER_FILE, "agents.coder", start)
+    assert "file:agents/coder.yaml" in problem
+    assert snapshot_tree(theatre) == before
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        PARAMS_WRITTEN,
+        "{model: big, $ref: file:agents/coder.yaml, params: {temp: 0.3, seed: 9}}",
+    ],
+    ids=["as-written", "reordered"],
+)
+def test_ref_value_with_exactly_the_written_overrides_is_a_no_op(
+    make_theatre: MakeTheatre, value: str
+) -> None:
+    """Req 7.5, 8.2, 9.1: a `$ref` VALUE naming the same include with exactly the written overrides
+    (in any key order) equals `agents.coder`: exit 0, empty output, no file changes and nothing
+    is recorded."""
+    theatre = make_theatre(PARAMS_ROOT, files={CODER_FILE: PARAMS_CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "agents.coder", value))
+
+    assert snapshot_tree(theatre) == before
+    assert len(_history(theatre)) == start
+
+
+@pytest.mark.parametrize(
+    "root",
+    [
+        "agents:\n  coder: file:agents/coder.yaml\n",
+        "agents:\n  coder:\n    $ref: file:agents/coder.yaml\n",
+        "agents:\n  coder: {$ref: file:agents/coder.yaml}\n",
+    ],
+    ids=["scalar-form", "bare-block", "bare-flow"],
+)
+@pytest.mark.parametrize("value", ["file:agents/coder.yaml", "{$ref: file:agents/coder.yaml}"])
+def test_own_include_string_over_an_include_without_overrides_is_a_no_op(
+    make_theatre: MakeTheatre, root: str, value: str
+) -> None:
+    """Req 7.5, 8.2 (config-set-writeback 2.8): over a scalar-form or bare mapping-form include,
+    the include's own string (or `{$ref: <same>}`) is a no-op: exit 0, empty output, no file
+    changes and nothing is recorded."""
+    theatre = make_theatre(root, files={CODER_FILE: CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "agents.coder", value))
+
+    assert snapshot_tree(theatre) == before
+    assert len(_history(theatre)) == start
 
 
 # ---- 7.6: a bare text include in mapping form ----
