@@ -34,6 +34,18 @@ an ``origin`` in the target file. A text include is a ``ConfigScalar`` whose ``v
 target's exact text, with ``style=None``, ``origin=Origin(target, Span(0, len(target.text)))`` and
 ``include.kind == IncludeKind.TEXT``.
 
+Mapping-form includes and merged mappings
+-----------------------------------------
+A mapping-form include ``{$ref: "file:...", <overrides>}`` keeps the ``$ref`` mapping as written in
+``include.form``. With overrides, its value is the deep merge of the included content with the
+overrides (``troupe.config.overrides.deep_merge``): a **merged mapping**, whose ``layers`` hold the
+included side (``base``) and the override side (``over``) as loaded. Every nested mapping present
+on both sides is merged too. A merged mapping has the ``style`` and ``origin`` of its included side;
+its scalars and lists are the nodes of the layer they come from, so their origins name their own
+file.
+A merged mapping never contains a ``$ref`` entry. Scalar-form includes and unmerged nodes have
+``include.form is None`` and ``layers is None``.
+
 Invariants: keys within one mapping are unique; no node has an explicit tag or anchor; values are
 built-ins only.
 """
@@ -96,7 +108,11 @@ class IncludeRef:
     kind: IncludeKind  # YAML or TEXT
     spec: str  # text after "file:" exactly as written
     target: SourceFile  # the included file
-    directive: Origin  # span of the "file:..." scalar in the including file
+    directive: Origin  # span of the "file:..." scalar in the including file (or the `$ref` value)
+    form: "ConfigMapping | None" = None
+    """Mapping form: the ``$ref`` mapping as written in the including file (its entries: ``$ref``
+    with the raw include string scalar, then the overrides as loaded). ``None`` for the scalar
+    form."""
 
 
 class ScalarStyle(Enum):
@@ -137,13 +153,22 @@ class MappingEntry:
 
 
 @dataclass(frozen=True)
+class MergeLayers:
+    """The two written sides of a merged mapping (a mapping-form include with overrides)."""
+
+    base: "ConfigMapping"  # the included side as loaded (an include root's base has include=None)
+    over: "ConfigMapping"  # the override side as loaded; for an include root, its ``$ref`` mapping
+
+
+@dataclass(frozen=True)
 class ConfigMapping:
-    """A mapping; ``entries`` are in document order."""
+    """A mapping; ``entries`` are in document order (merged order for a merged mapping)."""
 
     entries: tuple[MappingEntry, ...]
     style: CollectionStyle
     origin: Origin
     include: IncludeRef | None = None
+    layers: MergeLayers | None = None  # set on every merged mapping, None otherwise
 
     def get(self, key: str) -> MappingEntry | None:
         """Return the entry whose key equals ``key``, or ``None`` when there is none."""

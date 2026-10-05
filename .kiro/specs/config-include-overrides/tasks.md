@@ -9,8 +9,8 @@ passing.
 **External prerequisites.** config-foundation, config-set-writeback, config-file-sync, config-get-show and
 config-lineage are complete. No new runtime dependency is added.
 
-- [ ] 1. Foundation: the layered model and its lookups
-- [ ] 1.1 Record mapping-form includes and merged mappings in the model, and provide the deep merge and the written-mapping lookups
+- [x] 1. Foundation: the layered model and its lookups
+- [x] 1.1 Record mapping-form includes and merged mappings in the model, and provide the deep merge and the written-mapping lookups
   - The model records the `$ref` mapping as written for a mapping-form include, and both layers (included side, override side) for every merged mapping. Scalar-form includes and unmerged nodes look exactly as before. The reserved key `$ref` has one named home.
   - The deep merge keeps the included keys in their order, replaces an overridden value in place (merging recursively where both sides are mappings), appends the override-only keys in their order, never carries the `$ref` entry, and never mutates its inputs.
   - The lookups give, for a key of a merged mapping, the written mapping and entry that hold its value (override side first). They also give every written mapping that holds a key, with the override chain leading to it, and the written parts of a node for walks over the files.
@@ -108,3 +108,6 @@ config-lineage are complete. No new runtime dependency is added.
   - Add step-5 notes to config-foundation Requirement 4, config-set-writeback rule 2 / Requirements 2 and 3 and 11.5 (the conversion exception), and config-get-show (merged view, override provenance), and the `--in-include` option on config-set-writeback's `set` usage (CR-B). Update module docstrings that describe includes or the new-key rule. Tick the step-5 items in the roadmap.
   - The spec, docstring and roadmap edits are the bookkeeping of the same change (collaboration.md). This task adds no behaviour.
   - Done when every requirement ID of this spec is named by at least one test docstring, the notes are in place, and the full test suite, mypy and ruff pass
+
+## Implementation Notes
+- 1.1: merged entries for a key that is a mapping on both sides keep the base entry's key/key_origin; writers must locate written positions through `physical_entry`/`physical_holders`, never merged entries. Pruning (3.7) uses `Holder.is_override` and `holder_of(parent, key, written)`. `ConfigMapping` equality includes `layers`: never compare merged and plain trees with `==` (use plain trees).

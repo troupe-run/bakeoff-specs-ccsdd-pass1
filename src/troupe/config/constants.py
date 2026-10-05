@@ -15,6 +15,9 @@ CONFIG_FILE_NAMES: Final = ("troupe.yml", "troupe.yaml")
 INCLUDE_PREFIX: Final = "file:"
 """Prefix of a string value that includes another file."""
 
+INCLUDE_REF_KEY: Final = "$ref"
+"""Reserved key of a mapping-form include ``{$ref: "file:...", <overrides>}``."""
+
 YAML_INCLUDE_SUFFIXES: Final = (".yml", ".yaml")
 """Include targets with these suffixes (case-sensitive) are embedded as parsed YAML.
 
