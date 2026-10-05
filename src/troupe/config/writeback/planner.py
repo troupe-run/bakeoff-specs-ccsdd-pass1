@@ -158,15 +158,27 @@ class _Planner:
         self.change_slot(layout, target.node, slot, value, self._path, self._path)
 
     def add_key(self, target: AddKeyTarget, value: NewValue) -> None:
-        """Plan a new key in ``target.mapping``, with the missing intermediate mappings (3.1, 3.2).
+        """Plan a new key at its placement, with the missing intermediate mappings (3.1, 3.2).
 
-        The first missing key is the new entry; the keys after it become nested new mappings with
-        VALUE at the last one, rendered as one new collection value (7.4).
+        A placement naming a written mapping (an override side, a ``$ref`` mapping or a plain
+        mapping) receives the keys ``prefix + missing`` there (config-include-overrides 4.1,
+        4.3-4.6). A scalar-form include to convert is written by the step 1 rule, into the
+        deepest existing mapping ``target.mapping`` with the keys ``missing``.
+
+        The first key is the new entry; the keys after it become nested new mappings with VALUE
+        at the last one, rendered as one new collection value (7.4).
         """
-        first, *intermediates = target.missing
+        placement = target.placement
+        if placement.mapping is not None:
+            mapping = placement.mapping
+            keys = (*placement.prefix, *target.missing)
+        else:
+            mapping = target.mapping
+            keys = target.missing
+        first, *intermediates = keys
         for key in reversed(intermediates):
             value = NewMapping(entries=((key, value),))
-        self.add_entries(target.mapping, ((first, value),), self._path)
+        self.add_entries(mapping, ((first, value),), self._path)
 
     def append(self, target: AppendTarget, value: NewValue) -> None:
         """Plan VALUE as a new last item of ``target.sequence`` (4.1)."""

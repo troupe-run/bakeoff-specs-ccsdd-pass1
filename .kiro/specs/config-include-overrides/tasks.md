@@ -56,7 +56,7 @@ config-lineage are complete. No new runtime dependency is added.
   - _Boundary: Target_
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.6, 6.2, 6.3, 8.1_
 
-- [ ] 3.4 Write a new key at its placement when that is a written mapping
+- [x] 3.4 Write a new key at its placement when that is a written mapping
   - The planner writes the new key (with any intermediate mappings from the placement) into the written mapping the placement names, under the step 1 rules for new keys there (insertion point, sibling styles, block or flow). A placement that needs a conversion keeps the step 1 behaviour (the deepest mapping) until 3.5 switches it over, so the suite keeps passing.
   - Done when planner unit tests show the exact texts for a key added to an existing override, to a bare `$ref` mapping, below an included nested mapping (creating `params:` in the override), and to a plain mapping (unchanged behaviour), and the full suite passes
   - _Requirements: 4.1, 4.3, 4.4, 4.5, 4.6_
