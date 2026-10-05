@@ -282,6 +282,15 @@ Terms used below:
     - choices 1 and 2 (exit 4);
     - choices 7 and 8 (exit 3, consistent with rule 4 under `set`).
 
+- **Product owner review of CR-B (2026-10-05)**: Requirement 10 and choices 12–15 are approved.
+  - *Confirmed as the contract's meaning*:
+    - choice 12 (the flag changes only where a new key is written; existing values still change where they live);
+    - choice 13 ("the included file" is the step 1 rule's file containing the deepest existing ancestor mapping,
+      the innermost file for nested includes, and that rule applies when the ancestor is also, or only, in an
+      override).
+  - *Out of contract, our choice, accepted*: choices 14 and 15 (the flag is accepted with no include involved; its
+    parsing, including exit 2 for `--in-include=TEXT`).
+
 ## Requirements
 
 ### Requirement 1: Mapping-form includes

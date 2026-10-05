@@ -165,6 +165,15 @@ All six decisions presented (requirements.md Boundary Context choices 1, 2, 5, 7
   - Choices 7 and 8: exit 3, consistent with rule 4 under `set`.
 - **Status**: confirmed; revisit only if the contract changes.
 
+### Product owner review of CR-B (2026-10-05)
+Requirement 10 and choices 12–15 (Decision 8) are approved.
+- **Contract meaning, confirmed**:
+  - Choice 12: In-include changes only where a new key is written.
+  - Choice 13: "the included file" is the step 1 rule's file, the innermost one for nested includes, including when
+    the ancestor is also, or only, in an override.
+- **Out of contract, our choice, accepted**: choices 14 and 15.
+- **Status**: confirmed; revisit only if the contract changes.
+
 ## Synthesis Outcomes
 - **Generalization**: one placement walk serves both `AddKeyTarget` (4.x, 6.x) and the new keys of collection
   replacements (7.3). One physical-entry lookup serves replacement (7.1, 7.2), merge and deletion (7.4).
