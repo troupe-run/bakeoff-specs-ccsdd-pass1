@@ -134,3 +134,9 @@ Rejected alternatives:
      included file) — "existing settings still change where they live".
   10. *VALUE containing a `$ref` mapping*: written as given, like a `file:` string (decision D): the read-back must
      be the mapping-form include it describes, else exit 3.
+
+## CR-B: `set --in-include` (added 2026-10-05)
+Contract section "In-include": `set --in-include PATH VALUE` writes a new key into the included file instead (the
+step 1 rule). Sometimes a new setting genuinely belongs in the shared file, and the developer must be able to say
+so explicitly. In scope: the option, its parsing, and placement following the step 1 rule when it is given. See
+roadmap.md "CR-B" for the open choices to settle in requirements.
