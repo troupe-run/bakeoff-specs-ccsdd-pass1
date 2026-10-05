@@ -122,7 +122,7 @@ config-lineage are complete. No new runtime dependency is added.
   - Done when target/planner unit tests and e2e tests show a shared bare and a shared scalar-root middle file, a shared file whose nested `coder: file:leaf.yaml` is converted, and a shared file reached once via an outer include with overrides of its own (merged order), each written once in the middle file with the key visible at every place and one `set` event per new leaf path; plus guards that an existing-value change and `--in-include` into a shared file are still refused
   - _Requirements: 4.2, 4.8, 9.2_
 
-- [ ] 6. Writes to files included at more than one place (choice 18)
+- [x] 6. Writes to files included at more than one place (choice 18)
 - [x] 6.1 Replicate every written change at every place that reaches its written location
   - Generalise the 5.2 widening of the intended configuration from override-rule additions to every planned change: existing-value changes (rule 1), additions by the step 1 rule (`--in-include`, list items), list appends, removals, conversions and text-include target replacements. Identify each change by its written location (file real path and span). At every other path reaching that location, apply the change merged with that place's own overrides, so an outer override still wins there. The read-back comparison stays exact.
   - The guards from 5.2 that pinned refusals for existing values, `--in-include` and list items in shared files now expect the write.
@@ -134,7 +134,7 @@ config-lineage are complete. No new runtime dependency is added.
   - Done when unit and e2e tests show the agreeing case (written once, events at both places) and the conflicting case (exit 3, empty stdout, message names PATH and the file, tree unchanged, no event)
   - _Requirements: 11.4, 11.5_
 
-- [ ] 6.3 Note the step 1 read-back example as superseded and check traceability
+- [x] 6.3 Note the step 1 read-back example as superseded and check traceability
   - Add a step-5 note to config-set-writeback 14.2 (a file included at more than one place no longer causes a refusal by itself; config-include-overrides Requirement 11), update design.md (Verify, Planner) and the module docstrings, and check that 11.1–11.5 are named by tests
   - Done when the notes are in place and the full suite, mypy and ruff pass
 

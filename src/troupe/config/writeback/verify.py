@@ -7,7 +7,9 @@ written by this set are not overridden and are read (never written) from disk by
 exactly as a later ``show`` would read them. Any load error (including a missing, unreadable or
 unloadable target of a new include and an include cycle) and any difference from the intended
 configuration (including key order and include directives) is a :class:`WriteRefusedError`
-(exit 3) naming the first patched file and PATH (14.2, 14.8).
+(exit 3) naming the first patched file and PATH (14.2, 14.8). The intended configuration comes from
+the setter: for a file included at several places it already holds the change at every place
+(config-include-overrides 11.2), so a shared file is not refused merely for being shared.
 """
 
 from collections.abc import Sequence
