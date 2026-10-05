@@ -1,9 +1,9 @@
 """Unit tests of the deep merge of mapping-form includes (task 1.1):
 ``troupe.config.overrides.deep_merge`` and the layer fields of the model.
 
-The loader does not recognise ``$ref`` yet (task 2.1), so each case loads real files from a
-temporary theatre with the existing loader and merges the included content (``coder.yaml``) with an
-override mapping written in the root file, as the loader will do for ``{$ref: ..., <overrides>}``.
+Each case loads real files from a temporary theatre and merges the included content
+(``coder.yaml``) with the ``$ref`` mapping written in the root file (``include.form``), as the
+loader does for ``{$ref: ..., <overrides>}``.
 
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
@@ -76,7 +76,10 @@ def _layers(tmp_path: Path) -> tuple[ConfigMapping, ConfigMapping, IncludeRef]:
     _write(tmp_path, {"coder.yaml": CODER, ROOT: CONFIG})
     document = load_config(tmp_path / ROOT)
     root_include = _mapping(_value(_mapping(_value(document.root, "agents")), "coder"))
-    over = _mapping(_value(document.root, "over"))
+    # The loader merges ``over`` itself (task 2.1); its ``$ref`` mapping as written is the form.
+    loaded_over = _value(document.root, "over")
+    assert loaded_over.include is not None
+    over = _mapping(loaded_over.include.form)
     assert root_include.include is not None
     include = dataclasses.replace(root_include.include, form=over)
     return dataclasses.replace(root_include, include=None), over, include

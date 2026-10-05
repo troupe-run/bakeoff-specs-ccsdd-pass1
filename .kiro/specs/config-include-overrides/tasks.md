@@ -20,7 +20,7 @@ config-lineage are complete. No new runtime dependency is added.
   - _Requirements: 1.2, 1.3, 1.5, 7.1, 7.2_
 
 - [ ] 2. Core: loading mapping-form includes
-- [ ] 2.1 Load mapping-form includes wherever a value may be written
+- [x] 2.1 Load mapping-form includes wherever a value may be written
   - A mapping with a `$ref` key whose value is an include string becomes an include of that target, relative to the file holding it. With overrides, its value is the deep merge. Bare, it is exactly the scalar-form include (YAML or text).
   - Works in the root file and in included files, at the document root, as a list item, in block and flow style, inside overrides and inside included content. An override value that is itself an include is resolved before merging. Missing targets, cycles and unloadable targets fail as for scalar-form includes, and the targets are listed among the files read.
   - Done when loader unit tests show these cases loading to the expected values (and the same plain form as the scalar form for a bare include), with no `$ref` key anywhere in the loaded value
@@ -111,3 +111,4 @@ config-lineage are complete. No new runtime dependency is added.
 
 ## Implementation Notes
 - 1.1: merged entries for a key that is a mapping on both sides keep the base entry's key/key_origin; writers must locate written positions through `physical_entry`/`physical_holders`, never merged entries. Pruning (3.7) uses `Holder.is_override` and `holder_of(parent, key, written)`. `ConfigMapping` equality includes `layers`: never compare merged and plain trees with `==` (use plain trees).
+- 2.1: a mapping-form root now loads with `root.include` set; writeback must unwrap it (3.2 root plain, 3.3 resolve_target). Guards for 2.2's three refusals already raise ConfigLoadError in loader.py; 2.2 adds their tests and final messages.

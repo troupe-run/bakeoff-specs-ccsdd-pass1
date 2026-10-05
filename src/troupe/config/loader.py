@@ -26,6 +26,17 @@ string and is never parsed. A YAML target already on the include chain from the 
 Every produced node carries an :class:`IncludeRef`. Each file is read at most once; a file
 included several times (a diamond) is shared and listed once in ``ConfigDocument.files``.
 
+Mapping-form includes (config-include-overrides Requirement 1): a mapping with a key whose text is
+:data:`INCLUDE_REF_KEY` (any key style) is an include of that key's value, which is kept as written
+(never expanded) and must be an include string. The mapping as written is ``IncludeRef.form``; its
+other entries, the overrides, are built as usual (so they may hold includes themselves). A bare
+``$ref`` mapping loads exactly as the scalar form of the same string, YAML or text. With overrides,
+the value is :func:`troupe.config.overrides.deep_merge` of the included mapping with the form, so
+no ``$ref`` key is part of the loaded value. Overrides on a non-YAML target, on a YAML target
+whose content is not a mapping, and a ``$ref`` value that is not an include string are refused.
+This works wherever a value may be written, including the document root (which must still load
+as a mapping).
+
 Nothing is ever created, modified, renamed or deleted (3.6).
 """
 
@@ -38,7 +49,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import MarkedYAMLError, YAMLError
 from ruamel.yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
-from troupe.config.constants import INCLUDE_PREFIX, YAML_INCLUDE_SUFFIXES
+from troupe.config.constants import INCLUDE_PREFIX, INCLUDE_REF_KEY, YAML_INCLUDE_SUFFIXES
 from troupe.config.errors import ConfigLoadError
 from troupe.config.model import (
     CollectionStyle,
@@ -56,6 +67,7 @@ from troupe.config.model import (
     SourceFile,
     Span,
 )
+from troupe.config.overrides import deep_merge, is_ref_key, override_entries
 from troupe.config.paths import ROOT, ConfigPath
 from troupe.config.scalars import ScalarValue, resolve_plain_scalar
 
@@ -235,10 +247,7 @@ class _Builder:
     def build(self, node: Node, path: ConfigPath) -> ConfigNode:
         self._refuse_properties(node, path)
         if isinstance(node, ScalarNode):
-            style = self._scalar_style(node, path)
-            scalar = ConfigScalar(
-                value=_scalar_value(node, style), style=style, origin=self._origin(node)
-            )
+            scalar = self._scalar(node, path)
             if isinstance(scalar.value, str) and scalar.value.startswith(INCLUDE_PREFIX):
                 return self._include(scalar, scalar.value[len(INCLUDE_PREFIX) :], path)
             return scalar
@@ -255,8 +264,17 @@ class _Builder:
             f"unsupported YAML node {type(node).__name__}", file=self._source.path, path=_text(path)
         )
 
-    def _build_mapping(self, node: MappingNode, path: ConfigPath) -> ConfigMapping:
+    def _scalar(self, node: ScalarNode, path: ConfigPath) -> ConfigScalar:
+        """Build a scalar as written, without include expansion."""
+        style = self._scalar_style(node, path)
+        return ConfigScalar(
+            value=_scalar_value(node, style), style=style, origin=self._origin(node)
+        )
+
+    def _build_mapping(self, node: MappingNode, path: ConfigPath) -> ConfigNode:
+        """Build a mapping; one with a ``$ref`` key is a mapping-form include (Req 1.1)."""
         entries: list[MappingEntry] = []
+        directive: ConfigScalar | None = None
         seen_text: set[str] = set()
         seen_values: set[tuple[type, ScalarValue]] = set()
         for key_node, value_node in node.value:
@@ -288,24 +306,67 @@ class _Builder:
             seen_text.add(key)
             if is_typed:
                 seen_values.add(typed)
+            if is_ref_key(key):
+                # The include string stays as written in the form; it is expanded below.
+                directive = self._ref_value(value_node, key_path, path)
+                value: ConfigNode = directive
+            else:
+                value = self.build(value_node, key_path)
             entries.append(
                 MappingEntry(
                     key=key,
                     key_origin=self._origin(key_node),
                     key_style=key_style,
-                    value=self.build(value_node, key_path),
+                    value=value,
                 )
             )
-        return ConfigMapping(
+        mapping = ConfigMapping(
             entries=tuple(entries), style=_collection_style(node), origin=self._origin(node)
         )
+        if directive is None:
+            return mapping
+        assert isinstance(directive.value, str)  # checked by ``_ref_value``
+        return self._include(directive, directive.value[len(INCLUDE_PREFIX) :], path, form=mapping)
 
-    def _include(self, directive: ConfigScalar, spec: str, path: ConfigPath) -> ConfigNode:
-        """Replace the ``file:`` string ``directive`` by its target (4.1-4.7)."""
+    def _ref_value(self, node: Node, key_path: ConfigPath, path: ConfigPath) -> ConfigScalar:
+        """Return the ``$ref`` value as written; it must be an include string (Req 2.2)."""
+        self._refuse_properties(node, key_path)
+        if isinstance(node, ScalarNode):
+            scalar = self._scalar(node, key_path)
+            if isinstance(scalar.value, str) and scalar.value.startswith(INCLUDE_PREFIX):
+                return scalar
+        raise ConfigLoadError(
+            f"`{INCLUDE_REF_KEY}` must be an include string ({INCLUDE_PREFIX}...)",
+            file=self._source.path,
+            path=_text(path),
+        )
+
+    def _include(
+        self,
+        directive: ConfigScalar,
+        spec: str,
+        path: ConfigPath,
+        *,
+        form: ConfigMapping | None = None,
+    ) -> ConfigNode:
+        """Replace the include string ``directive`` by its target (4.1-4.7).
+
+        ``form`` is the ``$ref`` mapping of a mapping-form include (Req 1.1). Bare, the result is
+        exactly the scalar form's, with ``include.form`` set (1.4); with overrides, it is the deep
+        merge of the included mapping with ``form`` (1.2, 1.3).
+        """
+        has_overrides = form is not None and bool(override_entries(form))
         target_path = self._source.path.parent / spec
         if not target_path.name.endswith(YAML_INCLUDE_SUFFIXES):
+            if has_overrides:
+                raise ConfigLoadError(
+                    f"overrides apply only to YAML includes; {target_path} is not a "
+                    f"{'/'.join(YAML_INCLUDE_SUFFIXES)} file",
+                    file=self._source.path,
+                    path=_text(path),
+                )
             target = self._loader.read_include(target_path, self._source, path)
-            ref = IncludeRef(IncludeKind.TEXT, spec, target, directive.origin)
+            ref = IncludeRef(IncludeKind.TEXT, spec, target, directive.origin, form)
             return ConfigScalar(
                 value=target.text,
                 style=None,
@@ -314,16 +375,26 @@ class _Builder:
             )
         self._refuse_cycle(target_path)
         target = self._loader.read_include(target_path, self._source, path)
-        ref = IncludeRef(IncludeKind.YAML, spec, target, directive.origin)
+        ref = IncludeRef(IncludeKind.YAML, spec, target, directive.origin, form)
         composed = _compose(target)
-        if composed is None:
+        embedded: ConfigNode | None = None
+        if composed is not None:
+            embedded = _Builder(target, self._loader, (*self._chain, target)).build(composed, path)
+        if form is not None and has_overrides:
+            if not isinstance(embedded, ConfigMapping):
+                raise ConfigLoadError(
+                    f"overrides need an included mapping; {target_path} does not hold a mapping",
+                    file=self._source.path,
+                    path=_text(path),
+                )
+            return deep_merge(dataclasses.replace(embedded, include=None), form, include=ref)
+        if embedded is None:
             return ConfigScalar(
                 value=None,
                 style=ScalarStyle.PLAIN,
                 origin=Origin(target, Span(0, 0)),
                 include=ref,
             )
-        embedded = _Builder(target, self._loader, (*self._chain, target)).build(composed, path)
         return dataclasses.replace(embedded, include=ref)
 
     def _refuse_cycle(self, target_path: Path) -> None:

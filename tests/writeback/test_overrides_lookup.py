@@ -2,9 +2,9 @@
 ``physical_entry``, ``physical_holders``, ``holder_of`` and ``written_parts`` in
 ``troupe.config.overrides``.
 
-The loader does not recognise ``$ref`` yet (task 2.1), so each case loads real files from a
-temporary theatre with the existing loader and builds the merged mappings with ``deep_merge``, as
-the loader will do for ``{$ref: ..., <overrides>}``.
+Each case loads real files from a temporary theatre and builds the merged mappings with
+``deep_merge`` from the ``$ref`` mapping as written (``include.form``), as the loader does for
+``{$ref: ..., <overrides>}``.
 
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
@@ -73,7 +73,10 @@ def _parts(tmp_path: Path) -> tuple[ConfigMapping, ConfigMapping, ConfigMapping,
     document = _load(tmp_path, {"coder.yaml": CODER, ROOT: CONFIG})
     coder = _mapping(_value(document.root, "coder"))
     assert coder.include is not None
-    over = _mapping(_value(document.root, "over"))
+    # The loader merges ``over`` itself (task 2.1); its ``$ref`` mapping as written is the form.
+    loaded_over = _value(document.root, "over")
+    assert loaded_over.include is not None
+    over = _mapping(loaded_over.include.form)
     base = dataclasses.replace(coder, include=None)
     merged = deep_merge(base, over, include=dataclasses.replace(coder.include, form=over))
     return merged, base, over, _mapping(_value(document.root, "second"))
@@ -231,10 +234,13 @@ def test_written_parts_of_a_merged_mapping_are_its_layers(tmp_path: Path) -> Non
 def test_written_parts_of_a_bare_mapping_form_include(tmp_path: Path) -> None:
     """Req 1.4: a bare mapping-form include is written as its ``$ref`` mapping and its content."""
     document = _load(
-        tmp_path, {"coder.yaml": CODER, ROOT: "coder: file:coder.yaml\nform:\n  $ref: x\n"}
+        tmp_path,
+        {"coder.yaml": CODER, ROOT: "coder: file:coder.yaml\nform:\n  $ref: file:coder.yaml\n"},
     )
     coder = _mapping(_value(document.root, "coder"))
-    form = _mapping(_value(document.root, "form"))
+    loaded_form = _value(document.root, "form")
+    assert loaded_form.include is not None
+    form = _mapping(loaded_form.include.form)
     assert coder.include is not None
     bare = dataclasses.replace(coder, include=dataclasses.replace(coder.include, form=form))
     form_part, content = written_parts(bare)
