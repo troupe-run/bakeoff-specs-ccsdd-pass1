@@ -79,6 +79,12 @@ config-lineage are complete. No new runtime dependency is added.
   - Done when planner unit tests show the exact texts for a merge with removals in both layers, pruning of an emptied override, a merge whose new key becomes an override in an existing `$ref` mapping, and one whose new key converts a scalar-form include
   - _Requirements: 4.5, 7.3, 7.4_
 
+- [ ] 3.8 Write new keys into the included file when `--in-include` is chosen (CR-B)
+  - A set can ask for the step 1 placement. The new key (and the new keys of a mapping VALUE) then goes into the included side of the deepest existing ancestor, or into that ancestor itself when it is not merged. Existing values, appends and removals do not depend on the choice.
+  - When keys go into the included side of a merged mapping, the intended configuration lists them after the included keys and before the override-only keys, so the ordered read-back holds.
+  - Done when target and planner unit tests show the exact texts for: a scalar-form include, a merged mapping (with the merged order checked after reload), nested includes (innermost file), an ancestor written only in an override, a mapping VALUE with new keys, and a plain root mapping (same as without the choice)
+  - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5_
+
 - [ ] 4. Integration and validation
 - [ ] 4.1 Validate new keys below includes end to end
   - E2E (byte-exact, every other file unchanged, history checked): the contract example with exactly one `set` event; a second new key after the first override; missing intermediate keys; a key below an included nested mapping; nested includes writing in the middle file; a bare `$ref` mapping gaining an override; a flow include; a `troupe.yaml` theatre.
@@ -92,7 +98,13 @@ config-lineage are complete. No new runtime dependency is added.
   - Done when these e2e tests pass byte-exactly through the real CLI, with no extra file left behind
   - _Requirements: 6.1, 6.2, 6.3, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 8.1, 8.2, 9.1, 9.2, 9.3_
 
-- [ ] 4.3 Align the earlier specs, docstrings and roadmap with step 5 and check traceability
-  - Add step-5 notes to config-foundation Requirement 4, config-set-writeback rule 2 / Requirements 2 and 3 and 11.5 (the conversion exception), and config-get-show (merged view, override provenance). Update module docstrings that describe includes or the new-key rule. Tick the step-5 items in the roadmap.
+- [ ] 4.3 Accept `--in-include` on `set` and validate it end to end (CR-B)
+  - `set` accepts `--in-include` without a value, anywhere among the arguments and together with `--reason`, and passes the choice to the set use case. `--in-include=TEXT` is a usage error (exit 2, empty stdout, no file or history change).
+  - Done when e2e tests through the real CLI show byte-exact results for the cases of 3.8, the parsing cases above, one `set` event per created leaf with cli lineage and the given reason, and that without the option the same commands write overrides
+  - _Depends: 3.8_
+  - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7_
+
+- [ ] 4.4 Align the earlier specs, docstrings and roadmap with step 5 and check traceability
+  - Add step-5 notes to config-foundation Requirement 4, config-set-writeback rule 2 / Requirements 2 and 3 and 11.5 (the conversion exception), and config-get-show (merged view, override provenance), and the `--in-include` option on config-set-writeback's `set` usage (CR-B). Update module docstrings that describe includes or the new-key rule. Tick the step-5 items in the roadmap.
   - The spec, docstring and roadmap edits are the bookkeeping of the same change (collaboration.md). This task adds no behaviour.
   - Done when every requirement ID of this spec is named by at least one test docstring, the notes are in place, and the full test suite, mypy and ruff pass

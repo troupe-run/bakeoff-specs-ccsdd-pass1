@@ -136,6 +136,22 @@ Recorded in requirements.md (Boundary Context, choices 1–11). The ones with de
 - **Rationale**: this follows the conservative default and the existing 14.9 refusals. Such layouts are rare, and
   guessing could misplace the comment or the key line.
 
+### Decision 8: `set --in-include` selects the step 1 placement (CR-B)
+- **Context**: contract section "In-include": `set --in-include PATH VALUE` writes a new key into the included file
+  instead (the step 1 rule).
+- **Alternatives**:
+  1. A flag that bypasses the placement walk and uses the deepest ancestor's included side (chosen).
+  2. A separate command (`set-in-include`) — the contract names an option of `set`.
+  3. Applying the option to existing values as well, for example removing an override so the included value
+     shows — the contract speaks only of a new key, and "existing settings still change where they live" (CR-A).
+- **Selected Approach**: `in_include` travels from the CLI to `resolve_target`. `place_new_keys` returns the
+  included side of the deepest existing ancestor, with no prefix (requirements choices 12–15). The intended tree
+  places keys written into a merged mapping's included side before its override-only keys, so the ordered
+  read-back comparison holds (10.2).
+- **Rationale**: the option only chooses between two rules for one decision, which this spec already owns. It
+  needs no new write machinery: the step 1 insertion code writes into a written mapping.
+- **Revisit**: if the product owner wants `--in-include` to also move existing overrides into the included file.
+
 ### Product owner review (2026-10-05)
 All six decisions presented (requirements.md Boundary Context choices 1, 2, 5, 7, 8, 9 and 11) are approved.
 - **Contract meaning, confirmed**:

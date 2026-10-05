@@ -33,6 +33,7 @@ the written mapping behind a merged value.
 - The scalar-form → mapping-form conversion edits.
 - The `$ref` PATH refusal and the VALUE `$ref` directive form for verification.
 - Updating the tests and spec notes that pinned the old rule 2.
+- CR-B: the `set --in-include` option and the step 1 placement it selects (Requirement 10).
 
 ### Out of Boundary
 - Quoting, indentation, comment, insertion-point and removal rules (config-set-writeback, reused as is).
@@ -43,7 +44,8 @@ the written mapping behind a merged value.
 ### Allowed Dependencies
 - `config/loader.py` → `config/overrides.py` (merge) → `config/model.py`.
 - `config/writeback/*` → `config/overrides.py`, `config/model.py`, `config/resolve.py`.
-- No CLI module changes: errors flow through the existing `TroupeError` handling.
+- CLI: only `cli/set_command.py` changes (the `--in-include` flag, passed inward as a boolean). Errors flow through
+  the existing `TroupeError` handling.
 - No new third-party dependency.
 
 ### Revalidation Triggers
@@ -97,12 +99,16 @@ src/troupe/config/
     ├── planner.py        # physical replace, layered merge/deletion/pruning, routed additions, conversion
     ├── collection_render.py  # render_ref_form_lines / render_flow_ref_form for the conversion
     ├── layout.py         # written form at slots; tree walks over written parts
-    └── verify.py         # compare root plain (root may be a mapping-form include)
+    ├── verify.py         # compare root plain (root may be a mapping-form include)
+    └── setter.py         # set_value(..., in_include=False) passes the choice to resolve_target
+src/troupe/cli/
+└── set_command.py        # --in-include flag (CR-B, 10.6)
 tests/
 ├── test_loader_overrides.py        # NEW unit: recognition, merge, order, refusals, layers
 ├── test_e2e_overrides_read.py      # NEW e2e: get/show/--sources/history/reconcile/watch over overrides
 ├── test_set_overrides.py           # NEW e2e byte-exact: new keys, conversion, lists, existing values, $ref
 ├── test_set_targets.py             # updated: the old rule-2 test now expects an override
+├── test_set_in_include.py          # NEW e2e byte-exact: --in-include placement, parsing, events (Req 10)
 └── writeback/
     ├── test_overrides_lookup.py    # NEW unit: physical_entry/holders, written_parts
     ├── test_target_placement.py    # NEW unit: placement walk cases
@@ -154,6 +160,18 @@ Given the merged node chain `root … A` (A = the deepest existing mapping) and 
 
 The result mapping is always a **written** mapping: none of its entries comes from another layer.
 
+### Placement with `--in-include` (CR-B, Requirement 10)
+With `in_include=True` the walk is not run. The placement is the step 1 rule: mapping = the *included side* of A
+(`A.layers.base`, repeatedly while that is itself merged; A itself when A is not merged), prefix `()`. An A written
+only in an override is not merged, so it is A itself in the including file (choice 13). Below no include, this is
+A, the same as without the option (10.5).
+
+**Intended order.** `splice` appends new keys at the end of a mapping. Merged order (1.3) puts the included side's
+keys before the override-only keys. So when keys are written into the included side of a merged mapping, the
+intended tree moves them to just before that mapping's first override-only key (10.2). `resolve_target` does this
+by walking the merged nodes along PATH (and below it for a mapping VALUE). The read-back stays an ordered
+comparison.
+
 ## Requirements Traceability
 
 | Requirement | Summary | Components | Flows |
@@ -172,6 +190,10 @@ The result mapping is always a **written** mapping: none of its entries comes fr
 | 8.1 | `$ref` PATH refused | Target | — |
 | 8.2 | VALUE `$ref` | Compare.new_to_plain / plain_equal, Verify | — |
 | 8.3 | get/show `$ref` not found | merged tree (no `$ref` key) | — |
+| 10.1, 10.2, 10.3, 10.5 | `--in-include` placement and merged order | Target (in-include placement, intended order), Planner (routed additions use the same choice) | Placement with `--in-include` |
+| 10.4 | Other changes unaffected | Planner (option only reaches placement) | — |
+| 10.6 | Option parsing | SetCommand | — |
+| 10.7 | Events, lineage, safety unchanged | existing setter, leaf_diff, verify | — |
 | 9.1, 9.2, 9.3 | Byte-surgical, read-back, atomic | Planner, Verify (root_plain), existing atomic writer | — |
 
 ## Components and Interfaces
@@ -272,12 +294,14 @@ class AddKeyTarget:
     missing: tuple[str, ...]
     placement: KeyPlacement
 
-def place_new_keys(document: ConfigDocument, mapping_path: ConfigPath) -> KeyPlacement
+def place_new_keys(document: ConfigDocument, mapping_path: ConfigPath, *, in_include: bool) -> KeyPlacement
+def resolve_target(document: ConfigDocument, path: ConfigPath, value: NewValue, *, in_include: bool = False) -> SetRequest
 ```
 - `resolve_target` refuses any `$ref` segment first: `WriteRefusedError` "`$ref` is reserved for includes", naming
   PATH and the root file (8.1).
-- `place_new_keys` implements the placement walk. The planner also uses it for the new keys of a collection
-  replacement (7.3).
+- `place_new_keys` implements the placement walk, or the step 1 placement when `in_include` is true. The planner
+  also uses it for the new keys of a collection replacement (7.3, 10.3). `SetRequest` carries `in_include` so the
+  planner passes the same choice.
 
 #### Planner
 - `replace`: the parent's written entry comes from `physical_entry`. The slot is in that entry's file, and
@@ -303,6 +327,12 @@ def place_new_keys(document: ConfigDocument, mapping_path: ConfigPath) -> KeyPla
     - Insert the following lines after the owner's line: `$ref: <raw>` (unless compact) and the new entries,
       at column owner + indent step (mapping) or `-` + 2 (list item) (5.1, 5.3).
   - `<raw>` is the include string's exact source text. New-entry styles follow the `$ref` entry as sibling.
+
+#### Setter and SetCommand (CR-B)
+- `set_value(theatre, path, value, context, *, in_include: bool = False)` passes the flag to `resolve_target`.
+- `set_command` registers `--in-include` as `store_true`. argparse rejects `--in-include=TEXT` as a usage error
+  (exit 2, empty stdout, no file or history change: the parse happens before the theatre is opened) (10.6). The
+  option may appear anywhere among the arguments and combines with `--reason`.
 
 #### CollectionRender
 ```python
@@ -368,6 +398,17 @@ A load error is raised before any history state is opened (2.4, existing `open_t
 - Exit 4 cases through `get`. A `$ref` PATH is refused with exit 3. A VALUE with `$ref` round-trips.
 - `get`/`show --sources` over overrides. History after hand-adding an override. No event for a form-only hand edit.
 - The updated old rule-2 test in `test_set_targets.py`.
+- `--in-include` (Req 10), byte-exact:
+  - a scalar-form include gains the key in the included file;
+  - a merged mapping gains the key on its included side, and `show` lists it before the override-only keys;
+  - nested includes write in the innermost file;
+  - an ancestor written only in an override writes in the including file;
+  - a mapping VALUE's new keys go to the included file;
+  - existing values and appends are unchanged by the option;
+  - no include involved gives the same result as without the option;
+  - the option's position among the arguments and its combination with `--reason`;
+  - `--in-include=x` gives exit 2;
+  - one `set` event with cli lineage.
 
 ## Security Considerations
 No new inputs beyond YAML already read. Include targets resolve as before (relative to the including file).

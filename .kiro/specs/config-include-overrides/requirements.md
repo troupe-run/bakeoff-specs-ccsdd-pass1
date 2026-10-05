@@ -158,6 +158,13 @@ Existing settings still change where they live. Contract sections added: Overrid
   changed in the file it comes from.
 
 
+### CR-B and section "In-include" (authoritative, as supplied by the product owner)
+**CR-B: but let me put it in the shared file when I mean to.** Sometimes a new setting genuinely belongs in the
+shared file. Give `set` an explicit way to do that. Contract sections added: In-include.
+
+**In-include (from step 5, change request B)**
+- `set --in-include PATH VALUE` writes a new key into the included file instead (the step 1 rule).
+
 See `brief.md` for the chosen approach, scope, boundaries and the open choices to settle.
 
 ## Introduction
@@ -174,6 +181,8 @@ Two things change:
 - **Writing**: a new key below an included section is written as an override in the *including* file. Existing
   settings are still changed where they live: in the override when they are overridden, otherwise in the file they
   come from.
+- **On request (CR-B)**: `set --in-include` writes a new key into the included file instead, by the step 1 rule
+  (Requirement 10).
 
 Terms used below:
 - **Include string**: a string starting with `file:`, as defined by config-foundation Requirement 4.
@@ -248,6 +257,18 @@ Terms used below:
       (`coder: file:agents/coder.yaml  # c` → `coder:  # c`). For this conversion the example takes precedence over
       config-set-writeback 11.5 (comment kept at its previous column), which still applies to every other
       scalar → collection replacement (5.2).
+
+- **Choices for CR-B (In-include)**, made where the contract is silent (conservative; recorded in `research.md`):
+  12. `--in-include` changes only where *new* keys are written, including the new keys of a collection
+      replacement. Existing values, list appends and removals follow the same rules as without it (10.4).
+  13. "The included file" is read as the step 1 rule says: the file containing the deepest existing ancestor
+      mapping. With nested includes, that is the innermost included file. When that ancestor is written both in the
+      included file and in an override, the included side is used. When it is written only in an override, the step
+      1 rule gives the including file (10.1, 10.2).
+  14. Where no include is involved, `--in-include` gives the same result as without it, and it is accepted rather
+      than refused (10.5).
+  15. `--in-include` takes no value. It may stand before, between or after PATH and VALUE, and it combines with
+      `--reason`. A value given with it is a usage error (exit 2) (10.6).
 
 - **Product owner review (2026-10-05)**: all of the choices above are approved.
   - *Confirmed as the contract's meaning*:
@@ -351,3 +372,15 @@ Terms used below:
 1. After a successful `troupe config set`, the troupe CLI shall have changed only the bytes Requirements 4–8 and config-set-writeback require, in the files they name, and no byte of any other file.
 2. Before writing, the troupe CLI shall read the changed files back as configuration, including mapping-form includes and the deep merge, and shall exit with code 3 and change no file if the result is not the current configuration with the value at PATH replaced by VALUE.
 3. The troupe CLI shall write every changed file atomically and leave no extra file behind, as config-set-writeback specifies.
+
+### Requirement 10: Writing a new key into the included file on request
+**Objective:** As a developer, I want to say explicitly that a new setting belongs in the shared included file, so that I can extend a shared file from the shell when that is what I mean.
+
+#### Acceptance Criteria
+1. When `troupe config set --in-include PATH VALUE` adds a key, the troupe CLI shall write the key, with any missing intermediate mappings, into the file containing the deepest existing ancestor mapping of PATH (the step 1 rule, config-set-writeback 3.1–3.2), including an included file, instead of applying Requirements 4 and 5, and shall leave every other file byte-identical.
+2. When `--in-include` is given and the deepest existing ancestor is a merged mapping written both in the included file and in an override, the troupe CLI shall add the key to the mapping written in the included file, and the merged value shall have the new key after the keys of the included side and before the keys that exist only in the overrides (Requirement 1.3).
+3. When `--in-include` is given and VALUE replaces a mapping, the troupe CLI shall write each key that VALUE adds under 10.1 and 10.2.
+4. When `--in-include` is given, the troupe CLI shall change existing values, append list items and remove keys exactly as it does without the option (Requirements 6.1 and 7).
+5. When `--in-include` is given and the new key lies below no include, the troupe CLI shall write it exactly as without the option.
+6. The troupe CLI shall accept `--in-include` without a value, before, between or after PATH and VALUE, together with `--reason`; if a value is attached to it (`--in-include=TEXT`), then the troupe CLI shall exit with code 2, write nothing to stdout, write a stderr message describing the usage problem, and change no file and no history state.
+7. When `troupe config set --in-include` writes a new key, the troupe CLI shall record its events and lineage as for any other `set` (one `set` event per created leaf, config-lineage), and shall apply Requirement 9 (byte-surgical write, read-back verification, atomic write).
