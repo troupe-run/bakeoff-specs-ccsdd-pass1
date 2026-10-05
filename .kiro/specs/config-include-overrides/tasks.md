@@ -49,7 +49,7 @@ config-lineage are complete. No new runtime dependency is added.
   - _Boundary: Compare, Verify_
   - _Requirements: 8.2, 9.2_
 
-- [ ] 3.3 Decide where new keys are written and refuse `$ref` in a set PATH
+- [x] 3.3 Decide where new keys are written and refuse `$ref` in a set PATH
   - A set PATH with a `$ref` segment is refused (exit 3) before anything else, naming PATH and stating that `$ref` is reserved for includes. Target resolution takes the current configuration from the unwrapped root plain form.
   - The placement walk goes up from the deepest existing mapping. A merged mapping places into its override side (descending through what the override already holds, and creating the keys it lacks as intermediate mappings). A bare mapping-form include places into its `$ref` mapping. A scalar-form YAML include is marked for conversion in its directive's file. A list item, or reaching the root, keeps the step 1 rule. The add-key target carries the result. The planner keeps writing into the deepest mapping until 3.4, so behaviour does not change yet.
   - Done when target unit tests cover each walk case (merged root, bare form, scalar form, nested includes choosing the innermost directive file, an existing override mapping, a key below an included nested mapping, a list item inside an include, a list-item include, a plain root mapping) and the `$ref` refusal
