@@ -1,16 +1,16 @@
 {
   "feature_name": "config-include-overrides",
   "created_at": "2026-10-05T05:03:06Z",
-  "updated_at": "2026-10-05T05:05:09Z",
+  "updated_at": "2026-10-05T05:36:28Z",
   "language": "en",
-  "phase": "requirements-generated",
+  "phase": "design-generated",
   "approvals": {
     "requirements": {
       "generated": true,
-      "approved": false
+      "approved": true
     },
     "design": {
-      "generated": false,
+      "generated": true,
       "approved": false
     },
     "tasks": {
