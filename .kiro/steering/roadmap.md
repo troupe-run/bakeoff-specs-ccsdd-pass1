@@ -61,6 +61,7 @@ rules). The write side carries most of the risk and rules, so it gets its own sp
 - [x] config-file-sync -- (step 2) reconcile files against the recorded configuration (set/remove per differing leaf), reconcile-first for every command except `history`, `troupe config watch` (polling, readiness line, include following, SIGINT/SIGTERM → 0), inter-process lock so a `set`'s write-back is never re-recorded. Dependencies: config-foundation, config-set-writeback
 - [x] config-get-show -- (step 3) `get PATH` (scalar; mapping/list → 5 mentioning `config show`), `show [PATH]` (scalar as `get`; otherwise block YAML with includes resolved, text includes as literal blocks; whole config without PATH), `--sources` end-of-line `# from <file>` provenance. Dependencies: config-foundation, config-set-writeback, config-file-sync
 - [x] config-lineage -- (step 4) actor/via/at/reason/change on every history event; `TROUPE_ACTOR` (exit 2 when invalid) and login-name default; `set --reason`; one change id per command, reconcile or import; persisted, legacy stores readable. Dependencies: config-foundation, config-set-writeback, config-file-sync, config-get-show
+- [ ] config-include-overrides -- (step 5) mapping-form includes with `$ref` and deep-merged overrides, new keys under includes written as overrides in the including file (scalar-form → mapping-form conversion), list exceptions, overridden vs non-overridden existing values, exit 4 for non-YAML overrides. Dependencies: config-foundation, config-set-writeback, config-get-show
 
 ## Product owner decisions (2026-10-01)
 Full records (decision, alternatives, why, revisit trigger, status) are in each spec's `research.md`.
@@ -169,3 +170,36 @@ file-originated events have actor unknown. Lineage is persisted in the event sto
 
 ### Direct Implementation Candidates
 - (none) -- updating step 1–3 tests that pin the exact history line shape is done inside config-lineage's tasks, in the same change as the behaviour (collaboration.md).
+
+## Step 5 — Keep shared includes shared (CR-A, 2026-10-05)
+
+### Overview
+Included files are shared between projects, so adding a new setting under an included section must no longer
+modify the shared file. The step 5 contract section "Overrides" replaces rule 2 under `set PATH VALUE`: an include
+may be written in mapping form (`{$ref: "file:…", <overrides>}`, value = included content deep-merged with the
+overrides); a new key whose deepest existing ancestor comes from an included file is written as an override in the
+including file (a scalar-form include is first converted to mapping form, keeping the key line's comment); list
+appends and new keys inside list items still go to the file holding the list; a mapping-form include of a non-YAML
+file with siblings → exit 4; an overridden existing value is changed in the override, a non-overridden one where it
+comes from.
+
+### Approach Decision
+- **Chosen**: the loader builds the merged view (`$ref` never appears in it), and each merged mapping keeps its
+  physical layers (base mapping in the included file, override mapping and `$ref` directive in the including
+  file). The writeback layer resolves the physical target through the layers; new keys under an include become
+  overrides of the nearest include above the deepest existing ancestor unless a list item comes first. Read-back
+  verification models mapping-form directives in the intended tree.
+- **Why**: every reader (`get`, `show --sources`, leaves, reconcile, history, watch) already works on the loaded
+  tree, so a merged tree with per-scalar origins gives them the contract's value for free; only the writer needs
+  the physical layers, and they stay attached to the nodes they describe.
+- **Rejected alternatives**: merging on demand in every reader (drift); a separate path-keyed overlay (second source
+  of truth); always writing overrides in the root file (contradicts "the file that contains the include reference").
+
+### Existing Spec Updates
+- [ ] config-foundation -- Requirement 4 (Includes) gains a step-5 note pointing to config-include-overrides for mapping-form includes, the merge and the new exit-4 cases. Dependencies: config-include-overrides
+- [ ] config-set-writeback -- rule 2 / Requirement 3.1–3.2 (new keys) and Requirement 2.1/2.6 (existing values) gain step-5 notes; the test pinning the old rule 2 is updated inside config-include-overrides' tasks. Dependencies: config-include-overrides
+- [ ] config-get-show -- step-5 note: `show` prints the merged view and `--sources` names the including file for overridden scalars (no format change). Dependencies: config-include-overrides
+
+### Direct Implementation Candidates
+- (none) -- test and docstring updates for the replaced rule 2 are done inside config-include-overrides' tasks, in the same change as the behaviour (collaboration.md).
+
