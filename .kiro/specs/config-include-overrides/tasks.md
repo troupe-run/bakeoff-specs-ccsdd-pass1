@@ -109,6 +109,19 @@ config-lineage are complete. No new runtime dependency is added.
   - The spec, docstring and roadmap edits are the bookkeeping of the same change (collaboration.md). This task adds no behaviour.
   - Done when every requirement ID of this spec is named by at least one test docstring, the notes are in place, and the full test suite, mypy and ruff pass
 
+- [ ] 5. Product owner decisions after implementation (choices 16, 17)
+- [ ] 5.1 Refuse an include's own string over an include that has overrides
+  - A VALUE include (a `file:` string, or a `$ref` mapping) equals a loaded include only when the string is the same and its overrides are exactly the written overrides; so the bare string or `{$ref: <same>}` over an include with overrides exits 3 naming PATH and the included file, while the same string over a scalar-form or bare include stays a no-op (config-set-writeback 2.8), and a VALUE with exactly the written overrides is a no-op.
+  - The read-back of a VALUE `$ref` mapping written at a new place still verifies (overrides written as given), including include overrides absorbed by the merge.
+  - Done when compare unit tests and e2e tests show: own string over overrides → exit 3, no change; `{$ref: <same>}` with fewer/other overrides → exit 3; exactly the written overrides → exit 0, no change; own string over scalar-form and bare forms → no-op; the earlier `$ref` VALUE round-trip tests still pass
+  - _Requirements: 7.5, 8.2_
+
+- [ ] 5.2 Write the override in an including file that is itself included at several places
+  - When the placement's written mapping or include site is reached at more than one path of the merged configuration, the intended configuration gains the same new keys at every such path, in merged position (after that layer's keys, before outer override-only keys), so the read-back accepts the write; this applies to new keys placed by the override rule (Requirement 4 and the new keys of collection replacements); changed existing values and `--in-include` keep the step 1 shared-file refusal.
+  - The test that pinned the shared-middle refusal now expects the write; history records the new leaves at every place.
+  - Done when target/planner unit tests and e2e tests show a shared bare and a shared scalar-root middle file, a shared file whose nested `coder: file:leaf.yaml` is converted, and a shared file reached once via an outer include with overrides of its own (merged order), each written once in the middle file with the key visible at every place and one `set` event per new leaf path; plus guards that an existing-value change and `--in-include` into a shared file are still refused
+  - _Requirements: 4.2, 4.8, 9.2_
+
 ## Implementation Notes
 - 1.1: merged entries for a key that is a mapping on both sides keep the base entry's key/key_origin; writers must locate written positions through `physical_entry`/`physical_holders`, never merged entries. Pruning (3.7) uses `Holder.is_override` and `holder_of(parent, key, written)`. `ConfigMapping` equality includes `layers`: never compare merged and plain trees with `==` (use plain trees).
 - 2.1: a mapping-form root now loads with `root.include` set; writeback must unwrap it (3.2 root plain, 3.3 resolve_target). Guards for 2.2's three refusals already raise ConfigLoadError in loader.py; 2.2 adds their tests and final messages.
