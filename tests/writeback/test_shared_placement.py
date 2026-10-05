@@ -19,7 +19,7 @@ Traceability: every test names the requirement IDs it proves at the start of its
 """
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import pytest
@@ -35,10 +35,15 @@ from troupe.config.writeback.compare import (
     node_to_plain,
     root_plain,
 )
-from troupe.config.writeback.planner import plan_set
+from troupe.config.writeback.planner import _Planner, plan_set
 from troupe.config.writeback.shared import WrittenChanges, rebuilt_plain, with_other_places
-from troupe.config.writeback.target import SetRequest, resolve_target
-from troupe.config.writeback.value import parse_value
+from troupe.config.writeback.target import (
+    AddKeyTarget,
+    ReplaceTarget,
+    SetRequest,
+    resolve_target,
+)
+from troupe.config.writeback.value import NewValue, parse_value
 from troupe.config.writeback.verify import verify_patch
 
 ROOT = "troupe.yml"
@@ -505,3 +510,213 @@ def test_unedited_recomputation_equals_the_loaded_plain_tree(
     assert _strict(rebuilt_plain(document.root, WrittenChanges())) == _strict(
         node_to_plain(document.root)
     )
+
+
+# --- one VALUE asking for the same written location at two places (task 6.2, 11.4, 11.5) ------
+#
+# Below PATH, two places reach a file only through two include roots, and a YAML include root
+# never changes in a collection replacement (config-set-writeback 2.5, 5.8; 7.5): such a VALUE is
+# refused there, before any placement. A text include is the shape one VALUE reaches: the same
+# text file at two places. The planner and the change record are also pinned for the YAML shapes
+# (the same written mapping or value slot at two places), driven with the resolved targets of
+# both places.
+
+TEXT_TWICE = "top:\n  p: file:t.md\n  q: file:t.md\n"
+TOP_TWICE = "top:\n  a: file:mid.yaml\n  b: file:mid.yaml\n"
+CONFLICT = "two places that include this file would need different values"
+
+
+def test_one_value_giving_two_places_of_a_text_file_the_same_text_writes_it_once(
+    tmp_path: Path,
+) -> None:
+    """Req 11.4, 11.2: `top.p` and `top.q` both include t.md; one VALUE giving both the same
+    text rewrites t.md once and both places read back the new text."""
+    files = {ROOT: TEXT_TWICE, "t.md": "old\n"}
+    patched, after = _set(tmp_path, files, "top", "{p: new, q: new}")
+    assert patched == {"t.md": "new"}
+    assert _at(after, "top.p") == "new"
+    assert _at(after, "top.q") == "new"
+
+
+def test_one_value_giving_two_places_of_a_text_file_different_texts_is_refused(
+    tmp_path: Path,
+) -> None:
+    """Req 11.5: one VALUE giving `top.p` and `top.q` (both t.md) different texts is refused
+    (exit 3) naming PATH and t.md, saying two places would need different values."""
+    files = {ROOT: TEXT_TWICE, "t.md": "old\n"}
+    with pytest.raises(WriteRefusedError) as raised:
+        _set(tmp_path, files, "top", "{p: one, q: two}")
+    error = raised.value
+    assert error.exit_code is ExitCode.WRITE_REFUSED
+    assert (error.path, error.file) == ("top", tmp_path / "t.md")
+    assert CONFLICT in error.problem
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "{a: {sub: {m: 1, n: 1}}, b: {sub: {m: 1, n: 1}}}",
+        "{a: {sub: {m: 1, n: 1}}, b: {sub: {m: 1, n: 2}}}",
+        "{a: {sub: {m: 2}}, b: {sub: {m: 2}}}",
+        "{a: {sub: {m: 2}}, b: {sub: {m: 3}}}",
+    ],
+)
+def test_one_value_over_two_includes_of_a_shared_yaml_file_is_refused_at_the_include_root(
+    tmp_path: Path, value: str
+) -> None:
+    """Req 11.4, 11.5 (shapes refused earlier): a VALUE reaching mid.yaml at `top.a` and `top.b`
+    must change both include roots, which rule 4 / 5.8 refuses first (exit 3) naming the include
+    root `top.a` and mid.yaml, whether the two places agree or not."""
+    files = {ROOT: TOP_TWICE, "mid.yaml": "$ref: file:leaf.yaml\n", "leaf.yaml": LEAF}
+    with pytest.raises(WriteRefusedError) as raised:
+        _set(tmp_path, files, "top", value)
+    error = raised.value
+    assert (error.path, error.file) == ("top.a", tmp_path / "mid.yaml")
+    assert "the whole value comes from the include file:mid.yaml" in error.problem
+
+
+def _loaded(tmp_path: Path, files: Mapping[str, str]) -> ConfigDocument:
+    for name, text in files.items():
+        (tmp_path / name).write_bytes(text.encode("utf-8"))
+    return load_config(tmp_path / ROOT)
+
+
+def _sub(document: ConfigDocument, place: str) -> ConfigMapping:
+    """The written mapping `sub` of mid.yaml as loaded at `place` (one object per place)."""
+    entry = document.root.get(place)
+    assert entry is not None and isinstance(entry.value, ConfigMapping)
+    sub = entry.value.get("sub")
+    assert sub is not None and isinstance(sub.value, ConfigMapping)
+    return sub.value
+
+
+def _new(text: str) -> NewValue:
+    return parse_value(text, ConfigPath.parse("top"))
+
+
+def test_changes_record_agreeing_keys_for_one_shared_location_once(tmp_path: Path) -> None:
+    """Req 11.4: the same written mapping of mid.yaml, loaded at `a` and `b` as two objects, given
+    the same new key at both places is recorded once at its written location."""
+    document = _loaded(tmp_path, {ROOT: TWICE, "mid.yaml": "sub:\n  m: 1\n"})
+    a_sub, b_sub = _sub(document, "a"), _sub(document, "b")
+    assert a_sub is not b_sub
+    changes = WrittenChanges(path=ConfigPath.parse("top"))
+    changes.add(a_sub, (("n", _new("{x: 1}")),))
+    changes.add(b_sub, (("n", _new("{x: 1, y: 2}")), ("o", _new("1"))))
+    assert list(changes.added.values()) == [[("n", {"x": 1, "y": 2}), ("o", 1)]]
+    assert changes.claim(a_sub, "m", _new("2"))
+    assert not changes.claim(b_sub, "m", _new("2"))
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        pytest.param(
+            lambda c, a, b: (c.add(a, (("n", _new("1")),)), c.add(b, (("n", _new("2")),))), id="add"
+        ),
+        pytest.param(
+            lambda c, a, b: (c.claim(a, "m", _new("2")), c.claim(b, "m", _new("3"))), id="slot"
+        ),
+        pytest.param(
+            lambda c, a, b: (
+                c.claim(a, "m", _new("{x: 1}")),
+                c.claim(b, "m", _new("{x: 1, y: 1}")),
+            ),
+            id="merge",
+        ),
+    ],
+)
+def test_changes_refuse_conflicting_values_for_one_shared_location(
+    tmp_path: Path, record: Callable[[WrittenChanges, ConfigMapping, ConfigMapping], object]
+) -> None:
+    """Req 11.5: different values for the same new key, or the same value slot, of one written
+    location reached at two places are refused (exit 3) naming PATH and mid.yaml."""
+    document = _loaded(tmp_path, {ROOT: TWICE, "mid.yaml": "sub:\n  m: 1\n"})
+    changes = WrittenChanges(path=ConfigPath.parse("top"))
+    with pytest.raises(WriteRefusedError) as raised:
+        record(changes, _sub(document, "a"), _sub(document, "b"))
+    error = raised.value
+    assert error.exit_code is ExitCode.WRITE_REFUSED
+    assert (error.path, error.file) == ("top", tmp_path / "mid.yaml")
+    assert CONFLICT in error.problem
+
+
+def _plan_both(
+    tmp_path: Path, files: Mapping[str, str], paths: tuple[str, str], values: tuple[str, str]
+) -> dict[str, str]:
+    """Plan the targets of two places in one planner, as one VALUE covering both would."""
+    document = _loaded(tmp_path, files)
+    planner = _Planner(document, ConfigPath.parse("top"), in_include=False)
+    for path, value in zip(paths, values, strict=True):
+        config_path = ConfigPath.parse(path)
+        request = resolve_target(document, config_path, parse_value(value, config_path))
+        target = request.target
+        if isinstance(target, AddKeyTarget):
+            planner.add_key(target, request.value)
+        else:
+            assert isinstance(target, ReplaceTarget)
+            planner.replace(target, request.value)
+    return {patch.file.real_path.name: patch.new_text for patch in planner.patches()}
+
+
+SHARED_REF = {ROOT: TWICE, "mid.yaml": "$ref: file:leaf.yaml\n", "leaf.yaml": LEAF}
+SHARED_PLAIN = {ROOT: TWICE, "mid.yaml": "sub:\n  m: 1  # m\n"}
+SHARED_TWO = {ROOT: TWICE, "mid.yaml": "sub:\n  m: 1  # m\n  n: 2\n"}
+
+
+@pytest.mark.parametrize(
+    ("files", "paths", "value", "written"),
+    [
+        pytest.param(
+            SHARED_REF,
+            ("a.sub.n", "b.sub.n"),
+            "1",
+            "$ref: file:leaf.yaml\nsub:\n  n: 1\n",
+            id="override-key",
+        ),
+        pytest.param(
+            {ROOT: TWICE, "mid.yaml": "coder: file:leaf.yaml\n", "leaf.yaml": "m: 1\n"},
+            ("a.coder.t", "b.coder.t"),
+            "0.3",
+            "coder:\n  $ref: file:leaf.yaml\n  t: 0.3\n",
+            id="conversion",
+        ),
+        pytest.param(
+            SHARED_PLAIN, ("a.sub.m", "b.sub.m"), "2", "sub:\n  m: 2  # m\n", id="existing-value"
+        ),
+        pytest.param(SHARED_TWO, ("a.sub", "b.sub"), "{m: 1}", "sub:\n  m: 1  # m\n", id="merge"),
+    ],
+)
+def test_planner_writes_agreeing_changes_of_one_shared_location_once(
+    tmp_path: Path,
+    files: Mapping[str, str],
+    paths: tuple[str, str],
+    value: str,
+    written: str,
+) -> None:
+    """Req 11.4: the planner groups changes by written location, not by loaded object: the same
+    new key (an override, or a converted include), the same new existing value, or the same
+    collection replacement (removing `n`), asked at `a` and `b`, is written once in mid.yaml."""
+    assert _plan_both(tmp_path, files, paths, (value, value)) == {"mid.yaml": written}
+
+
+@pytest.mark.parametrize(
+    ("files", "paths", "values"),
+    [
+        pytest.param(SHARED_REF, ("a.sub.n", "b.sub.n"), ("1", "2"), id="override-key"),
+        pytest.param(SHARED_PLAIN, ("a.sub.m", "b.sub.m"), ("2", "3"), id="existing-value"),
+        pytest.param(SHARED_PLAIN, ("a.sub.m", "b.sub.m"), ("1", "2"), id="kept-and-changed"),
+        pytest.param(SHARED_TWO, ("a.sub", "b.sub"), ("{m: 1}", "{n: 2}"), id="merge"),
+    ],
+)
+def test_planner_refuses_conflicting_changes_of_one_shared_location(
+    tmp_path: Path, files: Mapping[str, str], paths: tuple[str, str], values: tuple[str, str]
+) -> None:
+    """Req 11.5: different values asked at `a` and `b` for one written location of mid.yaml are
+    refused (exit 3) naming PATH and mid.yaml; nothing is planned."""
+    with pytest.raises(WriteRefusedError) as raised:
+        _plan_both(tmp_path, files, paths, values)
+    error = raised.value
+    assert error.exit_code is ExitCode.WRITE_REFUSED
+    assert (error.path, error.file) == ("top", tmp_path / "mid.yaml")
+    assert CONFLICT in error.problem

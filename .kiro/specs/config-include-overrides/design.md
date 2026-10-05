@@ -376,6 +376,19 @@ def resolve_target(document: ConfigDocument, path: ConfigPath, value: NewValue, 
   (`loader.load_include`) and deep-merged as `deep_merge` does; a load error is refused (exit 3) as the
   read-back would refuse it. A parametrised unit test pins that the unedited recomputation equals
   `node_to_plain(root)`.
+  One location at two places (11.4, 11.5, task 6.2): the planner keys pending additions,
+  conversions, removals and receivers by written location (`shared.written_location`), not by
+  loaded object, and `change_slot` first claims its written slot (`WrittenChanges.claim`, also when the value is
+  unchanged there): a slot
+  already claimed for an equal value is skipped (one edit), so agreeing keys and values are written
+  once. `WrittenChanges` refuses a second, different value for one location (a claimed slot, a
+  replaced slot, a new key, a conversion override, or a text target's content) with exit 3 naming
+  PATH and the file ("two places that include this file would need different values at the same
+  written location"). Reachable today through one VALUE only for a text file included at two
+  places below PATH: a YAML file shared below PATH is reached only through include roots, which a
+  collection replacement never changes (config-set-writeback 2.5, 5.8; 7.5), so such a VALUE is
+  refused there first; the YAML shapes are pinned at the planner with the resolved targets of both
+  places.
 - `convert_include(site, entries)`: the written slot of the include string comes from `physical_entry` or
   `item_slot`. Then:
   - Flow parent: one INLINE edit replacing the include string with `{$ref: <raw>, <flow entries>}` (5.4).

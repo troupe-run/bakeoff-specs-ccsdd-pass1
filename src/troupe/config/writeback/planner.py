@@ -53,6 +53,9 @@ Every planned change is also recorded as a semantic edit of its written location
 patches, the intended configuration holding each change also at every other place reaching that
 location, when its file is included at several places
 (:func:`~troupe.config.writeback.shared.with_other_places`, config-include-overrides 4.8, 11.2).
+Pending additions, conversions and removals, and changed value slots, are grouped by written
+location, so one VALUE asking for one location at two places writes agreeing values once and is
+refused for conflicting ones (11.4, 11.5).
 
 End-of-line comments on the changed lines are moved back to their columns by the EditApplier
 (12.x). Every refusal is a :class:`WriteRefusedError` naming the file and the path (14.9).
@@ -112,7 +115,12 @@ from troupe.config.writeback.scalar_render import (
     quote_style_of,
     render_scalar,
 )
-from troupe.config.writeback.shared import WrittenChanges, with_other_places
+from troupe.config.writeback.shared import (
+    WrittenChanges,
+    WrittenLocation,
+    with_other_places,
+    written_location,
+)
 from troupe.config.writeback.target import (
     AddKeyTarget,
     AppendTarget,
@@ -219,16 +227,23 @@ class _Planner:
         self._layouts: dict[Path, FileLayout] = {}
         self._edits: dict[Path, list[TextEdit]] = {}
         self._whole: dict[Path, tuple[SourceFile, str]] = {}
-        # Layered-merge removals and the mappings receiving new entries, keyed by ``id``.
-        self._removals: dict[int, _Removal] = {}
-        self._receivers: set[int] = set()
+        # Keyed by written location (file real path + span), not by loaded object: a file
+        # included at several places is loaded once per place (11.4).
+        # Layered-merge removals and the collections receiving new entries.
+        self._removals: dict[WrittenLocation, _Removal] = {}
+        self._receivers: set[WrittenLocation] = set()
         # New entries for written mappings, added once pruning is known (sibling styles).
-        self._additions: dict[int, tuple[ConfigMapping, list[tuple[str, NewValue]]]] = {}
-        # Scalar-form includes to convert, keyed by the ``id`` of their ``IncludeRef``, with their
+        self._additions: dict[
+            WrittenLocation, tuple[ConfigMapping, list[tuple[str, NewValue]]]
+        ] = {}
+        # Scalar-form includes to convert, keyed by their include string's location, with their
         # new entries merged, converted once planning ends (one conversion per include).
-        self._conversions: dict[int, tuple[IncludeSite, list[tuple[str, NewValue]]]] = {}
-        # Every planned change by written location, for the intended configuration (11.2).
-        self.changes = WrittenChanges()
+        self._conversions: dict[
+            WrittenLocation, tuple[IncludeSite, list[tuple[str, NewValue]]]
+        ] = {}
+        # Every planned change by written location, for the intended configuration (11.2); it
+        # refuses two values asked for one location (11.5).
+        self.changes = WrittenChanges(path=path)
 
     # --- entry point -----------------------------------------------------------------------------
 
@@ -296,12 +311,14 @@ class _Planner:
         if placement.convert is not None:
             site = placement.convert
             self.changes.convert(site.ref, entries)
-            _merge_new(self._conversions.setdefault(id(site.ref), (site, []))[1], entries)
+            key = written_location(site.ref.directive)
+            _merge_new(self._conversions.setdefault(key, (site, []))[1], entries)
         elif placement.mapping is not None:
             mapping = placement.mapping
             self.changes.add(mapping, entries)
-            self._receivers.add(id(mapping))
-            _merge_new(self._additions.setdefault(id(mapping), (mapping, []))[1], entries)
+            key = written_location(mapping.origin)
+            self._receivers.add(key)
+            _merge_new(self._additions.setdefault(key, (mapping, []))[1], entries)
         else:  # pragma: no cover - a placement always names a mapping or an include
             raise ValueError("the placement names neither a mapping nor an include")
 
@@ -328,7 +345,7 @@ class _Planner:
         """
         file = collection.origin.file
         layout = self._guard(file, path, lambda: self._layout(file))
-        self._receivers.add(id(collection))
+        self._receivers.add(written_location(collection.origin))
         siblings = _sibling_styles(collection, deleted)
         if collection.style is CollectionStyle.FLOW:
             edit = self._guard(
@@ -578,6 +595,10 @@ class _Planner:
         the written collection and key or index holding the slot, under which a replacement is
         recorded (:attr:`changes`, 11.2).
         """
+        if not self.changes.claim(*where, value):
+            # The same written slot, reached at another place, already gets this value (11.4);
+            # claimed also when unchanged here, so another place cannot change it (11.5).
+            return
         if plain_equal(node_to_plain(node), new_to_plain(value), ordered=False):
             return
         if node.include is not None:
@@ -866,15 +887,16 @@ class _Planner:
     ) -> None:
         """Record the removal of entry ``index`` of the written ``mapping`` (:class:`_Removal`)."""
         self.changes.remove(mapping, mapping.entries[index].key)
-        removal = self._removals.get(id(mapping))
+        key = written_location(mapping.origin)
+        removal = self._removals.get(key)
         if removal is None:
             removal = _Removal(mapping=mapping, indexes=set(), at=at, is_override=is_override)
-            self._removals[id(mapping)] = removal
+            self._removals[key] = removal
         removal.indexes.add(index)
 
     def _removed(self, mapping: ConfigMapping) -> Collection[int]:
         """Indices of the entries of ``mapping`` that a layered merge removes."""
-        removal = self._removals.get(id(mapping))
+        removal = self._removals.get(written_location(mapping.origin))
         return () if removal is None else removal.indexes
 
     def _flush_removals(self) -> None:
@@ -898,7 +920,7 @@ class _Planner:
             mapping = removal.mapping
             if (
                 removal.pruned
-                or id(mapping) in self._receivers
+                or written_location(mapping.origin) in self._receivers
                 or len(removal.indexes) < len(mapping.entries)
             ):
                 continue
@@ -908,10 +930,10 @@ class _Planner:
             removal.pruned = True
             holding, index, parent_at, is_override = link
             self._remove(holding, index, parent_at, is_override=is_override)
-            pending.append(self._removals[id(holding)])
+            pending.append(self._removals[written_location(holding.origin)])
         for site, converted in self._conversions.values():
             self.convert_include(site, converted, self._path)
-        rendered: set[int] = set()
+        rendered: set[WrittenLocation] = set()
         for key, (mapping, entries) in self._additions.items():
             losing = self._removals.get(key)
             emptied = losing is not None and len(losing.indexes) == len(mapping.entries)
@@ -1441,8 +1463,9 @@ def _merge_new(merged: list[tuple[str, NewValue]], entries: Sequence[tuple[str, 
     """Merge new ``entries`` into ``merged`` (new entries of one placement), in place.
 
     A key already there whose two values are mappings gets their entries merged the same way;
-    any other key is appended, so the first-seen order is kept. Keys created by one set never
-    meet with two values that are not both mappings (they come from one VALUE).
+    any other key is appended, so the first-seen order is kept. A key asked again with an equal
+    value (the same written location at another place) is kept once (11.4); a conflicting value
+    was already refused when the change was recorded (11.5).
     """
     for key, value in entries:
         index = next((i for i, (seen, _) in enumerate(merged) if seen == key), None)
@@ -1451,6 +1474,8 @@ def _merge_new(merged: list[tuple[str, NewValue]], entries: Sequence[tuple[str, 
             continue
         existing = merged[index][1]
         if not (isinstance(existing, NewMapping) and isinstance(value, NewMapping)):
+            if plain_equal(new_to_plain(existing), new_to_plain(value), ordered=True):
+                continue
             raise ValueError(f"the new key {key!r} is created twice")  # pragma: no cover
         nested = list(existing.entries)
         _merge_new(nested, value.entries)

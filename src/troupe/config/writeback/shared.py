@@ -26,6 +26,10 @@ what the request asked for); at every other path where the two recomputations di
 recomputation is taken. A change in a file reached at one place only therefore leaves
 ``request.intended`` exactly as it was.
 
+One VALUE may ask for the same written location at two places (11.4, 11.5): agreeing values are
+recorded, and planned, once; a value differing from one already asked there is refused (exit 3,
+:data:`CONFLICT`, naming PATH and the file), since picking one would silently drop the other.
+
 Off-PATH changes can only be replicas: every recorded location must be reached at PATH's own place
 (in the layers of a node from the root along PATH, or at or below PATH); a recorded location that
 is not is refused (exit 3) naming PATH and its file. A new YAML include from VALUE carries no
@@ -42,6 +46,7 @@ import dataclasses
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Final, NoReturn
 
 from troupe.config.constants import INCLUDE_PREFIX, YAML_INCLUDE_SUFFIXES
 from troupe.config.errors import ConfigLoadError, WriteRefusedError
@@ -69,21 +74,24 @@ from troupe.config.writeback.compare import (
 )
 from troupe.config.writeback.value import NewValue
 
-type _Where = tuple[Path, int, int]
-"""A written location: the real path of its file and the start and end of its span."""
+type WrittenLocation = tuple[Path, int, int]
+"""A written location: the real path of its file and the start and end of its span (the identity
+of a written collection or include string, whatever the place it is loaded at)."""
 
-type _Slot = tuple[_Where, str | int]
+type _Slot = tuple[WrittenLocation, str | int]
 """An entry (key) of a written mapping or an item (index) of a written list."""
 
 type WrittenCollection = ConfigMapping | ConfigSequence
 """A written mapping or list (never a merged mapping)."""
 
 
-type _Location = _Where | Path
-"""A written collection or include string (:data:`_Where`), or a text file (its real path)."""
+type _Location = WrittenLocation | Path
+"""A written collection or include string (:data:`WrittenLocation`), or a text file (its real
+path)."""
 
 
-def _where(origin: Origin) -> _Where:
+def written_location(origin: Origin) -> WrittenLocation:
+    """The written location of a node, mapping or include string from its origin."""
     return (origin.file.real_path, origin.span.start, origin.span.end)
 
 
@@ -112,27 +120,63 @@ def _mark(plain: PlainValue, including: SourceFile) -> PlainValue:
     return plain
 
 
+CONFLICT: Final = (
+    "this change cannot be written: two places that include this file would need different "
+    "values at the same written location"
+)
+"""The refusal of one set asking for two values at one written location (11.5, Decision 12)."""
+
+
 @dataclass
 class WrittenChanges:
-    """The planned changes of one set, each keyed by the written location it changes."""
+    """The planned changes of one set, each keyed by the written location it changes.
+
+    A file included at several places is loaded once per place, so one VALUE may ask for the same
+    written location at two places (11.4, 11.5): agreeing values are recorded once, and a value
+    differing from one already recorded there is refused (:data:`CONFLICT`, exit 3, naming
+    ``path`` and the file).
+    """
 
     replaced: dict[_Slot, PlainValue] = field(default_factory=dict)
     """New values of entries of written mappings and items of written lists."""
-    removed: dict[_Where, set[str | int]] = field(default_factory=dict)
+    removed: dict[WrittenLocation, set[str | int]] = field(default_factory=dict)
     """Keys (mappings) or indexes (lists) deleted from written collections."""
-    added: dict[_Where, list[tuple[str | None, PlainValue]]] = field(default_factory=dict)
+    added: dict[WrittenLocation, list[tuple[str | None, PlainValue]]] = field(default_factory=dict)
     """New entries (``None`` key: list items) after the last entry of written collections."""
-    converted: dict[_Where, PlainMapping] = field(default_factory=dict)
+    converted: dict[WrittenLocation, PlainMapping] = field(default_factory=dict)
     """Overrides of scalar-form include strings converted to mapping form."""
     texts: dict[Path, str] = field(default_factory=dict)
     """New contents of text-include target files."""
     files: dict[_Location, Path] = field(default_factory=dict)
     """Every changed location with the path of its file as opened (for messages)."""
+    claimed: dict[_Slot, PlainValue] = field(default_factory=dict)
+    """The value asked for each value slot the planner changes (:meth:`claim`)."""
+    path: ConfigPath | None = None
+    """PATH, named by a refusal."""
+
+    def claim(self, holder: WrittenCollection, key: str | int, value: NewValue) -> bool:
+        """Claim the value slot ``key`` of the written ``holder`` for ``value`` before planning
+        its change: ``True`` the first time, ``False`` when it was already claimed for an equal
+        value (the change is planned once, 11.4); a different value is refused (11.5)."""
+        slot = (written_location(holder.origin), key)
+        plain = new_to_plain(value)
+        if slot not in self.claimed:
+            self.claimed[slot] = plain
+            return True
+        if not plain_equal(self.claimed[slot], plain, ordered=True):
+            self._conflict(holder.origin.file.path)
+        return False
 
     def replace(self, holder: WrittenCollection, key: str | int, value: NewValue) -> None:
         """The value at ``key`` of the written ``holder`` becomes ``value``."""
         where = self._at(holder.origin)
-        self.replaced[(where, key)] = _mark(new_to_plain(value), holder.origin.file)
+        plain = _mark(new_to_plain(value), holder.origin.file)
+        replaced = self.replaced
+        if (where, key) in replaced and not plain_equal(
+            replaced[(where, key)], plain, ordered=True
+        ):
+            self._conflict(holder.origin.file.path)
+        self.replaced[(where, key)] = plain
 
     def remove(self, holder: WrittenCollection, key: str | int) -> None:
         """The entry ``key`` (or item index) of the written ``holder`` is deleted."""
@@ -142,42 +186,77 @@ class WrittenChanges:
         self, holder: WrittenCollection, entries: Sequence[tuple[str | None, NewValue]]
     ) -> None:
         """``entries`` are added after the last entry of the written ``holder``; a key added
-        twice with two mappings gets their entries merged (as the planner merges them)."""
+        twice with two mappings gets their entries merged (as the planner merges them), with an
+        equal value is kept once, and with another value is refused (11.4, 11.5)."""
         added = self.added.setdefault(self._at(holder.origin), [])
         for key, value in entries:
-            _add_entry(added, key, _mark(new_to_plain(value), holder.origin.file))
+            plain = _mark(new_to_plain(value), holder.origin.file)
+            if not _add_entry(added, key, plain):
+                self._conflict(holder.origin.file.path)
 
     def convert(self, include: IncludeRef, entries: Sequence[tuple[str, NewValue]]) -> None:
         """The scalar-form ``include`` is converted to mapping form with ``entries`` as
-        overrides (added to any already recorded for it)."""
+        overrides (added to any already recorded for it, as :meth:`add` adds them)."""
         overrides = self.converted.setdefault(self._at(include.directive), {})
         for key, value in entries:
             plain = _mark(new_to_plain(value), include.directive.file)
-            previous = overrides.get(key)
-            if isinstance(previous, dict) and isinstance(plain, dict):
-                plain = _merge(previous, plain)
+            if key in overrides:
+                agreed = _agreed(overrides[key], plain)
+                if agreed is None:
+                    self._conflict(include.directive.file.path)
+                plain = agreed
             overrides[key] = plain
 
     def text(self, target: SourceFile, content: str) -> None:
-        """The text-include target file ``target`` gets ``content``."""
+        """The text-include target file ``target`` gets ``content`` (another content asked for
+        it at another place is refused, 11.5)."""
+        previous = self.texts.get(target.real_path)
+        if previous is not None and previous != content:
+            self._conflict(target.path)
         self.texts[target.real_path] = content
         self.files[target.real_path] = target.path
 
-    def _at(self, origin: Origin) -> _Where:
-        where = _where(origin)
+    def _at(self, origin: Origin) -> WrittenLocation:
+        where = written_location(origin)
         self.files[where] = origin.file.path
         return where
+
+    def _conflict(self, file: Path) -> NoReturn:
+        raise WriteRefusedError(
+            CONFLICT, file=file, path=None if self.path is None else str(self.path)
+        )
 
 
 def _add_entry(
     added: list[tuple[str | None, PlainValue]], key: str | None, value: PlainValue
-) -> None:
+) -> bool:
+    """Add one new entry to ``added``; ``False`` when ``key`` is there with a conflicting value."""
     if key is not None:
         for index, (seen, previous) in enumerate(added):
-            if seen == key and isinstance(previous, dict) and isinstance(value, dict):
-                added[index] = (key, _merge(previous, value))
-                return
+            if seen == key:
+                agreed = _agreed(previous, value)
+                if agreed is None:
+                    return False
+                added[index] = (key, agreed)
+                return True
     added.append((key, value))
+    return True
+
+
+def _agreed(previous: PlainValue, value: PlainValue) -> PlainValue | None:
+    """Two new values asked for one new key: two mappings merged by key (first-seen order), an
+    equal value kept once; ``None`` when they conflict (11.4, 11.5)."""
+    if isinstance(previous, dict) and isinstance(value, dict):
+        merged = dict(previous)
+        for key, item in value.items():
+            if key in merged:
+                agreed = _agreed(merged[key], item)
+                if agreed is None:
+                    return None
+                item = agreed
+            merged[key] = item
+        return merged
+    return previous if plain_equal(previous, value, ordered=True) else None
 
 
 def with_other_places(
@@ -295,13 +374,13 @@ def _reached(root: ConfigMapping, path: ConfigPath) -> set[_Location]:
 def _layer_locations(node: ConfigNode, found: set[_Location]) -> None:
     """Add the written locations ``node`` is built from: itself, the layers of a merged mapping,
     the include strings, ``$ref`` mappings and text targets of the includes it stands for."""
-    found.add(_where(node.origin))
+    found.add(written_location(node.origin))
     for ref in _chain(node.include):
-        found.add(_where(ref.directive))
+        found.add(written_location(ref.directive))
         if ref.kind is IncludeKind.TEXT:
             found.add(ref.target.real_path)
         if ref.form is not None:
-            found.add(_where(ref.form.origin))
+            found.add(written_location(ref.form.origin))
     if isinstance(node, ConfigMapping) and node.layers is not None:
         _layer_locations(node.layers.base, found)
         _layer_locations(node.layers.over, found)
@@ -426,11 +505,11 @@ class _Rebuild:
         those of a converted include string."""
         if include.form is not None:
             return self._entries(include.form)
-        return dict(self._changes.converted.get(_where(include.directive), {}))
+        return dict(self._changes.converted.get(written_location(include.directive), {}))
 
     def _entries(self, mapping: ConfigMapping) -> PlainMapping:
         """The entries of the written ``mapping`` (``$ref`` left out) after the changes."""
-        where = _where(mapping.origin)
+        where = written_location(mapping.origin)
         removed = self._changes.removed.get(where, set())
         result: PlainMapping = {}
         for entry in mapping.entries:
@@ -446,7 +525,7 @@ class _Rebuild:
 
     def _items(self, sequence: ConfigSequence) -> list[PlainValue]:
         """The items of the written ``sequence`` after the changes."""
-        where = _where(sequence.origin)
+        where = written_location(sequence.origin)
         removed = self._changes.removed.get(where, set())
         items: list[PlainValue] = []
         for index, item in enumerate(sequence.items):

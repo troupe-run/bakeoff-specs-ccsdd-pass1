@@ -1409,3 +1409,79 @@ def test_new_include_in_a_shared_file_merges_with_another_places_override(
     )
     assert _show(theatre, "x.p") == b"v: 1\n"
     assert _show(theatre, "y.p") == b"v: 1\nw: 9\n"
+
+
+# ---- 11.4, 11.5 (choice 18): one VALUE asking for one written location at two places ----
+
+TEXT_TWICE_ROOT = "top:\n  p: file:prompt.md\n  q: file:prompt.md  # same\n"
+PROMPT = ".troupe/prompt.md"
+
+
+def test_one_value_giving_both_places_of_a_text_file_the_same_text_writes_it_once(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 11.4, 11.3: `top.p` and `top.q` both include prompt.md; `set top` with the same text
+    at both rewrites prompt.md once (troupe.yml unchanged) and records one `set` event per
+    place."""
+    theatre = make_theatre(TEXT_TWICE_ROOT, files={PROMPT: "You write code.\n"})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "top", "{p: You review code., q: You review code.}"))
+
+    _assert_only_changed(theatre, before, PROMPT, "You review code.")
+    _assert_set_events(
+        theatre,
+        start,
+        [
+            ("set", "top.p", "You write code.\n", "You review code.", "cli"),
+            ("set", "top.q", "You write code.\n", "You review code.", "cli"),
+        ],
+    )
+    assert _show(theatre, "top.q") == _show(theatre, "top.p")
+
+
+def test_one_value_giving_both_places_of_a_text_file_different_texts_is_refused(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 11.5: `set top` giving `top.p` and `top.q` (both prompt.md) different texts exits 3
+    with empty stdout and a stderr line naming prompt.md and PATH, saying two places would need
+    different values; no file changes and nothing is recorded."""
+    theatre = make_theatre(TEXT_TWICE_ROOT, files={PROMPT: "You write code.\n"})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    result = run_set(theatre, "top", "{p: one, q: two}")
+
+    problem = _assert_refused(theatre, result, theatre / PROMPT, "top", start)
+    assert "two places that include this file would need different values" in problem
+    assert snapshot_tree(theatre) == before
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "{a: {sub: {m: 1, n: 1}}, b: {sub: {m: 1, n: 1}}}",
+        "{a: {sub: {m: 1, n: 1}}, b: {sub: {m: 1, n: 2}}}",
+        "{a: {sub: {m: 2}}, b: {sub: {m: 2}}}",
+        "{a: {sub: {m: 2}}, b: {sub: {m: 3}}}",
+    ],
+)
+def test_one_value_over_two_includes_of_a_shared_yaml_file_is_refused_at_the_include_root(
+    make_theatre: MakeTheatre, value: str
+) -> None:
+    """Req 11.4, 11.5 (shapes refused earlier): a VALUE reaching mid.yaml at `top.a` and `top.b`
+    must change both include roots, which rule 4 / 5.8 refuses first: exit 3, empty stdout,
+    stderr naming mid.yaml and `top.a`, no change and no event, agreeing or not."""
+    root = "top:\n  a: file:mid.yaml\n  b: file:mid.yaml\n"
+    theatre = make_theatre(
+        root, files={SHARED_MIDDLE: "$ref: file:leaf.yaml\n", SHARED_LEAF: "sub:\n  m: 1\n"}
+    )
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    result = run_set(theatre, "top", value)
+
+    problem = _assert_refused(theatre, result, theatre / SHARED_MIDDLE, "top.a", start)
+    assert "the whole value comes from the include file:mid.yaml" in problem
+    assert snapshot_tree(theatre) == before
