@@ -98,7 +98,7 @@ config-lineage are complete. No new runtime dependency is added.
   - Done when these e2e tests pass byte-exactly through the real CLI, with no extra file left behind
   - _Requirements: 6.1, 6.2, 6.3, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 8.1, 8.2, 9.1, 9.2, 9.3_
 
-- [ ] 4.3 Accept `--in-include` on `set` and validate it end to end (CR-B)
+- [x] 4.3 Accept `--in-include` on `set` and validate it end to end (CR-B)
   - `set` accepts `--in-include` without a value, anywhere among the arguments and together with `--reason`, and passes the choice to the set use case. `--in-include=TEXT` is a usage error (exit 2, empty stdout, no file or history change).
   - Done when e2e tests through the real CLI show byte-exact results for the cases of 3.8, the parsing cases above, one `set` event per created leaf with cli lineage and the given reason, and that without the option the same commands write overrides
   - _Depends: 3.8_

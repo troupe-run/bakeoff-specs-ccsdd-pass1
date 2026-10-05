@@ -1,6 +1,7 @@
-"""CLI ``troupe config set PATH VALUE [--reason TEXT]``: registration and handler.
+"""CLI ``troupe config set PATH VALUE [--reason TEXT] [--in-include]``: registration and handler.
 
-Requirements: config-set-writeback 1.1, 1.5, 1.6, 16.1, 16.2, 16.4; config-lineage 6.1-6.5.
+Requirements: config-set-writeback 1.1, 1.5, 1.6, 16.1, 16.2, 16.4; config-lineage 6.1-6.5;
+config-include-overrides 10.1-10.7.
 
 Imports only :mod:`troupe.cli.shell` from the CLI package (never ``troupe.cli.main``, which imports
 this module), so the import chain is ``troupe.cli.shell <- set_command <- troupe.cli.main``.
@@ -22,6 +23,14 @@ taken as TEXT (``--reason -x``), but one spelled like an option (``-h``, ``--the
 documented, always-safe form for any TEXT starting with ``-`` is ``--reason=TEXT``, e.g.
 ``--reason=-h``. The reason goes into the cli context of the set's own batch only, so the
 reconcile events recorded while the theatre is opened keep a ``null`` reason (6.3).
+
+``--in-include`` (config-include-overrides Requirement 10, CR-B) is an argparse ``store_true`` flag
+under the same rule: it takes no value and may stand before, between or after PATH and VALUE,
+together with ``--reason`` (given more than once it is still just on). With it, a new key is
+written by the step 1 placement (into the included side of the deepest existing ancestor, no
+conversion) instead of as an override; existing values, appends and removals do not depend on it.
+``--in-include=TEXT`` is argparse's usage error ("ignored explicit argument"), exit 2, raised while
+parsing, so no file is read or changed and no history state is created or changed (10.6).
 """
 
 import argparse
@@ -61,6 +70,8 @@ def handle_set(args: argparse.Namespace, out: io.BytesIO) -> None:
 
     The set's own batch is recorded with ``cli_context(args.actor, args.reason)``: the command's
     actor and its ``--reason`` TEXT (``None`` without the option, config-lineage 6.1, 6.2).
+    ``args.in_include`` (``--in-include``) is passed to :func:`set_value` as the placement choice
+    for new keys (config-include-overrides 10.1-10.5).
 
     PATH and VALUE are parsed before the theatre is opened, so their usage errors (exit 2) create
     no history state; the theatre is opened (and imported, 1.6) in a ``with`` block so the history
@@ -69,11 +80,17 @@ def handle_set(args: argparse.Namespace, out: io.BytesIO) -> None:
     path = ConfigPath.parse(args.path)
     value = parse_value(args.value, path)
     with open_theatre(args.theatre) as theatre:
-        set_value(theatre, path, value, cli_context(args.actor, args.reason))
+        set_value(
+            theatre,
+            path,
+            value,
+            cli_context(args.actor, args.reason),
+            in_include=args.in_include,
+        )
 
 
 def add_set_subparser(subparsers: "argparse._SubParsersAction[TroupeArgumentParser]") -> None:
-    """Register ``set PATH VALUE`` with the shared ``--theatre`` option and ``--reason TEXT``."""
+    """Register ``set PATH VALUE`` with ``--theatre``, ``--reason TEXT`` and ``--in-include``."""
     parser = subparsers.add_parser(
         "set",
         parents=[theatre_option_parent()],
@@ -94,6 +111,14 @@ def add_set_subparser(subparsers: "argparse._SubParsersAction[TroupeArgumentPars
         help=(
             "why the change is made, recorded with its history events (the last one counts; "
             "give a TEXT starting with '-' as --reason=TEXT)"
+        ),
+    )
+    parser.add_argument(
+        "--in-include",
+        action="store_true",
+        help=(
+            "write a new key into the included file holding its deepest existing parent "
+            "mapping instead of as an override in the including file"
         ),
     )
     parser.set_defaults(handler=handle_set)
