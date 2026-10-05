@@ -29,6 +29,10 @@ equal to the merged value is refused.
 Task 5.1 (choice 16) pins the include's own string (or a `$ref` VALUE with other overrides) over an
 include with overrides as refused, and exactly the written overrides as a no-op.
 
+Task 5.2 (choice 17) pins a new key below a middle file included at several places as written once
+in that file, visible at every place (in merged order where a place has overrides of its own),
+with one `set` event per new leaf path; an existing value there and `--in-include` stay refused.
+
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
 
@@ -38,7 +42,14 @@ from typing import Any
 
 import pytest
 
-from set_support import TreeSnapshot, assert_file_bytes, run_config, run_set, snapshot_tree
+from set_support import (
+    TreeSnapshot,
+    assert_file_bytes,
+    run_config,
+    run_set,
+    set_args,
+    snapshot_tree,
+)
 from support import LINEAGE_KEYS, STEP1_KEYS, CliResult, MakeTheatre
 
 ROOT = ".troupe/troupe.yml"
@@ -1131,22 +1142,120 @@ def test_key_below_a_scalar_form_root_include_converts_the_root_file(
     assert (shown.exit_code, shown.stdout, shown.stderr) == (0, b"a: 1\nextra: 2\n", "")
 
 
+# ---- 4.8 (choice 17): an including file that is itself included at several places ----
+
+SHARED_ROOT = "a: file:mid.yaml\nb: file:mid.yaml\n"
+SHARED_MIDDLE = ".troupe/mid.yaml"
+SHARED_LEAF = ".troupe/leaf.yaml"
+
+
 @pytest.mark.parametrize("middle", ["$ref: file:leaf.yaml\n", "file:leaf.yaml\n"])
-def test_key_from_a_middle_file_shared_by_two_includes_is_refused(
+def test_key_from_a_middle_file_shared_by_two_includes_is_written_there_once(
     make_theatre: MakeTheatre, middle: str
 ) -> None:
-    """Req 4.2, 9.2 (choice 5): when the file holding the reference (mid.yaml) is included at two
-    places, writing the override there would change both, so the read-back differs from the
-    intended configuration: exit 3 naming that file and PATH, no file changed, no event."""
+    """Req 4.8, 4.2, 4.7, 9.1, 9.2 (choices 5, 17): mid.yaml, which holds the reference to
+    leaf.yaml (bare `$ref` or a scalar root), is included as `a` and `b`; the override is written
+    once in mid.yaml, leaf.yaml and the root are unchanged, `show` gives the key under `a.sub` and
+    `b.sub`, and one `set` event is recorded per new leaf path."""
     theatre = make_theatre(
-        "a: file:mid.yaml\nb: file:mid.yaml\n",
-        files={".troupe/mid.yaml": middle, ".troupe/leaf.yaml": "sub:\n  m: 1\n"},
+        SHARED_ROOT, files={SHARED_MIDDLE: middle, SHARED_LEAF: "sub:\n  m: 1\n"}
     )
     start = _imported(theatre)
     before = snapshot_tree(theatre)
 
-    result = run_set(theatre, "a.sub.n", "1")
+    _assert_success(run_set(theatre, "a.sub.n", "1"))
+
+    _assert_only_changed(theatre, before, SHARED_MIDDLE, "$ref: file:leaf.yaml\nsub:\n  n: 1\n")
+    _assert_set_events(
+        theatre, start, [("set", "a.sub.n", None, 1, "cli"), ("set", "b.sub.n", None, 1, "cli")]
+    )
+    shown = run_config("show", "--theatre", str(theatre), cwd=theatre)
+    assert (shown.exit_code, shown.stdout, shown.stderr) == (
+        0,
+        b"a:\n  sub:\n    m: 1\n    n: 1\nb:\n  sub:\n    m: 1\n    n: 1\n",
+        "",
+    )
+
+
+def test_nested_include_of_a_shared_file_is_converted_there_once(make_theatre: MakeTheatre) -> None:
+    """Req 4.8, 4.2, 4.7, 5.1, 9.1 (choice 17): mid.yaml holds `coder: file:leaf.yaml` and is
+    included as `a` and `b`; the include is converted once in mid.yaml, and both places show the
+    new key, with one `set` event each."""
+    theatre = make_theatre(
+        SHARED_ROOT, files={SHARED_MIDDLE: "coder: file:leaf.yaml  # c\n", SHARED_LEAF: "m: 1\n"}
+    )
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "b.coder.t", "0.3"))
+
+    _assert_only_changed(
+        theatre, before, SHARED_MIDDLE, "coder:  # c\n  $ref: file:leaf.yaml\n  t: 0.3\n"
+    )
+    _assert_set_events(
+        theatre,
+        start,
+        [("set", "a.coder.t", None, 0.3, "cli"), ("set", "b.coder.t", None, 0.3, "cli")],
+    )
+    assert _show(theatre, "a.coder") == b"m: 1\nt: 0.3\n"
+    assert _show(theatre, "b.coder") == b"m: 1\nt: 0.3\n"
+
+
+def test_key_from_a_shared_file_keeps_merged_order_where_it_is_overridden(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 4.8, 1.3, 4.7, 9.2 (choice 17): `b` includes the shared mid.yaml with overrides of its
+    own; the key written in mid.yaml comes, at `b`, after the included keys and before `b`'s
+    override-only keys; troupe.yml is unchanged."""
+    root = "a: file:mid.yaml\nb:\n  $ref: file:mid.yaml\n  sub:\n    x: 2\n  y: 3\n"
+    theatre = make_theatre(
+        root, files={SHARED_MIDDLE: "$ref: file:leaf.yaml\n", SHARED_LEAF: "sub:\n  m: 1\n"}
+    )
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "a.sub.n", "1"))
+
+    _assert_only_changed(theatre, before, SHARED_MIDDLE, "$ref: file:leaf.yaml\nsub:\n  n: 1\n")
+    _assert_set_events(
+        theatre, start, [("set", "a.sub.n", None, 1, "cli"), ("set", "b.sub.n", None, 1, "cli")]
+    )
+    assert _show(theatre, "a") == b"sub:\n  m: 1\n  n: 1\n"
+    assert _show(theatre, "b") == b"sub:\n  m: 1\n  n: 1\n  x: 2\ny: 3\n"
+
+
+def test_existing_value_in_a_shared_middle_file_is_still_refused(make_theatre: MakeTheatre) -> None:
+    """Req 4.8, 9.2 (config-set-writeback 14.2): changing an existing value written in the shared
+    mid.yaml would change both places, so the read-back refuses it: exit 3 naming mid.yaml and
+    PATH, no file changed, no event."""
+    middle = "$ref: file:leaf.yaml\nsub:\n  n: 1\n"
+    theatre = make_theatre(
+        SHARED_ROOT, files={SHARED_MIDDLE: middle, SHARED_LEAF: "sub:\n  m: 1\n"}
+    )
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    result = run_set(theatre, "a.sub.n", "2")
 
     problem = _assert_refused(theatre, result, theatre / ".troupe" / "mid.yaml", "a.sub.n", start)
+    assert "differs from the intended configuration" in problem
+    assert snapshot_tree(theatre) == before
+
+
+def test_in_include_into_a_file_shared_through_a_middle_file_is_still_refused(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 4.8, 10.1, 9.2: `--in-include` writes into leaf.yaml, which both places reach through
+    mid.yaml; it keeps the step 1 refusal: exit 3 naming leaf.yaml and PATH, nothing changed."""
+    theatre = make_theatre(
+        SHARED_ROOT,
+        files={SHARED_MIDDLE: "$ref: file:leaf.yaml\n", SHARED_LEAF: "sub:\n  m: 1\n"},
+    )
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    result = run_config(*set_args(theatre, "a.sub.n", "1"), "--in-include", cwd=theatre)
+
+    problem = _assert_refused(theatre, result, theatre / ".troupe" / "leaf.yaml", "a.sub.n", start)
     assert "differs from the intended configuration" in problem
     assert snapshot_tree(theatre) == before

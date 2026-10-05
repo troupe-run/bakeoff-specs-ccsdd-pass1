@@ -48,6 +48,11 @@ entry on that entry's line (11.3). A new key whose placement is a scalar-form in
 :meth:`_Planner.convert_include`, which rewrites the include in mapping form with the key as its
 override, in the file holding the include string (config-include-overrides 5.1-5.5).
 
+New keys placed by the override rule are recorded; :func:`plan_set` gives, with the patches, the
+intended configuration holding them also at every other place reaching the same written mapping or
+include site, when the file holding it is included at several places
+(:func:`~troupe.config.writeback.shared.with_other_places`, config-include-overrides 4.8).
+
 End-of-line comments on the changed lines are moved back to their columns by the EditApplier
 (12.x). Every refusal is a :class:`WriteRefusedError` naming the file and the path (14.9).
 """
@@ -97,7 +102,7 @@ from troupe.config.writeback.collection_render import (
     render_flow_value,
     render_ref_form_lines,
 )
-from troupe.config.writeback.compare import new_to_plain, node_to_plain, plain_equal
+from troupe.config.writeback.compare import PlainMapping, new_to_plain, node_to_plain, plain_equal
 from troupe.config.writeback.edits import EditKind, TextEdit, apply_edits
 from troupe.config.writeback.layout import FileLayout, ValueSlot
 from troupe.config.writeback.scalar_render import (
@@ -106,6 +111,7 @@ from troupe.config.writeback.scalar_render import (
     quote_style_of,
     render_scalar,
 )
+from troupe.config.writeback.shared import PlacedKeys, with_other_places
 from troupe.config.writeback.target import (
     AddKeyTarget,
     AppendTarget,
@@ -155,13 +161,29 @@ class FilePatch:
     new_text: str
 
 
-def plan_patch(document: ConfigDocument, request: SetRequest) -> tuple[FilePatch, ...]:
-    """Return one :class:`FilePatch` per file the set changes, in ``document.files`` order.
+@dataclass(frozen=True)
+class Plan:
+    """The planned set: its patches and the configuration they must read back as."""
+
+    patches: tuple[FilePatch, ...]
+    intended: PlainMapping
+    """``request.intended`` with the new keys placed by the override rule also at every other
+    place reaching their written mapping or include site (config-include-overrides 4.8)."""
+
+
+def plan_set(document: ConfigDocument, request: SetRequest) -> Plan:
+    """Plan the set: one :class:`FilePatch` per file it changes, in ``document.files`` order, and
+    the intended configuration the read-back compares with.
 
     Never two patches for the same file, and every patch changes its file. Raises
     :class:`WriteRefusedError` (exit 3) naming the file and PATH for every refusal: a YAML include
     root that would change (2.5), a non-string or another include over a text include (2.4), a
     layout the planner cannot write (14.9), or a set that would change nothing.
+
+    New keys placed by the override rule into a file included at several places appear at each
+    of them (requirements choice 17): the intended configuration gains them there, in merged
+    order. Every other change keeps ``request.intended`` (a shared file is refused by the
+    read-back, config-set-writeback 14.2).
     """
     planner = _Planner(document, request.path, in_include=request.in_include)
     target = request.target
@@ -171,7 +193,14 @@ def plan_patch(document: ConfigDocument, request: SetRequest) -> tuple[FilePatch
         planner.add_key(target, request.value)
     else:
         planner.append(target, request.value)
-    return planner.patches()
+    patches = planner.patches()
+    intended = with_other_places(document.root, request.intended, planner.placed)
+    return Plan(patches=patches, intended=intended)
+
+
+def plan_patch(document: ConfigDocument, request: SetRequest) -> tuple[FilePatch, ...]:
+    """Return the patches of :func:`plan_set` (the intended configuration left out)."""
+    return plan_set(document, request).patches
 
 
 class _Planner:
@@ -194,6 +223,8 @@ class _Planner:
         # Scalar-form includes to convert, keyed by the ``id`` of their ``IncludeRef``, with their
         # new entries merged, converted once planning ends (one conversion per include).
         self._conversions: dict[int, tuple[IncludeSite, list[tuple[str, NewValue]]]] = {}
+        # New keys placed by the override rule, for the intended configuration (4.8).
+        self.placed: list[PlacedKeys] = []
 
     # --- entry point -----------------------------------------------------------------------------
 
@@ -236,10 +267,15 @@ class _Planner:
         first, *intermediates = target.missing
         for key in reversed(intermediates):
             value = NewMapping(entries=((key, value),))
-        self._place(target.placement, ((first, value),), self._path)
+        segments = self._path.segments[: len(self._path.segments) - len(target.missing)]
+        self._place(target.placement, ((first, value),), self._path, ConfigPath(segments))
 
     def _place(
-        self, placement: KeyPlacement, entries: Sequence[tuple[str, NewValue]], path: ConfigPath
+        self,
+        placement: KeyPlacement,
+        entries: Sequence[tuple[str, NewValue]],
+        path: ConfigPath,
+        at: ConfigPath,
     ) -> None:
         """Write new ``entries`` at ``placement``, below its ``prefix`` keys created as mappings.
 
@@ -250,7 +286,11 @@ class _Planner:
         mapping, or one include) are merged first (:func:`_merge_new`), so a mapping VALUE adding
         keys below several included mappings gets one insertion or one conversion holding all of
         them (4.4, 7.3).
+
+        ``at`` is the path of the mapping the entries are new in; a placement made by the override
+        rule is recorded for the intended configuration (:attr:`placed`, 4.8).
         """
+        self._record(placement, entries, at)
         entries = _nest(placement.prefix, entries)
         if placement.convert is not None:
             site = placement.convert
@@ -261,6 +301,14 @@ class _Planner:
             _merge_new(self._additions.setdefault(id(mapping), (mapping, []))[1], entries)
         else:  # pragma: no cover - a placement always names a mapping or an include
             raise ValueError("the placement names neither a mapping nor an include")
+
+    def _record(
+        self, placement: KeyPlacement, entries: Sequence[tuple[str, NewValue]], at: ConfigPath
+    ) -> None:
+        """Record new keys placed by the override rule (their file may be included at several
+        places, 4.8)."""
+        if placement.by_override:
+            self.placed.append(PlacedKeys(placement=placement, entries=tuple(entries), at=at))
 
     def append(self, target: AppendTarget, value: NewValue) -> None:
         """Plan VALUE as a new last item of ``target.sequence`` (4.1)."""
@@ -673,7 +721,13 @@ class _Planner:
         deleted = [index for index, entry in enumerate(node.entries) if entry.key not in new]
         existing = {entry.key for entry in node.entries}
         added = [(key, item) for key, item in value.entries if key not in existing]
-        placement = self._placement(node, at) if added else None
+        placement = None
+        if added:
+            placement = place_new_keys(self._document, at, in_include=self._in_include)
+            if placement.mapping is node and not placement.prefix:
+                # The mapping itself: the step 1 insertion below, styled with ``deleted``.
+                self._record(placement, added, at)
+                placement = None
         if len(deleted) == len(node.entries):
             empty = NewMapping(entries=())
             if placement is not None:
@@ -681,7 +735,7 @@ class _Planner:
                     self._render_flow_anew(layout, slot, empty, path)
                 else:
                     self._replace_value(layout, slot, empty, path, None)
-                self._place(placement, added, path)
+                self._place(placement, added, path, at)
                 return
             if node.style is CollectionStyle.FLOW:
                 self._render_flow_anew(layout, slot, value, path)
@@ -701,14 +755,7 @@ class _Planner:
             if added:
                 self.add_entries(node, added, path, deleted)
         else:
-            self._place(placement, added, path)
-
-    def _placement(self, node: ConfigMapping, at: ConfigPath) -> KeyPlacement | None:
-        """Where new keys of ``node`` (at ``at``) go; ``None`` for ``node`` itself (step 1)."""
-        placement = place_new_keys(self._document, at, in_include=self._in_include)
-        if placement.mapping is node and not placement.prefix:
-            return None
-        return placement
+            self._place(placement, added, path, at)
 
     # --- mappings merged across layers -----------------------------------------------------------
 
@@ -747,7 +794,7 @@ class _Planner:
         added = [(key, item) for key, item in value.entries if key not in existing]
         if added:
             placement = place_new_keys(self._document, at, in_include=self._in_include)
-            self._place(placement, added, path)
+            self._place(placement, added, path, at)
 
     def _empty_layered(
         self, layout: FileLayout, node: ConfigMapping, path: ConfigPath, at: ConfigPath

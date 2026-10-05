@@ -391,7 +391,7 @@ Terms used below:
 
 #### Acceptance Criteria
 1. After a successful `troupe config set`, the troupe CLI shall have changed only the bytes Requirements 4–8 and config-set-writeback require, in the files they name, and no byte of any other file.
-2. Before writing, the troupe CLI shall read the changed files back as configuration, including mapping-form includes and the deep merge, and shall exit with code 3 and change no file if the result is not the current configuration with the value at PATH replaced by VALUE.
+2. Before writing, the troupe CLI shall read the changed files back as configuration, including mapping-form includes and the deep merge, and shall exit with code 3 and change no file if the result is not the current configuration with the value at PATH replaced by VALUE. Where Requirement 4.8 applies, the intended configuration also contains the new keys at every other place where the including file is included.
 3. The troupe CLI shall write every changed file atomically and leave no extra file behind, as config-set-writeback specifies.
 
 ### Requirement 10: Writing a new key into the included file on request

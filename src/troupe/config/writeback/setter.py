@@ -15,7 +15,7 @@ the reconcile change recorded when the theatre was opened (config-lineage 3.3, 4
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from troupe.config.errors import TroupeError, WriteRefusedError
@@ -27,7 +27,7 @@ from troupe.config.theatre import Theatre
 from troupe.config.writeback.atomic import restore_file, write_atomically
 from troupe.config.writeback.compare import plain_equal
 from troupe.config.writeback.leaf_diff import diff_leaves
-from troupe.config.writeback.planner import FilePatch, plan_patch
+from troupe.config.writeback.planner import FilePatch, plan_set
 from troupe.config.writeback.target import resolve_target
 from troupe.config.writeback.value import NewValue
 from troupe.config.writeback.verify import verify_patch
@@ -64,7 +64,10 @@ def set_value(
     request = resolve_target(document, path, value, in_include=in_include)
     if plain_equal(request.current, request.intended, ordered=False):
         return SetOutcome(written=(), changes=())
-    patches = plan_patch(document, request)
+    plan = plan_set(document, request)
+    patches = plan.patches
+    # New keys written into a file included at several places appear at each (4.8).
+    request = replace(request, intended=plan.intended)
     after = verify_patch(theatre.config_file, document, patches, request)
     changes = diff_leaves(document, after)
     write_patches(patches, path)

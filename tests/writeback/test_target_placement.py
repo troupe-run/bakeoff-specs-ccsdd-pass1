@@ -683,3 +683,57 @@ def test_ref_segment_in_set_path_is_refused(tmp_path: Path, path: str) -> None:
     assert error.file == tmp_path / "troupe.yml"
     assert "`$ref` is reserved for includes" in error.problem
     assert str(error).startswith(f"{tmp_path / 'troupe.yml'}: {path}: ")
+
+
+# --- the override rule mark (task 5.2, choice 17) ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("config", "files", "path", "by_override"),
+    [
+        pytest.param(
+            "agent:\n  $ref: file:coder.yaml\n", {"coder.yaml": CODER}, "agent.x", True, id="ref"
+        ),
+        pytest.param("agent: file:coder.yaml\n", {"coder.yaml": CODER}, "agent.x", True, id="conv"),
+        pytest.param(
+            "agent:\n  $ref: file:coder.yaml\n  extra:\n    a: 1\n",
+            {"coder.yaml": CODER},
+            "agent.extra.b",
+            True,
+            id="override-side",
+        ),
+        pytest.param(
+            "a: file:mid.yaml\nb: file:mid.yaml\n",
+            {"mid.yaml": "$ref: file:leaf.yaml\n", "leaf.yaml": "sub:\n  m: 1\n"},
+            "a.sub.n",
+            True,
+            id="shared-middle",
+        ),
+        pytest.param(
+            "a: file:mid.yaml\n",
+            {"mid.yaml": "items:\n  - k: 1\n"},
+            "a.items.0.j",
+            False,
+            id="list-item",
+        ),
+        pytest.param("plain:\n  k: 1\n", {}, "plain.j", False, id="plain"),
+    ],
+)
+def test_placement_marks_whether_the_override_rule_placed_the_keys(
+    tmp_path: Path, config: str, files: dict[str, str], path: str, by_override: bool
+) -> None:
+    """Req 4.8, 4.2, 6.2, 4.6 (choice 17): a placement into a `$ref` mapping, an override side or
+    an include to convert is made by the override rule, so its keys appear wherever the written
+    mapping or include is reached; a list item or a plain mapping keeps the step 1 rule."""
+    document = _load(tmp_path, config, files)
+    assert _placement(document, path).by_override is by_override
+
+
+def test_in_include_placement_is_not_the_override_rule(tmp_path: Path) -> None:
+    """Req 4.8, 10.1 (choice 17): the `--in-include` placement is the step 1 rule, never marked as
+    placed by the override rule, so a shared included file keeps the step 1 refusal."""
+    document = _load(tmp_path, "agent: file:coder.yaml\n", {"coder.yaml": CODER})
+    config_path = ConfigPath.parse("agent.x")
+    request = resolve_target(document, config_path, parse_value("1", config_path), in_include=True)
+    assert isinstance(request.target, AddKeyTarget)
+    assert request.target.placement.by_override is False

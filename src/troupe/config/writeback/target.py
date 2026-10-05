@@ -104,6 +104,12 @@ class KeyPlacement:
     """A scalar-form YAML include to convert to mapping form, receiving the entries as overrides."""
     prefix: tuple[str, ...]
     """Existing keys (of the merged configuration) to create first as intermediate mappings."""
+    by_override: bool = False
+    """Whether the override rule chose this placement (a ``$ref`` mapping, an override side or an
+    include to convert, Requirement 4): its keys then appear at every place where the written
+    mapping or include is reached, also when the file holding it is included at several places
+    (4.8, requirements choice 17). ``False`` for the step 1 rule (a list item, the top of the
+    chain, ``--in-include``), which keeps the shared-file refusal of the read-back."""
 
 
 @dataclass(frozen=True)
@@ -561,8 +567,10 @@ def _walk(holders: list[_Holder], keys: tuple[str, ...]) -> KeyPlacement:
                 key=holder.key,
                 include=None if include is holder.node.include else include,
             )
-            return KeyPlacement(mapping=None, convert=site, prefix=prefix)
-        if holder.over or isinstance(holder.parent, ConfigSequence):
+            return KeyPlacement(mapping=None, convert=site, prefix=prefix, by_override=True)
+        if holder.over:
+            return KeyPlacement(mapping=last, convert=None, prefix=(), by_override=True)
+        if isinstance(holder.parent, ConfigSequence):
             break
     return KeyPlacement(mapping=last, convert=None, prefix=())
 
@@ -577,7 +585,9 @@ def _into_form(form: ConfigMapping, prefix: tuple[str, ...]) -> KeyPlacement:
     holders: list[_Holder] = []
     consumed = _holders(form, prefix, holders, parent=None, key=None, partial=True)
     placement = _walk(holders, prefix[:consumed])
-    return dataclasses.replace(placement, prefix=placement.prefix + prefix[consumed:])
+    return dataclasses.replace(
+        placement, prefix=placement.prefix + prefix[consumed:], by_override=True
+    )
 
 
 def _scalar_kind(walk: PathWalk) -> str:
