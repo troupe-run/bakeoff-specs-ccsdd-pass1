@@ -89,7 +89,7 @@ graph TD
 src/troupe/config/
 ├── constants.py          # + INCLUDE_REF_KEY = "$ref"
 ├── model.py              # + IncludeRef.form, MergeLayers, ConfigMapping.layers
-├── overrides.py          # NEW: deep_merge, physical_entry, physical_holders, written_parts, is_ref_mapping
+├── overrides.py          # NEW: deep_merge, is_ref_key, override_entries, physical_entry, physical_holders, written_parts
 ├── loader.py             # $ref recognition, validation (2.1-2.3), building merged/bare include roots
 └── writeback/
     ├── compare.py        # IncludeDirective.overrides, VALUE $ref, containment equality, root_plain
