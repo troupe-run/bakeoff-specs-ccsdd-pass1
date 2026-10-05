@@ -160,19 +160,19 @@ The result mapping is always a **written** mapping: none of its entries comes fr
 |-------------|---------|------------|-------|
 | 1.1, 1.4, 1.6, 1.7, 1.8 | Recognise mapping-form includes anywhere; bare = scalar form; overrides resolved first; no writes | Loader | — |
 | 1.2, 1.3, 1.5 | Deep merge, order, no `$ref` in value | Overrides.deep_merge, Loader | — |
-| 2.1–2.4 | Exit-4 refusals | Loader | — |
-| 3.1–3.5 | Merged view in get/show/sources/history/reconcile/watch | Model (merged tree), unchanged readers | — |
-| 4.1–4.6 | New-key placement | Target.placement, Planner.add_entries | set new key |
+| 2.1, 2.2, 2.3, 2.4 | Exit-4 refusals | Loader | — |
+| 3.1, 3.2, 3.3, 3.4, 3.5 | Merged view in get/show/sources/history/reconcile/watch | Model (merged tree), unchanged readers | — |
+| 4.1, 4.2, 4.3, 4.4, 4.5, 4.6 | New-key placement | Target.placement, Planner.add_entries | set new key |
 | 4.7 | Events per created leaf, none for conversion | existing leaf_diff over read-back | — |
-| 5.1–5.5 | Conversion edits | Planner.convert_include, CollectionRender | set new key |
-| 6.1–6.3 | Lists | Target.placement (list-item stop), existing AppendTarget | — |
+| 5.1, 5.2, 5.3, 5.4, 5.5 | Conversion edits | Planner.convert_include, CollectionRender | set new key |
+| 6.1, 6.2, 6.3 | Lists | Target.placement (list-item stop), existing AppendTarget | — |
 | 7.1, 7.2 | Overridden vs not | Overrides.physical_entry, Planner.replace | — |
 | 7.3, 7.4 | Collection replacement across layers, removals, pruning | Planner._merge_layered, routed additions | — |
 | 7.5, 7.6 | Include root refusal, bare text include | existing `_change_include` (include set on merged roots) | — |
 | 8.1 | `$ref` PATH refused | Target | — |
 | 8.2 | VALUE `$ref` | Compare.new_to_plain / plain_equal, Verify | — |
 | 8.3 | get/show `$ref` not found | merged tree (no `$ref` key) | — |
-| 9.1–9.3 | Byte-surgical, read-back, atomic | Planner, Verify (root_plain), existing atomic writer | — |
+| 9.1, 9.2, 9.3 | Byte-surgical, read-back, atomic | Planner, Verify (root_plain), existing atomic writer | — |
 
 ## Components and Interfaces
 
