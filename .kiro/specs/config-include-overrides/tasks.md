@@ -42,7 +42,7 @@ config-lineage are complete. No new runtime dependency is added.
   - Done when layout unit tests on files with block and flow `$ref` mappings show the right comment positions, indentation step, content ends, and insertion point of a `$ref` mapping, and an existing-value change next to such a mapping leaves its lines untouched
   - _Requirements: 5.5, 9.1_
 
-- [ ] 3.2 (P) Compare and verify configurations whose root or values are mapping-form includes
+- [x] 3.2 (P) Compare and verify configurations whose root or values are mapping-form includes
   - The plain form of the root unwraps a root include, and read-back verification uses it (target resolution adopts it in 3.3).
   - A VALUE mapping whose `$ref` is an include string is an include directive with overrides. It equals a loaded include with the same string whose content contains the overrides (mappings recursively, other values equal).
   - Done when compare unit tests prove the containment equality (equal, missing override, differing override, nested) and the root unwrapping, and a verify test accepts a patched root `$ref` file that reads back as intended and refuses one that does not
@@ -113,3 +113,4 @@ config-lineage are complete. No new runtime dependency is added.
 - 1.1: merged entries for a key that is a mapping on both sides keep the base entry's key/key_origin; writers must locate written positions through `physical_entry`/`physical_holders`, never merged entries. Pruning (3.7) uses `Holder.is_override` and `holder_of(parent, key, written)`. `ConfigMapping` equality includes `layers`: never compare merged and plain trees with `==` (use plain trees).
 - 2.1: a mapping-form root now loads with `root.include` set; writeback must unwrap it (3.2 root plain, 3.3 resolve_target). Guards for 2.2's three refusals already raise ConfigLoadError in loader.py; 2.2 adds their tests and final messages.
 - 3.1: layout `_local(node)` resolves what is written at a slot; walks use `written_parts`. Planner callers must pass written (physical) mappings to `content_end`/`insertion_point`, never merged ones. The loader now keeps a target root's own `$ref` include on the included side of a merge (fixed after 3.1).
+- 3.2: `plain_equal` containment for VALUE `$ref` directives ignores key order (the renderer writes VALUE order); a contentless directive (plain `file:` VALUE, or `$ref` without overrides) still equals any loaded include with the same text, so such a `set` over an include with overrides is a no-op rather than a removal of the overrides (pre-existing leniency, recorded for validation).

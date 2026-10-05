@@ -16,7 +16,7 @@ from pathlib import Path
 from troupe.config.errors import ConfigLoadError, WriteRefusedError
 from troupe.config.loader import load_config
 from troupe.config.model import ConfigDocument
-from troupe.config.writeback.compare import node_to_plain, plain_equal
+from troupe.config.writeback.compare import plain_equal, root_plain
 from troupe.config.writeback.planner import FilePatch
 from troupe.config.writeback.target import SetRequest
 
@@ -32,7 +32,8 @@ def verify_patch(
     Raises :class:`WriteRefusedError` naming the first patched file and PATH when the patched
     configuration cannot be loaded (the problem carries the loader's message, which names the
     failing file and, for includes, the include target) or when it differs from
-    ``request.intended`` (ordered comparison; further patched files are listed in the problem).
+    ``request.intended`` (ordered comparison of the root mapping, a mapping-form root include
+    unwrapped to its merged content; further patched files are listed in the problem).
     """
     if not patches:  # pragma: no cover - plan_patch never returns an empty plan
         raise ValueError("verify_patch needs at least one patch")
@@ -46,7 +47,7 @@ def verify_patch(
         raise WriteRefusedError(
             f"written value cannot be read back: {error}", file=first, path=path
         ) from error
-    if not plain_equal(node_to_plain(after.root), request.intended, ordered=True):
+    if not plain_equal(root_plain(after), request.intended, ordered=True):
         problem = "written configuration differs from the intended configuration"
         others = [str(patch.file.path) for patch in patches[1:]]
         if others:

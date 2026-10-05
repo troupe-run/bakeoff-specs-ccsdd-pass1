@@ -18,9 +18,15 @@ from troupe.config.errors import ExitCode, WriteRefusedError
 from troupe.config.loader import load_config
 from troupe.config.model import ConfigDocument
 from troupe.config.paths import ConfigPath
-from troupe.config.writeback.compare import IncludeDirective, node_to_plain, plain_equal
+from troupe.config.writeback.compare import (
+    IncludeDirective,
+    PlainMapping,
+    node_to_plain,
+    plain_equal,
+    root_plain,
+)
 from troupe.config.writeback.planner import FilePatch, plan_patch
-from troupe.config.writeback.target import SetRequest, resolve_target
+from troupe.config.writeback.target import ReplaceTarget, SetRequest, resolve_target
 from troupe.config.writeback.value import parse_value
 from troupe.config.writeback.verify import verify_patch
 
@@ -227,3 +233,84 @@ def test_unloadable_new_include_target_is_refused(tmp_path: Path) -> None:
     error = _refused(tmp_path, document, patches, request)
     assert error.path == "b"
     assert "bad.yaml" in error.problem
+
+
+# --- mapping-form root include (config-include-overrides) ----------------------------------------
+
+REF_ROOT = {ROOT: "$ref: file:base.yaml\nb: 2\n", "base.yaml": "a: 1\nb: 1\n"}
+
+
+def _ref_root_request(tmp_path: Path) -> tuple[ConfigDocument, SetRequest]:
+    """Set `b` to 3 in a root `$ref` file (built by hand: target resolution adopts root_plain in
+    task 3.3)."""
+    _write(tmp_path, REF_ROOT)
+    document = load_config(tmp_path / ROOT)
+    root = document.root
+    assert root.include is not None
+    path = ConfigPath.parse("b")
+    value = parse_value("3", path)
+    request = SetRequest(
+        path=path,
+        target=ReplaceTarget(node=root.entries[1].value, parent=root, key="b"),
+        value=value,
+        current={"a": 1, "b": 2},
+        intended={"a": 1, "b": 3},
+    )
+    return document, request
+
+
+def test_patched_root_ref_file_reading_back_as_intended_verifies(tmp_path: Path) -> None:
+    """Req 9.2: the read-back of a file whose root is a `$ref` mapping is compared through its
+    unwrapped root mapping; a patch that loads as intended is accepted."""
+    document, request = _ref_root_request(tmp_path)
+    patches = (FilePatch(file=document.root_file, new_text="$ref: file:base.yaml\nb: 3\n"),)
+    before = snapshot_tree(tmp_path)
+    after = verify_patch(tmp_path / ROOT, document, patches, request)
+    assert snapshot_tree(tmp_path) == before
+    assert root_plain(after) == {"a": 1, "b": 3}
+
+
+@pytest.mark.parametrize(
+    "new_text", ["$ref: file:base.yaml\nb: 4\n", "b: 3\n", "$ref: file:base.yaml\nb: 3\nc: 1\n"]
+)
+def test_patched_root_ref_file_differing_from_intended_is_refused(
+    tmp_path: Path, new_text: str
+) -> None:
+    """Req 9.2: a patched root `$ref` file whose merged root differs from the intended
+    configuration is refused with exit 3 naming PATH and the file."""
+    document, request = _ref_root_request(tmp_path)
+    patches = (FilePatch(file=document.root_file, new_text=new_text),)
+    error = _refused(tmp_path, document, patches, request)
+    assert error.path == "b"
+    assert error.file == document.root_file.path
+    assert "differs from the intended configuration" in error.problem
+
+
+def test_value_ref_mapping_verifies_against_the_include_it_describes(tmp_path: Path) -> None:
+    """Req 8.2: a VALUE `{$ref: file:..., k: v}` written as given verifies when the read-back is
+    the include with the override merged; a differing override is refused (exit 3)."""
+    files = {ROOT: "a: 1\n", "x.yaml": "k: 1\nj: 2\n"}
+    document, request, patches, after = _verify(tmp_path, files, "b", "{$ref: file:x.yaml, k: 5}")
+    assert [patch.new_text for patch in patches] == ["a: 1\nb:\n  $ref: file:x.yaml\n  k: 5\n"]
+    plain = root_plain(after)
+    assert plain["b"] == IncludeDirective("file:x.yaml", {"k": 5, "j": 2})
+    wrong = (FilePatch(file=patches[0].file, new_text="a: 1\nb:\n  $ref: file:x.yaml\n  k: 6\n"),)
+    error = _refused(tmp_path, document, wrong, request)
+    assert error.path == "b"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ('{$ref: "file:a.yaml", m: "file:m.yaml"}', {"m": {"p": 1, "q": 2}}),
+        ('{$ref: "file:a.yaml", m: {$ref: "file:m.yaml", r: 3}}', {"m": {"p": 1, "q": 2, "r": 3}}),
+    ],
+)
+def test_value_ref_with_an_include_override_merged_into_a_mapping_verifies(
+    tmp_path: Path, value: str, expected: PlainMapping
+) -> None:
+    """Req 8.2, 1.7: an include override at a key where the included file holds a mapping is merged
+    into it on read-back; the write verifies (scalar-form and `$ref` override)."""
+    files = {ROOT: "a: 1\n", "a.yaml": "m: {p: 1}\n", "m.yaml": "q: 2\n"}
+    _document, _request, _patches, after = _verify(tmp_path, files, "x", value)
+    assert root_plain(after)["x"] == IncludeDirective("file:a.yaml", expected)

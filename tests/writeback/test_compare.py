@@ -19,6 +19,7 @@ from troupe.config.writeback.compare import (
     new_to_plain,
     node_to_plain,
     plain_equal,
+    root_plain,
     scalar_equal,
     splice,
 )
@@ -444,3 +445,180 @@ def test_a_string_over_a_yaml_include_with_string_content_replaces_it(tmp_path: 
 
     assert _splice(root, "a", "hello") == {"a": "hello", "b": root["b"]}
     assert _splice(root, "b", "text") == {"a": root["a"], "b": "text"}
+
+
+# --- mapping-form includes (config-include-overrides) -------------------------------------------
+
+
+def _ref(text: str, *entries: tuple[str, NewMapping | NewScalar | NewSequence]) -> NewMapping:
+    return NewMapping(((REF, NewScalar(text, None)), *entries))
+
+
+REF = "$ref"
+LOADED = IncludeDirective("file:x.yaml", {"a": 1, "m": {"x": 1, "y": 2}, "l": [1, 2]})
+
+
+def test_value_ref_mapping_becomes_a_directive_with_overrides() -> None:
+    """Req 8.2: a VALUE mapping whose `$ref` is a `file:` string becomes a contentless directive
+    whose overrides are the other entries in VALUE order; it has no include kind."""
+    value = _ref(
+        "file:x.yaml",
+        ("m", NewMapping((("y", NewScalar(2, "2")), ("x", NewScalar(1, "1"))))),
+        ("a", NewScalar("file:a.txt", None)),
+    )
+    plain = new_to_plain(value)
+    assert isinstance(plain, IncludeDirective)
+    assert plain.text == "file:x.yaml"
+    assert plain.content is None
+    assert plain.kind is None
+    assert plain.overrides == {"m": {"y": 2, "x": 1}, "a": IncludeDirective("file:a.txt", None)}
+    assert plain.overrides is not None
+    assert list(plain.overrides) == ["m", "a"]
+    m = plain.overrides["m"]
+    assert isinstance(m, dict)
+    assert list(m) == ["y", "x"]
+    bare = new_to_plain(_ref("file:x.yaml"))
+    assert bare == IncludeDirective("file:x.yaml", None)
+    assert isinstance(bare, IncludeDirective)
+    assert bare.overrides == {}
+
+
+def test_value_ref_that_is_not_an_include_string_stays_a_plain_mapping() -> None:
+    """Req 8.2: a `$ref` whose value is not a `file:` string is an ordinary mapping entry (the
+    read-back load refuses it)."""
+    assert new_to_plain(_ref("x.yaml", ("k", NewScalar(1, "1")))) == {"$ref": "x.yaml", "k": 1}
+    number = NewMapping(((REF, NewScalar(5, "5")),))
+    assert new_to_plain(number) == {"$ref": 5}
+    nested = NewMapping(((REF, NewMapping((("k", NewScalar("file:x", None)),))),))
+    assert new_to_plain(nested) == {"$ref": {"k": IncludeDirective("file:x", None)}}
+
+
+def _with_overrides(overrides: PlainMapping, text: str = "file:x.yaml") -> IncludeDirective:
+    return IncludeDirective(text, None, overrides=overrides)
+
+
+@pytest.mark.parametrize("ordered", [True, False])
+def test_directive_with_overrides_equals_a_loaded_include_containing_them(ordered: bool) -> None:
+    """Req 8.2, 9.2: a directive with overrides equals a loaded include with the same text whose
+    content contains the overrides (in either argument order); extra content keys and their order
+    do not matter."""
+    contained: list[PlainMapping] = [
+        {},
+        {"a": 1},
+        {"l": [1, 2], "a": 1},
+        {"m": {"y": 2}},
+        {"m": {"y": 2, "x": 1}, "a": 1},
+    ]
+    for overrides in contained:
+        directive = _with_overrides(overrides)
+        assert plain_equal(directive, LOADED, ordered=ordered)
+        assert plain_equal(LOADED, directive, ordered=ordered)
+        assert plain_equal({"k": directive}, {"k": LOADED}, ordered=ordered)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"missing": 1},
+        {"a": 2},
+        {"a": 1.0},
+        {"a": "1"},
+        {"m": {"x": 2}},
+        {"m": {"z": 1}},
+        {"m": 5},
+        {"a": {"x": 1}},
+        {"l": [1]},
+        {"l": [1, 2, 3]},
+        {"l": {"0": 1}},
+    ],
+)
+def test_missing_or_differing_override_makes_the_directive_unequal(overrides: PlainMapping) -> None:
+    """Req 8.2, 9.2: an override key missing from the loaded content, or an override value that
+    differs from it (by type and value; mappings by containment), makes the directives unequal."""
+    directive = _with_overrides(overrides)
+    assert not plain_equal(directive, LOADED, ordered=True)
+    assert not plain_equal(LOADED, directive, ordered=False)
+
+
+def test_override_containment_rules_beyond_plain_mappings() -> None:
+    """Req 8.2: texts must match; a loaded include without mapping content contains no overrides
+    (not even none); a mapping override is contained in a nested include's mapping content; a
+    directive override compares as a directive; a directive never equals a non-directive."""
+    assert not plain_equal(_with_overrides({}, "file:y.yaml"), LOADED, ordered=True)
+    assert not plain_equal(_with_overrides({}), {"a": 1}, ordered=True)
+    assert not plain_equal(_with_overrides({}), IncludeDirective("file:x.yaml", [1]), ordered=True)
+    assert not plain_equal(_with_overrides({}), IncludeDirective("file:x.yaml", 1), ordered=True)
+    nested = IncludeDirective(
+        "file:x.yaml", {"m": IncludeDirective("file:m.yaml", {"y": 2, "w": 3}), "z": 1}
+    )
+    assert plain_equal(_with_overrides({"m": {"y": 2}}), nested, ordered=True)
+    assert not plain_equal(_with_overrides({"m": {"y": 3}}), nested, ordered=True)
+    as_directive = _with_overrides({"m": IncludeDirective("file:m.yaml", None)})
+    assert plain_equal(as_directive, nested, ordered=True)
+    assert not plain_equal(
+        _with_overrides({"m": IncludeDirective("file:n.yaml", None)}), nested, ordered=True
+    )
+    inner = _with_overrides({"y": 2}, "file:m.yaml")
+    assert plain_equal(_with_overrides({"m": inner}), nested, ordered=True)
+
+
+def test_directive_with_overrides_against_a_contentless_directive_compares_texts() -> None:
+    """Req 8.2: without content on either side only the texts are compared (as before)."""
+    assert plain_equal(
+        _with_overrides({"a": 1}), IncludeDirective("file:x.yaml", None), ordered=True
+    )
+    assert plain_equal(_with_overrides({"a": 1}), _with_overrides({"b": 2}), ordered=True)
+    assert not plain_equal(_with_overrides({"a": 1}), _with_overrides({}, "file:y"), ordered=True)
+
+
+def test_directives_without_overrides_keep_their_equality() -> None:
+    """Req 8.2: directives without overrides compare as before: a contentless directive equals any
+    loaded include with its text; two contents must be equal (ordered when asked)."""
+    assert plain_equal(IncludeDirective("file:x.yaml", None), LOADED, ordered=True)
+    assert not plain_equal(IncludeDirective("file:x.yaml", {"a": 1}), LOADED, ordered=False)
+    reordered = IncludeDirective("file:x.yaml", {"l": [1, 2], "a": 1, "m": {"x": 1, "y": 2}})
+    assert plain_equal(reordered, LOADED, ordered=False)
+    assert not plain_equal(reordered, LOADED, ordered=True)
+    with_overrides = IncludeDirective("file:x.yaml", {"a": 1}, overrides={"a": 1})
+    assert with_overrides == IncludeDirective("file:x.yaml", {"a": 1})
+    assert not plain_equal(with_overrides, LOADED, ordered=True)
+
+
+def test_root_plain_unwraps_a_mapping_form_root_include(tmp_path: Path) -> None:
+    """Req 9.2: the root plain tree of a file whose root is a `$ref` mapping is the merged mapping
+    of the include (not a directive); nested includes stay directives."""
+    document = _load(
+        tmp_path,
+        "$ref: file:base.yaml\nb: 2\nc: file:c.yaml\n",
+        {"base.yaml": "a: 1\nb: 1\n", "c.yaml": "k: v\n"},
+    )
+    assert isinstance(node_to_plain(document.root), IncludeDirective)
+    plain = root_plain(document)
+    assert plain == {"a": 1, "b": 2, "c": IncludeDirective("file:c.yaml", {"k": "v"})}
+    assert list(plain) == ["a", "b", "c"]
+
+
+def test_root_plain_of_a_plain_root_is_its_plain_tree(tmp_path: Path) -> None:
+    """Req 9.2: a root without an include gives the same tree as node_to_plain."""
+    document = _load(tmp_path, "a: 1\nx: file:x.yaml\n", {"x.yaml": "k: v\n"})
+    assert root_plain(document) == node_to_plain(document.root)
+    assert root_plain(document) == {"a": 1, "x": IncludeDirective("file:x.yaml", {"k": "v"})}
+
+
+def test_include_override_absorbed_by_the_merge_is_contained() -> None:
+    """Req 8.2, 1.7: an override that is itself an include, at a key where the included file holds
+    a mapping, is merged into that mapping (the loaded value is a plain mapping): a scalar-form
+    include override accepts the merged mapping; a `$ref` override needs its overrides there."""
+    merged = IncludeDirective("file:a.yaml", {"m": {"p": 1, "q": 2, "r": 3}, "s": 1})
+    scalar_form = _with_overrides({"m": IncludeDirective("file:m.yaml", None)}, "file:a.yaml")
+    assert plain_equal(scalar_form, merged, ordered=True)
+    assert plain_equal(merged, scalar_form, ordered=False)
+    ref_form = _with_overrides({"m": _with_overrides({"r": 3}, "file:m.yaml")}, "file:a.yaml")
+    assert plain_equal(ref_form, merged, ordered=True)
+    assert plain_equal(merged, ref_form, ordered=False)
+    differing = _with_overrides({"m": _with_overrides({"r": 4}, "file:m.yaml")}, "file:a.yaml")
+    assert not plain_equal(differing, merged, ordered=True)
+    missing = _with_overrides({"m": _with_overrides({"t": 3}, "file:m.yaml")}, "file:a.yaml")
+    assert not plain_equal(missing, merged, ordered=True)
+    over_scalar = _with_overrides({"s": IncludeDirective("file:m.yaml", None)}, "file:a.yaml")
+    assert not plain_equal(over_scalar, merged, ordered=True)
