@@ -202,9 +202,12 @@ def test_no_op_goes_before_a_check_that_would_refuse(make_theatre: MakeTheatre) 
 # --- verification refusals -------------------------------------------------------------------
 
 
-def test_file_included_twice_is_refused(make_theatre: MakeTheatre) -> None:
-    """Req 14.2, 14.7, 16.2, 14.4: changing a file included at two places reads back a different
-    configuration; exit 3 names the included file, PATH and why; nothing changes or is recorded."""
+def test_file_included_twice_is_written_once_and_changes_both_places(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 14.2 (superseded since step 5 by config-include-overrides 11.1-11.3): changing a file
+    included at two places is no longer refused; the value is written once in that file, both
+    places read it back and one `set` event per place is recorded."""
     theatre = make_theatre(
         "x: file:shared.yaml\ny: file:shared.yaml\n", files={".troupe/shared.yaml": "k: 1\n"}
     )
@@ -212,16 +215,14 @@ def test_file_included_twice_is_refused(make_theatre: MakeTheatre) -> None:
 
     result = run_set(theatre, "x.k", "2")
 
-    _assert_refused(
-        result,
-        theatre,
-        ".troupe/shared.yaml",
-        "x.k",
-        "written configuration differs from the intended configuration",
-    )
-    _assert_unchanged(theatre, before)
-    assert_file_bytes(theatre / ".troupe/shared.yaml", "k: 1\n")
+    assert (result.exit_code, result.stdout, result.stderr) == (0, b"", "")
+    assert_file_bytes(theatre / ".troupe/shared.yaml", "k: 2\n")
     assert_file_bytes(theatre / ROOT, "x: file:shared.yaml\ny: file:shared.yaml\n")
+    assert _listing(theatre) == before.listing
+    assert _ops(_history(theatre))[len(_ops(before.history)) :] == [
+        ("set", "x.k", 1, 2),
+        ("set", "y.k", 1, 2),
+    ]
 
 
 def test_new_include_with_missing_target_is_refused(make_theatre: MakeTheatre) -> None:

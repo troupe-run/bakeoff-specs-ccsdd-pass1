@@ -48,10 +48,11 @@ entry on that entry's line (11.3). A new key whose placement is a scalar-form in
 :meth:`_Planner.convert_include`, which rewrites the include in mapping form with the key as its
 override, in the file holding the include string (config-include-overrides 5.1-5.5).
 
-New keys placed by the override rule are recorded; :func:`plan_set` gives, with the patches, the
-intended configuration holding them also at every other place reaching the same written mapping or
-include site, when the file holding it is included at several places
-(:func:`~troupe.config.writeback.shared.with_other_places`, config-include-overrides 4.8).
+Every planned change is also recorded as a semantic edit of its written location
+(:class:`~troupe.config.writeback.shared.WrittenChanges`); :func:`plan_set` gives, with the
+patches, the intended configuration holding each change also at every other place reaching that
+location, when its file is included at several places
+(:func:`~troupe.config.writeback.shared.with_other_places`, config-include-overrides 4.8, 11.2).
 
 End-of-line comments on the changed lines are moved back to their columns by the EditApplier
 (12.x). Every refusal is a :class:`WriteRefusedError` naming the file and the path (14.9).
@@ -111,7 +112,7 @@ from troupe.config.writeback.scalar_render import (
     quote_style_of,
     render_scalar,
 )
-from troupe.config.writeback.shared import PlacedKeys, with_other_places
+from troupe.config.writeback.shared import WrittenChanges, with_other_places
 from troupe.config.writeback.target import (
     AddKeyTarget,
     AppendTarget,
@@ -135,6 +136,9 @@ _COMPACT_INDENT: Final = 2
 """Entries of a list-item mapping start this many columns right of its ``-`` (8.4, 5.3)."""
 
 _T = TypeVar("_T")
+
+type _SlotOwner = tuple[ConfigMapping | ConfigSequence, str | int]
+"""The written collection and the key or index holding a value's slot."""
 
 
 @dataclass
@@ -167,8 +171,8 @@ class Plan:
 
     patches: tuple[FilePatch, ...]
     intended: PlainMapping
-    """``request.intended`` with the new keys placed by the override rule also at every other
-    place reaching their written mapping or include site (config-include-overrides 4.8)."""
+    """``request.intended`` with every planned change also at every other place reaching its
+    written location, merged with that place's overrides (config-include-overrides 4.8, 11.2)."""
 
 
 def plan_set(document: ConfigDocument, request: SetRequest) -> Plan:
@@ -180,10 +184,10 @@ def plan_set(document: ConfigDocument, request: SetRequest) -> Plan:
     root that would change (2.5), a non-string or another include over a text include (2.4), a
     layout the planner cannot write (14.9), or a set that would change nothing.
 
-    New keys placed by the override rule into a file included at several places appear at each
-    of them (requirements choice 17): the intended configuration gains them there, in merged
-    order. Every other change keeps ``request.intended`` (a shared file is refused by the
-    read-back, config-set-writeback 14.2).
+    A change written into a file included at several places appears at each of them
+    (requirements choices 17, 18): the intended configuration holds it at every other place
+    reaching its written location, merged with that place's own overrides (11.1, 11.2). A change
+    reached at one place only keeps ``request.intended``.
     """
     planner = _Planner(document, request.path, in_include=request.in_include)
     target = request.target
@@ -194,7 +198,7 @@ def plan_set(document: ConfigDocument, request: SetRequest) -> Plan:
     else:
         planner.append(target, request.value)
     patches = planner.patches()
-    intended = with_other_places(document.root, request.intended, planner.placed)
+    intended = with_other_places(document, request.intended, request.path, planner.changes)
     return Plan(patches=patches, intended=intended)
 
 
@@ -223,8 +227,8 @@ class _Planner:
         # Scalar-form includes to convert, keyed by the ``id`` of their ``IncludeRef``, with their
         # new entries merged, converted once planning ends (one conversion per include).
         self._conversions: dict[int, tuple[IncludeSite, list[tuple[str, NewValue]]]] = {}
-        # New keys placed by the override rule, for the intended configuration (4.8).
-        self.placed: list[PlacedKeys] = []
+        # Every planned change by written location, for the intended configuration (11.2).
+        self.changes = WrittenChanges()
 
     # --- entry point -----------------------------------------------------------------------------
 
@@ -239,11 +243,14 @@ class _Planner:
         mapping present in both layers is replaced).
         """
         parent = target.parent
+        where: _SlotOwner
         if isinstance(parent, ConfigMapping):
             written, entry = physical_entry(parent, str(target.key))
             file = written.origin.file
+            where = (written, entry.key)
         else:
             file = parent.origin.file
+            where = (parent, int(target.key))
         layout = self._guard(file, self._path, lambda: self._layout(file))
 
         def slot() -> ValueSlot:
@@ -251,7 +258,7 @@ class _Planner:
                 return layout.entry_slot(written, entry, self._path)
             return layout.item_slot(parent, int(target.key), self._path)
 
-        self.change_slot(layout, target.node, slot, value, self._path, self._path)
+        self.change_slot(layout, target.node, slot, value, self._path, self._path, where)
 
     def add_key(self, target: AddKeyTarget, value: NewValue) -> None:
         """Plan a new key at its placement, with the missing intermediate mappings (3.1, 3.2).
@@ -267,15 +274,13 @@ class _Planner:
         first, *intermediates = target.missing
         for key in reversed(intermediates):
             value = NewMapping(entries=((key, value),))
-        segments = self._path.segments[: len(self._path.segments) - len(target.missing)]
-        self._place(target.placement, ((first, value),), self._path, ConfigPath(segments))
+        self._place(target.placement, ((first, value),), self._path)
 
     def _place(
         self,
         placement: KeyPlacement,
         entries: Sequence[tuple[str, NewValue]],
         path: ConfigPath,
-        at: ConfigPath,
     ) -> None:
         """Write new ``entries`` at ``placement``, below its ``prefix`` keys created as mappings.
 
@@ -286,32 +291,23 @@ class _Planner:
         mapping, or one include) are merged first (:func:`_merge_new`), so a mapping VALUE adding
         keys below several included mappings gets one insertion or one conversion holding all of
         them (4.4, 7.3).
-
-        ``at`` is the path of the mapping the entries are new in; a placement made by the override
-        rule is recorded for the intended configuration (:attr:`placed`, 4.8).
         """
-        self._record(placement, entries, at)
         entries = _nest(placement.prefix, entries)
         if placement.convert is not None:
             site = placement.convert
+            self.changes.convert(site.ref, entries)
             _merge_new(self._conversions.setdefault(id(site.ref), (site, []))[1], entries)
         elif placement.mapping is not None:
             mapping = placement.mapping
+            self.changes.add(mapping, entries)
             self._receivers.add(id(mapping))
             _merge_new(self._additions.setdefault(id(mapping), (mapping, []))[1], entries)
         else:  # pragma: no cover - a placement always names a mapping or an include
             raise ValueError("the placement names neither a mapping nor an include")
 
-    def _record(
-        self, placement: KeyPlacement, entries: Sequence[tuple[str, NewValue]], at: ConfigPath
-    ) -> None:
-        """Record new keys placed by the override rule (their file may be included at several
-        places, 4.8)."""
-        if placement.by_override:
-            self.placed.append(PlacedKeys(placement=placement, entries=tuple(entries), at=at))
-
     def append(self, target: AppendTarget, value: NewValue) -> None:
         """Plan VALUE as a new last item of ``target.sequence`` (4.1)."""
+        self.changes.add(target.sequence, ((None, value),))
         self.add_entries(target.sequence, ((None, value),), self._path)
 
     # --- new entries -----------------------------------------------------------------------------
@@ -573,11 +569,14 @@ class _Planner:
         value: NewValue,
         path: ConfigPath,
         at: ConfigPath,
+        where: _SlotOwner,
     ) -> None:
         """Plan the change of ``node`` (whose slot ``slot`` locates in ``layout``) to ``value``.
 
         ``path`` is PATH; ``at`` is the path of ``node`` itself (PATH, or a path below it inside a
-        merged collection), named when a YAML include root there would change (5.8).
+        merged collection), named when a YAML include root there would change (5.8). ``where`` is
+        the written collection and key or index holding the slot, under which a replacement is
+        recorded (:attr:`changes`, 11.2).
         """
         if plain_equal(node_to_plain(node), new_to_plain(value), ordered=False):
             return
@@ -585,7 +584,9 @@ class _Planner:
             self._change_include(node, value, path, at)
             return
         if not self._guard(
-            layout.file, path, lambda: self._change_value(layout, node, slot(), value, path, at)
+            layout.file,
+            path,
+            lambda: self._change_value(layout, node, slot(), value, path, at, where),
         ):
             _refuse(
                 path,
@@ -602,8 +603,11 @@ class _Planner:
         value: NewValue,
         path: ConfigPath,
         at: ConfigPath,
+        where: _SlotOwner,
     ) -> bool:
         """Plan an in-place change of a value that is not an include root; ``False`` if none fits.
+
+        A change that is not merged entry-wise is recorded as the replacement of ``where``.
 
         Layout lookups raise ``ValueError`` for layouts outside the contract (``? key``); the
         caller turns that into a refusal (14.9).
@@ -618,20 +622,24 @@ class _Planner:
                     self._empty_layered(layout, node, path, at)
                 return True
             # Another kind replaces the override's own value only; the merged value is then it.
+            self.changes.replace(*where, value)
             self._replace_value(layout, slot, value, path, preferred)
             return True
         if isinstance(node, ConfigScalar) and isinstance(value, NewScalar):
             if node.style in _QUOTED_OR_PLAIN:
+                self.changes.replace(*where, value)
                 self._replace_scalar(layout, slot, node, value, path)
                 return True
             if isinstance(value.value, str):
                 if self._rewrite_block(layout, slot, node, value.value, path):
+                    self.changes.replace(*where, value)
                     return True
                 # A string no block can hold is double-quoted instead (9.7).
                 preferred = ScalarStyle.DOUBLE_QUOTED
         elif _merges(node, value):
             self._merge(layout, node, slot, value, path, at)
             return True
+        self.changes.replace(*where, value)
         self._replace_value(layout, slot, value, path, preferred)
         return True
 
@@ -674,6 +682,7 @@ class _Planner:
         except UnicodeEncodeError:
             _refuse(path, target, f"the string {value.value!r} cannot be written as UTF-8")
         if content != target.text:
+            self.changes.text(target, content)
             self._replace_file(target, content, path)
 
     # --- entry-wise merges and deletions --------------------------------------------------------
@@ -721,12 +730,14 @@ class _Planner:
         deleted = [index for index, entry in enumerate(node.entries) if entry.key not in new]
         existing = {entry.key for entry in node.entries}
         added = [(key, item) for key, item in value.entries if key not in existing]
+        for index in deleted:
+            self.changes.remove(node, node.entries[index].key)
         placement = None
         if added:
             placement = place_new_keys(self._document, at, in_include=self._in_include)
             if placement.mapping is node and not placement.prefix:
                 # The mapping itself: the step 1 insertion below, styled with ``deleted``.
-                self._record(placement, added, at)
+                self.changes.add(node, added)
                 placement = None
         if len(deleted) == len(node.entries):
             empty = NewMapping(entries=())
@@ -735,7 +746,7 @@ class _Planner:
                     self._render_flow_anew(layout, slot, empty, path)
                 else:
                     self._replace_value(layout, slot, empty, path, None)
-                self._place(placement, added, path, at)
+                self._place(placement, added, path)
                 return
             if node.style is CollectionStyle.FLOW:
                 self._render_flow_anew(layout, slot, value, path)
@@ -749,13 +760,14 @@ class _Planner:
                     new[entry.key],
                     path,
                     at.child(entry.key),
+                    (node, entry.key),
                 )
         self._delete_entries(layout, node, deleted, path)
         if placement is None:
             if added:
                 self.add_entries(node, added, path, deleted)
         else:
-            self._place(placement, added, path, at)
+            self._place(placement, added, path)
 
     # --- mappings merged across layers -----------------------------------------------------------
 
@@ -789,12 +801,13 @@ class _Planner:
                     new[entry.key],
                     path,
                     at.child(entry.key),
+                    (written, physical.key),
                 )
         existing = {entry.key for entry in node.entries}
         added = [(key, item) for key, item in value.entries if key not in existing]
         if added:
             placement = place_new_keys(self._document, at, in_include=self._in_include)
-            self._place(placement, added, path, at)
+            self._place(placement, added, path)
 
     def _empty_layered(
         self, layout: FileLayout, node: ConfigMapping, path: ConfigPath, at: ConfigPath
@@ -828,7 +841,9 @@ class _Planner:
         holding, index, parent_at, is_override = prune
         self._remove(holding, index, parent_at, is_override=is_override)
         if base.entries:
-            self._replace_written(base_holder.mapping, base_holder.entry, NewMapping(entries=()))
+            empty = NewMapping(entries=())
+            self.changes.replace(base_holder.mapping, base_holder.entry.key, empty)
+            self._replace_written(base_holder.mapping, base_holder.entry, empty)
 
     def _replace_written(
         self, holding: ConfigMapping, entry: MappingEntry, value: NewMapping
@@ -850,6 +865,7 @@ class _Planner:
         self, mapping: ConfigMapping, index: int, at: ConfigPath, *, is_override: bool
     ) -> None:
         """Record the removal of entry ``index`` of the written ``mapping`` (:class:`_Removal`)."""
+        self.changes.remove(mapping, mapping.entries[index].key)
         removal = self._removals.get(id(mapping))
         if removal is None:
             removal = _Removal(mapping=mapping, indexes=set(), at=at, is_override=is_override)
@@ -976,11 +992,17 @@ class _Planner:
                 new_item,
                 path,
                 at.child(index),
+                (node, index),
             )
-        self._delete_entries(layout, node, range(len(value.items), len(node.items)), path)
+        surplus_indexes = range(len(value.items), len(node.items))
+        for index in surplus_indexes:
+            self.changes.remove(node, index)
+        self._delete_entries(layout, node, surplus_indexes, path)
         surplus = value.items[len(node.items) :]
         if surplus:  # no item is deleted, so the old last item stays the preceding sibling
-            self.add_entries(node, [(None, item) for item in surplus], path)
+            new_items: list[tuple[str | None, NewValue]] = [(None, item) for item in surplus]
+            self.changes.add(node, new_items)
+            self.add_entries(node, new_items, path)
 
     def _render_flow_anew(
         self, layout: FileLayout, slot: ValueSlot, value: NewValue, path: ConfigPath

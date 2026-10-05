@@ -31,7 +31,13 @@ include with overrides as refused, and exactly the written overrides as a no-op.
 
 Task 5.2 (choice 17) pins a new key below a middle file included at several places as written once
 in that file, visible at every place (in merged order where a place has overrides of its own),
-with one `set` event per new leaf path; an existing value there and `--in-include` stay refused.
+with one `set` event per new leaf path.
+
+Task 6.1 (choice 18, Requirement 11) pins every other write into a file included at two places as
+written once and visible at every place it is not shadowed by an outer override: an existing value
+(also one overridden at one place), `--in-include`, a new key in a list item, a list append, a
+removal in a collection replacement and a text include shared by two places, with one event per
+changed leaf path.
 
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
@@ -1224,29 +1230,57 @@ def test_key_from_a_shared_file_keeps_merged_order_where_it_is_overridden(
     assert _show(theatre, "b") == b"sub:\n  m: 1\n  n: 1\n  x: 2\ny: 3\n"
 
 
-def test_existing_value_in_a_shared_middle_file_is_still_refused(make_theatre: MakeTheatre) -> None:
-    """Req 4.8, 9.2 (config-set-writeback 14.2): changing an existing value written in the shared
-    mid.yaml would change both places, so the read-back refuses it: exit 3 naming mid.yaml and
-    PATH, no file changed, no event."""
-    middle = "$ref: file:leaf.yaml\nsub:\n  n: 1\n"
+# ---- 11.1-11.3 (choice 18): every write into a file included at more than one place ----
+
+
+def test_existing_value_in_a_shared_middle_file_is_changed_at_both_places(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 11.1, 11.2, 11.3, 7.2: changing an existing value written in the shared mid.yaml
+    writes it there once (rule 1); `show` gives the new value under `a.sub` and `b.sub`, and one
+    `set` event is recorded per changed leaf path."""
+    middle = "$ref: file:leaf.yaml\nsub:\n  n: 1  # n\n"
     theatre = make_theatre(
         SHARED_ROOT, files={SHARED_MIDDLE: middle, SHARED_LEAF: "sub:\n  m: 1\n"}
     )
     start = _imported(theatre)
     before = snapshot_tree(theatre)
 
-    result = run_set(theatre, "a.sub.n", "2")
+    _assert_success(run_set(theatre, "a.sub.n", "2"))
 
-    problem = _assert_refused(theatre, result, theatre / ".troupe" / "mid.yaml", "a.sub.n", start)
-    assert "differs from the intended configuration" in problem
-    assert snapshot_tree(theatre) == before
+    _assert_only_changed(
+        theatre, before, SHARED_MIDDLE, "$ref: file:leaf.yaml\nsub:\n  n: 2  # n\n"
+    )
+    _assert_set_events(
+        theatre, start, [("set", "a.sub.n", 1, 2, "cli"), ("set", "b.sub.n", 1, 2, "cli")]
+    )
+    assert _show(theatre, "a.sub") == b"m: 1\nn: 2\n"
+    assert _show(theatre, "b.sub") == b"m: 1\nn: 2\n"
 
 
-def test_in_include_into_a_file_shared_through_a_middle_file_is_still_refused(
+def test_existing_value_shadowed_at_one_place_changes_only_the_other(
     make_theatre: MakeTheatre,
 ) -> None:
-    """Req 4.8, 10.1, 9.2: `--in-include` writes into leaf.yaml, which both places reach through
-    mid.yaml; it keeps the step 1 refusal: exit 3 naming leaf.yaml and PATH, nothing changed."""
+    """Req 11.1, 11.2, 11.3, 7.2: `k` written in the shared agent.yaml is overridden at `b`; the
+    set writes agent.yaml once, `a.k` changes, `b.k` keeps its override and records nothing."""
+    root = "a: file:agent.yaml\nb:\n  $ref: file:agent.yaml\n  k: 9  # mine\n"
+    theatre = make_theatre(root, files={".troupe/agent.yaml": "# shared\nk: 1\nj: 2\n"})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "a.k", "5"))
+
+    _assert_only_changed(theatre, before, ".troupe/agent.yaml", "# shared\nk: 5\nj: 2\n")
+    _assert_set_events(theatre, start, [("set", "a.k", 1, 5, "cli")])
+    assert _show(theatre, "a") == b"k: 5\nj: 2\n"
+    assert _show(theatre, "b") == b"k: 9\nj: 2\n"
+
+
+def test_in_include_into_a_file_shared_through_a_middle_file_is_written_once(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 11.1, 11.2, 11.3, 10.1: `--in-include` writes into leaf.yaml, which both places reach
+    through mid.yaml, once; both places show the key and one `set` event each is recorded."""
     theatre = make_theatre(
         SHARED_ROOT,
         files={SHARED_MIDDLE: "$ref: file:leaf.yaml\n", SHARED_LEAF: "sub:\n  m: 1\n"},
@@ -1256,6 +1290,122 @@ def test_in_include_into_a_file_shared_through_a_middle_file_is_still_refused(
 
     result = run_config(*set_args(theatre, "a.sub.n", "1"), "--in-include", cwd=theatre)
 
-    problem = _assert_refused(theatre, result, theatre / ".troupe" / "leaf.yaml", "a.sub.n", start)
-    assert "differs from the intended configuration" in problem
-    assert snapshot_tree(theatre) == before
+    _assert_success(result)
+    _assert_only_changed(theatre, before, SHARED_LEAF, "sub:\n  m: 1\n  n: 1\n")
+    _assert_set_events(
+        theatre, start, [("set", "a.sub.n", None, 1, "cli"), ("set", "b.sub.n", None, 1, "cli")]
+    )
+    assert _show(theatre, "b.sub") == b"m: 1\nn: 1\n"
+
+
+SHARED_ITEMS = "items:  # list\n  - k: 1\n"
+
+
+def test_new_key_in_a_list_item_of_a_shared_file_is_written_once(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 11.1, 11.2, 11.3, 6.2: a new key in a list item of the shared mid.yaml goes into the
+    item (step 1 rule) once; both places show it, one `set` event each."""
+    theatre = make_theatre(SHARED_ROOT, files={SHARED_MIDDLE: SHARED_ITEMS})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "a.items.0.j", "2"))
+
+    _assert_only_changed(theatre, before, SHARED_MIDDLE, "items:  # list\n  - k: 1\n    j: 2\n")
+    _assert_set_events(
+        theatre,
+        start,
+        [("set", "a.items.0.j", None, 2, "cli"), ("set", "b.items.0.j", None, 2, "cli")],
+    )
+    assert _show(theatre, "b.items") == b"- k: 1\n  j: 2\n"
+
+
+def test_list_append_in_a_shared_file_is_written_once(make_theatre: MakeTheatre) -> None:
+    """Req 11.1, 11.2, 11.3, 6.1: appending to a list of the shared mid.yaml writes the item
+    there once; both places show it, one `set` event per new leaf path."""
+    theatre = make_theatre(SHARED_ROOT, files={SHARED_MIDDLE: SHARED_ITEMS})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "b.items.1", "{k: 2}"))
+
+    _assert_only_changed(theatre, before, SHARED_MIDDLE, "items:  # list\n  - k: 1\n  - k: 2\n")
+    _assert_set_events(
+        theatre,
+        start,
+        [("set", "a.items.1.k", None, 2, "cli"), ("set", "b.items.1.k", None, 2, "cli")],
+    )
+    assert _show(theatre, "a.items") == b"- k: 1\n- k: 2\n"
+
+
+def test_removal_in_a_collection_replacement_of_a_shared_file_is_written_once(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 11.1, 11.2, 11.3, 7.4: a mapping VALUE that drops `n` from a mapping written in the
+    shared mid.yaml deletes it there once; both places lose it, one `remove` event each."""
+    theatre = make_theatre(SHARED_ROOT, files={SHARED_MIDDLE: "sub:\n  m: 1\n  n: 2  # n\n"})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "a.sub", "{m: 1}"))
+
+    _assert_only_changed(theatre, before, SHARED_MIDDLE, "sub:\n  m: 1\n")
+    _assert_set_events(
+        theatre,
+        start,
+        [("remove", "a.sub.n", 2, None, "cli"), ("remove", "b.sub.n", 2, None, "cli")],
+    )
+    assert _show(theatre, "b.sub") == b"m: 1\n"
+
+
+def test_text_include_shared_by_two_places_is_replaced_once(make_theatre: MakeTheatre) -> None:
+    """Req 11.1, 11.2, 11.3 (choice 18): `a.p` and `b.p` both include prompt.md; setting `a.p`
+    rewrites prompt.md once (troupe.yml unchanged), both places show the new text and one `set`
+    event is recorded per place."""
+    root = "a:\n  p: file:prompt.md\nb:\n  p: file:prompt.md  # same\n"
+    theatre = make_theatre(root, files={".troupe/prompt.md": "You write code.\n"})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "a.p", "You review code."))
+
+    _assert_only_changed(theatre, before, ".troupe/prompt.md", "You review code.")
+    _assert_set_events(
+        theatre,
+        start,
+        [
+            ("set", "a.p", "You write code.\n", "You review code.", "cli"),
+            ("set", "b.p", "You write code.\n", "You review code.", "cli"),
+        ],
+    )
+    assert _show(theatre, "b.p") == _show(theatre, "a.p")
+
+
+def test_new_include_in_a_shared_file_merges_with_another_places_override(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 11.1, 11.2, 11.3, 1.2, 1.7: `set x.p file:t.yaml` writes the new include once in the
+    shared s.yaml; at `y`, which overrides `p` with `{w: 9}`, t.yaml's content is deep-merged
+    with that override; the events are the new leaves at both places and the removed `x.p`."""
+    root = "x: file:s.yaml\ny:\n  $ref: file:s.yaml\n  p:\n    w: 9\n"
+    theatre = make_theatre(
+        root, files={".troupe/s.yaml": "p: 1\nq: 1\n", ".troupe/t.yaml": "v: 1\n"}
+    )
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "x.p", "file:t.yaml"))
+
+    _assert_only_changed(theatre, before, ".troupe/s.yaml", "p: file:t.yaml\nq: 1\n")
+    _assert_set_events(
+        theatre,
+        start,
+        [
+            ("set", "x.p.v", None, 1, "cli"),
+            ("set", "y.p.v", None, 1, "cli"),
+            ("remove", "x.p", 1, None, "cli"),
+        ],
+    )
+    assert _show(theatre, "x.p") == b"v: 1\n"
+    assert _show(theatre, "y.p") == b"v: 1\nw: 9\n"

@@ -97,7 +97,7 @@ src/troupe/config/
     ├── compare.py        # IncludeDirective.overrides, VALUE $ref, written-overrides equality, root_plain
     ├── target.py         # KeyPlacement walk, AddKeyTarget.placement, $ref PATH refusal (8.1)
     ├── planner.py        # physical replace, layered merge/deletion/pruning, routed additions, conversion, plan_set
-    ├── shared.py         # NEW (5.2): new keys at every other place of a shared placement target (4.8)
+    ├── shared.py         # NEW (5.2, 6.1): every written change at every other place reaching its location (4.8, 11)
     ├── collection_render.py  # render_ref_form_lines / render_flow_ref_form for the conversion
     ├── layout.py         # written form at slots; tree walks over written parts
     ├── verify.py         # compare root plain (root may be a mapping-form include)
@@ -114,7 +114,7 @@ tests/
     ├── test_overrides_lookup.py    # NEW unit: physical_entry/holders, written_parts
     ├── test_target_placement.py    # NEW unit: placement walk cases
     ├── test_planner_overrides.py   # NEW unit: layered merge, pruning, conversion edits
-    ├── test_shared_placement.py    # NEW unit (5.2): new keys in a file included at several places
+    ├── test_shared_placement.py    # NEW unit (5.2, 6.1): writes into a file included at several places
     ├── test_layout_overrides.py    # NEW unit: slots/extents/comments in mapping-form files
     └── test_compare.py             # updated: directive overrides equality, root_plain
 ```
@@ -193,7 +193,8 @@ comparison.
 | 2.1, 2.2, 2.3, 2.4 | Exit-4 refusals | Loader | — |
 | 3.1, 3.2, 3.3, 3.4, 3.5 | Merged view in get/show/sources/history/reconcile/watch | Model (merged tree), unchanged readers | — |
 | 4.1, 4.2, 4.3, 4.4, 4.5, 4.6 | New-key placement | Target.placement, Planner.add_entries | set new key |
-| 4.8 | Override in a file included at several places | Target (`by_override`), Planner.plan_set, shared.with_other_places, Verify | set new key |
+| 4.8 | Override in a file included at several places | Planner.plan_set (`WrittenChanges`), shared.with_other_places, Verify | set new key |
+| 11.1, 11.2, 11.3 | Every write into a file included at several places | Planner (`WrittenChanges` at every edit), shared.with_other_places, Verify, existing leaf_diff | — |
 | 4.7 | Events per created leaf, none for conversion | existing leaf_diff over read-back | — |
 | 5.1, 5.2, 5.3, 5.4, 5.5 | Conversion edits | Planner.convert_include, CollectionRender | set new key |
 | 6.1, 6.2, 6.3 | Lists | Target.placement (list-item stop), existing AppendTarget | — |
@@ -295,8 +296,11 @@ def written_parts(node: ConfigNode) -> tuple[ConfigNode, ...]
 
 #### Verify
 - `verify_patch` is unchanged: an ordered comparison of the read-back root plain with `request.intended`.
-  The setter passes the request with `plan_set`'s intended, which holds the new keys at every place a
-  shared written mapping or include site is reached (4.8, 9.2); everything else stays strict.
+  The setter passes the request with `plan_set`'s intended, which holds every planned change at every place
+  reaching its written location, merged with that place's own overrides (4.8, 11.2, 9.2). The intended
+  configuration is derived only from the pre-write document and the plan's semantic edits, never from the
+  read-back, so the comparison still proves the written texts; a read-back that differs for any other reason
+  is still refused (exit 3).
 
 #### Target
 ```python
@@ -311,7 +315,6 @@ class KeyPlacement:
     mapping: ConfigMapping | None   # a written mapping receiving the entries, or
     convert: IncludeSite | None     # a scalar-form include to convert
     prefix: tuple[str, ...]         # existing keys to create as intermediate mappings first
-    by_override: bool = False       # chosen by the override rule ($ref mapping, override side, conversion)
 
 @dataclass(frozen=True)
 class AddKeyTarget:
@@ -324,9 +327,6 @@ def resolve_target(document: ConfigDocument, path: ConfigPath, value: NewValue, 
 ```
 - `resolve_target` refuses any `$ref` segment first: `WriteRefusedError` "`$ref` is reserved for includes", naming
   PATH and the root file (8.1).
-- `by_override` is true when the walk stops at a `$ref` mapping (including the walk rerun inside it), an
-  override side or an include to convert; false for a list item, the top of the chain and `--in-include`
-  (step 1 rule). Only such placements are widened to the other places of a shared file (4.8, task 5.2).
 - `place_new_keys` implements the placement walk, or the step 1 placement when `in_include` is true. The planner
   also uses it for the new keys of a collection replacement (7.3, 10.3). `SetRequest` carries `in_include` so the
   planner passes the same choice.
@@ -348,22 +348,34 @@ def resolve_target(document: ConfigDocument, path: ConfigPath, value: NewValue, 
   exit 3). Placements sharing a target (one written mapping, or one include site)
   are grouped and their nested `nest(prefix, entries)` trees deep-merged by key (first-seen order) before rendering,
   when planning ends: each written mapping gets one insertion and each include one conversion (4.4, 7.3).
-- `plan_set(document, request) -> Plan(patches, intended)` (`plan_patch` returns its patches). Every
-  placement with `by_override` (an `AddKeyTarget`, or the new keys of a collection replacement, also when
-  the placement is the merged-into mapping itself) is recorded as `PlacedKeys(placement, entries, at)`;
-  `shared.with_other_places` then adds the same keys to `request.intended` at every other place (choice 17,
-  research.md Decision 11):
-  - the target is identified by file real path + span (a written mapping) or by the include string's file
-    + span (a conversion), since diamond includes are separate node objects per place;
-  - each node of the merged tree has its layer tree searched for the receiving node: the merged mapping
-    whose override side is the target, the target itself, or a node standing for an include whose `$ref`
-    mapping is the target or whose string is converted. Its descendant along `prefix` is the layer that
-    gains the keys; the key order at `place + prefix` is recomputed from the layer tree (that layer's keys,
-    then the new keys, then outer override-only keys, 1.3);
-  - the primary place (`at`) is skipped (already in `intended` by `splice`); a shadowed place, or one where
-    an outer layer already has a new key, is left unchanged (the read-back decides).
-  Changed existing values, `--in-include` and list-item placements are never widened, so a shared file
-  still fails the read-back for them (config-set-writeback 14.2).
+- `plan_set(document, request) -> Plan(patches, intended)` (`plan_patch` returns its patches). Every planned
+  change is also recorded in `planner.changes`, a `shared.WrittenChanges` keyed by written location (file real
+  path + span, since diamond includes are separate node objects per place; research.md Decisions 11, 12):
+  - `replace(holder, key|index, value)`: a slot replaced in place (scalar, block scalar, kind change, the
+    override's own value of a merged mapping, `{}` for the included side in `_empty_layered`), recorded in
+    `_change_value` with the written collection and key or index that `change_slot` now receives (`where`);
+  - `remove(holder, key|index)`: entries deleted by `_merge_mapping`, `_remove` (layered removals and
+    pruning links) and surplus list items;
+  - `add(holder, entries)`: new keys at a mapping placement or at the merged-into mapping itself, appended
+    list items (nested `prefix` trees merged by key as the planner merges them);
+  - `convert(include, entries)`: overrides of a converted scalar-form include string (its file + span);
+  - `text(target, content)`: a text-include target file's new content.
+  `shared.with_other_places(root, request.intended, path, changes)` then recomputes the plain configuration
+  from the pre-write model twice, as loaded and with the changes applied wherever their location is reached.
+  The recomputation (`_Rebuild`) mirrors `node_to_plain`, but rebuilds every merged mapping from its two
+  written sides with the plain deep merge (1.2, 1.3), so each place's own overrides keep precedence (an outer
+  override still wins) and new keys come in merged order. `request.intended` is kept along PATH (the
+  requested change at its own place stays what the request asked for); at every path off PATH whose value
+  the two recomputations give differently, the recomputation with the changes is used. A change reached at
+  one place only therefore leaves `request.intended` unchanged (11.1, 11.2; choices 17, 18).
+  Hardening (Principle 2): every recorded location must be reached at PATH's own place (the layers, include
+  strings, `$ref` mappings and text targets of every node from the root along PATH, and of every node at or
+  below PATH), so off-PATH differences can only be replicas; any other recorded location is refused (exit 3,
+  naming PATH and its file). A new YAML include from VALUE is recorded with the file it is written in; where
+  another place merges it with a mapping override, its target is loaded from the pre-write files
+  (`loader.load_include`) and deep-merged as `deep_merge` does; a load error is refused (exit 3) as the
+  read-back would refuse it. A parametrised unit test pins that the unedited recomputation equals
+  `node_to_plain(root)`.
 - `convert_include(site, entries)`: the written slot of the include string comes from `physical_entry` or
   `item_slot`. Then:
   - Flow parent: one INLINE edit replacing the include string with `{$ref: <raw>, <flow entries>}` (5.4).

@@ -144,8 +144,10 @@ def test_unparsable_patch_is_refused_naming_path_and_file(tmp_path: Path) -> Non
 
 
 def test_value_mismatch_of_a_file_included_twice_is_refused(tmp_path: Path) -> None:
-    """Req 14.2: changing a file that is included at two places would also change the other place
-    → the read-back differs from the intended configuration → exit 3 naming PATH and the file."""
+    """Req 14.2: the verifier compares exactly with the intended configuration it is given: when
+    that holds the change at one place only, a file included at two places reads back differently
+    → exit 3 naming PATH and the file. (Since step 5, ``plan_set`` widens the intended
+    configuration to every place, config-include-overrides 11.2.)"""
     document, request = _setup(
         tmp_path,
         {ROOT: "a: file:x.yaml\nb: file:x.yaml\n", "x.yaml": "k: 1\n"},

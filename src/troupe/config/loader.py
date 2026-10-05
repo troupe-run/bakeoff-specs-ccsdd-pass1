@@ -114,6 +114,23 @@ def load_config(
     return ConfigDocument(root_file=root_file, root=root, files=tuple(loader.files))
 
 
+def load_include(including: SourceFile, spec: str, overrides: Mapping[Path, str]) -> ConfigNode:
+    """Load the include string ``file:<spec>`` as if written in ``including``, or raise
+    :class:`ConfigLoadError`.
+
+    The target is resolved relative to ``including``'s directory and loaded with the same rules as
+    in a document (nested includes, mapping forms, cycle detection along the chain starting at
+    ``including``); ``overrides`` gives files' texts by real path, as for :func:`load_config`. The
+    result is the include root node (its ``include`` set). Used by writers that need the content
+    of an include a set is about to write (config-include-overrides 11.2).
+    """
+    loader = _Loader(dict(overrides))
+    directive = ConfigScalar(
+        value=INCLUDE_PREFIX + spec, style=ScalarStyle.PLAIN, origin=Origin(including, Span(0, 0))
+    )
+    return _Builder(including, loader, (including,)).include(directive, spec, ROOT)
+
+
 class _Loader:
     """Reads source files (from disk or overrides) and remembers every file read, in order.
 
@@ -249,7 +266,7 @@ class _Builder:
         if isinstance(node, ScalarNode):
             scalar = self._scalar(node, path)
             if isinstance(scalar.value, str) and scalar.value.startswith(INCLUDE_PREFIX):
-                return self._include(scalar, scalar.value[len(INCLUDE_PREFIX) :], path)
+                return self.include(scalar, scalar.value[len(INCLUDE_PREFIX) :], path)
             return scalar
         if isinstance(node, SequenceNode):
             items = tuple(
@@ -326,7 +343,7 @@ class _Builder:
         if directive is None:
             return mapping
         assert isinstance(directive.value, str)  # checked by ``_ref_value``
-        return self._include(directive, directive.value[len(INCLUDE_PREFIX) :], path, form=mapping)
+        return self.include(directive, directive.value[len(INCLUDE_PREFIX) :], path, form=mapping)
 
     def _ref_value(self, node: Node, key_path: ConfigPath, path: ConfigPath) -> ConfigScalar:
         """Return the ``$ref`` value as written; it must be an include string (Req 2.2)."""
@@ -341,7 +358,7 @@ class _Builder:
             path=_text(path),
         )
 
-    def _include(
+    def include(
         self,
         directive: ConfigScalar,
         spec: str,

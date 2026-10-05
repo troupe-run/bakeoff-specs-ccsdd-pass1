@@ -225,6 +225,15 @@ All six decisions presented (requirements.md Boundary Context choices 1, 2, 5, 7
   place's own overrides. The read-back comparison stays exact. config-set-writeback 14.2's example ("because the
   changed file is included at more than one place") no longer leads to a refusal. A read-back that differs for any
   other reason still does.
+- **Mechanism (task 6.1)**: the planner records each change as a semantic edit of its written location
+  (a slot replaced, entries removed or added, an include string converted, a text file replaced;
+  `shared.WrittenChanges`). The plain configuration is recomputed from the pre-write model with and without
+  these edits, every merged mapping rebuilt from its written sides by the plain deep merge, so each place's
+  own overrides keep precedence and merged order. Off PATH, wherever the two differ, the edited value
+  replaces `request.intended`; along PATH `request.intended` is kept. This replaces Decision 11's search for
+  receiving layers (and the `by_override` mark): override-rule keys are just one kind of recorded edit.
+  Every recorded location must also be reached at PATH's own place (else exit 3), so off-PATH changes are
+  only replicas. A new YAML include merged at another place is loaded from the pre-write files.
 - **Conflict (out of contract, our choice)**: one VALUE asking for different values at two places that map to the
   same written location is refused with exit 3 naming PATH and the file. Agreeing values are written once. A refusal
   cannot lose data, while picking one value would silently drop the other.

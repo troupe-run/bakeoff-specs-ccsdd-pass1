@@ -66,7 +66,7 @@ def set_value(
         return SetOutcome(written=(), changes=())
     plan = plan_set(document, request)
     patches = plan.patches
-    # New keys written into a file included at several places appear at each (4.8).
+    # A change written into a file included at several places appears at each (4.8, 11.2).
     request = replace(request, intended=plan.intended)
     after = verify_patch(theatre.config_file, document, patches, request)
     changes = diff_leaves(document, after)

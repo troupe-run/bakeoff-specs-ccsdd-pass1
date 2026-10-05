@@ -303,10 +303,10 @@ SHARED_TWICE_IMPORTS: list[HistoryEvent] = [
 
 @pytest.mark.parametrize("hand_edit_first", [False, True], ids=["no-hand-edit", "after-hand-edit"])
 def test_refused_set_records_nothing_for_itself(tmp_path: Path, hand_edit_first: bool) -> None:
-    """Req 6.2, 6.3: while ``watch`` runs, a ``set`` that is refused (exit 3: the target file is
-    included twice) records no event for itself and leaves every file unchanged, also 2.5 s later;
-    a hand edit made just before it is recorded exactly once (by ``watch`` or by the set's
-    reconcile-first); then, 4.9, 7.1-7.3, nothing else is left."""
+    """Req 6.2, 6.3: while ``watch`` runs, a ``set`` that is refused (exit 3: it would change
+    the YAML include root ``x``) records no event for itself and leaves every file unchanged,
+    also 2.5 s later; a hand edit made just before it is recorded exactly once (by ``watch`` or
+    by the set's reconcile-first); then, 4.9, 7.1-7.3, nothing else is left."""
     theatre = _theatre(tmp_path, SHARED_TWICE)
     expected = list(SHARED_TWICE_IMPORTS)
 
@@ -317,9 +317,9 @@ def test_refused_set_records_nothing_for_itself(tmp_path: Path, hand_edit_first:
                 ".troupe/troupe.yml", SHARED_TWICE[".troupe/troupe.yml"].replace("demo", "hand")
             )
             expected.append(_set(4, "name", "demo", "hand"))
-        result = run_set(theatre.directory, "x.k", "2")
+        result = run_set(theatre.directory, "x", "{k: 2}")
         assert (result.exit_code, result.stdout) == (3, b""), result.stderr
-        assert result.stderr.startswith(f"{theatre.path('.troupe/shared.yaml')}: x.k: ")
+        assert result.stderr.startswith(f"{theatre.path('.troupe/shared.yaml')}: x: ")
         assert watch.history() == expected
         time.sleep(NEGATIVE_WAIT_SECONDS)
         assert watch.history() == expected
