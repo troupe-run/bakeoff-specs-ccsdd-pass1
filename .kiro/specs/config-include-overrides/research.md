@@ -216,6 +216,20 @@ All six decisions presented (requirements.md Boundary Context choices 1, 2, 5, 7
   keep the step 1 check (config-set-writeback 14.2), which this decision does not touch.
 - **Revisit**: if the product owner wants the same for existing values in shared files.
 
+### Decision 12: Every write follows the placement rules in shared files (choice 18, 2026-10-05; extends Decision 11)
+- **Context**: Decision 11 covered only keys placed by the override rule. The product owner then confirmed that no
+  contract rule refuses a write because its target file is included at more than one place. This covers existing
+  values (rule 1), `--in-include`, new keys in list items, and removals.
+- **Selected**: write to the shared file. The intended configuration replicates each written change (identified by
+  the written location: file real path and span) at every other place reaching that location, merged with that
+  place's own overrides. The read-back comparison stays exact. config-set-writeback 14.2's example ("because the
+  changed file is included at more than one place") no longer leads to a refusal. A read-back that differs for any
+  other reason still does.
+- **Conflict (out of contract, our choice)**: one VALUE asking for different values at two places that map to the
+  same written location is refused with exit 3 naming PATH and the file. Agreeing values are written once. A refusal
+  cannot lose data, while picking one value would silently drop the other.
+- **Revisit**: if the product owner defines a precedence between places.
+
 ### Product owner review of CR-B (2026-10-05)
 Requirement 10 and choices 12–15 (Decision 8) are approved.
 - **Contract meaning, confirmed**:

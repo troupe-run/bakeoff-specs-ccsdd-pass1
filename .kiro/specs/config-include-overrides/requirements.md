@@ -293,6 +293,15 @@ Terms used below:
       (choice 5). The override is written in the file that holds the include reference, and it then appears at every
       place that file is included, like any other content of that file. Neither a refusal nor a fallback to an outer
       file is correct (4.8).
+  18. *Writes to a file included at more than one place* (product owner, 2026-10-05): every write follows the
+      contract's placement rules, and no rule refuses a write because its target file is included at more than one
+      place. This covers an existing value (rule 1, last Overrides bullet), `--in-include` (In-include), a new key in a
+      list item (third Overrides bullet), and removals in a collection replacement ("existing settings still change
+      where they live"). The change then appears wherever the file is included, and history records the resulting
+      leaf changes. *Out of contract, our choice, accepted*: when one VALUE asks for keys at two places that the
+      placement rules map to the same location in one shared file, agreeing values are written once, and conflicting
+      values are refused with exit 3. No single write can produce the requested configuration, so refusing is the
+      conservative choice (Requirement 11).
 - **Product owner review of CR-B (2026-10-05)**: Requirement 10 and choices 12–15 are approved.
   - *Confirmed as the contract's meaning*:
     - choice 12 (the flag changes only where a new key is written; existing values still change where they live);
@@ -405,3 +414,14 @@ Terms used below:
 5. When `--in-include` is given and the new key lies below no include, the troupe CLI shall write it exactly as without the option.
 6. The troupe CLI shall accept `--in-include` without a value, before, between or after PATH and VALUE, together with `--reason`; if a value is attached to it (`--in-include=TEXT`), then the troupe CLI shall exit with code 2, write nothing to stdout, write a stderr message describing the usage problem, and change no file and no history state.
 7. When `troupe config set --in-include` writes a new key, the troupe CLI shall record its events and lineage as for any other `set` (one `set` event per created leaf, config-lineage), and shall apply Requirement 9 (byte-surgical write, read-back verification, atomic write).
+
+### Requirement 11: Writes to files included at more than one place
+**Objective:** As a developer whose shared file is included at several places in one theatre, I want `set` to write where the contract says even then, so that the change behaves like any other content of that file.
+
+#### Acceptance Criteria
+1. When the placement rules (Requirements 4, 6, 7 and 10, and config-set-writeback rule 1) direct a change into a file that is included at more than one place in the configuration, the troupe CLI shall write the change in that file and shall not refuse it because the file is included more than once.
+2. When such a change is written, the troupe CLI shall treat as intended the configuration in which the change appears at every place where that file is included, merged with each place's own overrides (an outer override at a place still takes precedence there), and shall verify the read-back against it (Requirement 9.2).
+3. When such a change is written, the troupe CLI shall record the resulting leaf changes at every place where they appear (one `set` or `remove` event per changed leaf path).
+4. When one VALUE asks for keys at two or more places that the placement rules map to the same location in one file, and the values agree, the troupe CLI shall write the key once in that file.
+5. If one VALUE asks for values at two or more places that the placement rules map to the same location in one file, and the values conflict, then the troupe CLI shall exit with code 3, write nothing to stdout, write a stderr message that names PATH and that file, and change no file.
+
