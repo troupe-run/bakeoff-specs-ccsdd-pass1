@@ -33,7 +33,9 @@ A new key (with any missing intermediate mappings nested under it) or an appende
 through :meth:`_Planner.add_entries` into the file holding the collection (3.1, 3.2, 4.1): in a
 block collection as whole lines at its insertion point and entries column with the quote styles of
 its last remaining entry (7.1-7.3, 11.1, 11.2, 11.6), in a flow collection right after its last
-entry on that entry's line (11.3).
+entry on that entry's line (11.3). A new key whose placement is a scalar-form include goes through
+:meth:`_Planner.convert_include`, which rewrites the include in mapping form with the key as its
+override, in the file holding the include string (config-include-overrides 5.1-5.5).
 
 End-of-line comments on the changed lines are moved back to their columns by the EditApplier
 (12.x). Every refusal is a :class:`WriteRefusedError` naming the file and the path (14.9).
@@ -45,6 +47,7 @@ from functools import partial
 from pathlib import Path
 from typing import Final, NoReturn, TypeVar
 
+from troupe.config.constants import INCLUDE_REF_KEY
 from troupe.config.errors import WriteRefusedError
 from troupe.config.model import (
     CollectionStyle,
@@ -57,6 +60,7 @@ from troupe.config.model import (
     ScalarStyle,
     SourceFile,
 )
+from troupe.config.overrides import physical_entry
 from troupe.config.paths import ConfigPath
 from troupe.config.writeback.block_scalar import (
     Chomping,
@@ -70,7 +74,9 @@ from troupe.config.writeback.collection_render import (
     render_block_entry,
     render_block_value,
     render_flow_entry,
+    render_flow_ref_form,
     render_flow_value,
+    render_ref_form_lines,
 )
 from troupe.config.writeback.compare import new_to_plain, node_to_plain, plain_equal
 from troupe.config.writeback.edits import EditKind, TextEdit, apply_edits
@@ -84,6 +90,7 @@ from troupe.config.writeback.scalar_render import (
 from troupe.config.writeback.target import (
     AddKeyTarget,
     AppendTarget,
+    IncludeSite,
     ReplaceTarget,
     SetRequest,
     text_include_value,
@@ -97,6 +104,8 @@ _BLOCK_STYLES: Final = frozenset({ScalarStyle.LITERAL, ScalarStyle.FOLDED})
 _LF: Final = "\n"
 _INLINE_SPACE: Final = " \t"
 _WHITESPACE: Final = " \t\r\n"
+_COMPACT_INDENT: Final = 2
+"""Entries of a list-item mapping start this many columns right of its ``-`` (8.4, 5.3)."""
 
 _T = TypeVar("_T")
 
@@ -162,23 +171,22 @@ class _Planner:
 
         A placement naming a written mapping (an override side, a ``$ref`` mapping or a plain
         mapping) receives the keys ``prefix + missing`` there (config-include-overrides 4.1,
-        4.3-4.6). A scalar-form include to convert is written by the step 1 rule, into the
-        deepest existing mapping ``target.mapping`` with the keys ``missing``.
+        4.3-4.6). A scalar-form include to convert is turned into a mapping-form include holding
+        them as its override (5.1-5.5).
 
         The first key is the new entry; the keys after it become nested new mappings with VALUE
         at the last one, rendered as one new collection value (7.4).
         """
         placement = target.placement
-        if placement.mapping is not None:
-            mapping = placement.mapping
-            keys = (*placement.prefix, *target.missing)
-        else:
-            mapping = target.mapping
-            keys = target.missing
-        first, *intermediates = keys
+        first, *intermediates = (*placement.prefix, *target.missing)
         for key in reversed(intermediates):
             value = NewMapping(entries=((key, value),))
-        self.add_entries(mapping, ((first, value),), self._path)
+        if placement.convert is not None:
+            self.convert_include(placement.convert, ((first, value),), self._path)
+        elif placement.mapping is not None:
+            self.add_entries(placement.mapping, ((first, value),), self._path)
+        else:  # pragma: no cover - a placement always names a mapping or an include
+            raise ValueError("the placement names neither a mapping nor an include")
 
     def append(self, target: AppendTarget, value: NewValue) -> None:
         """Plan VALUE as a new last item of ``target.sequence`` (4.1)."""
@@ -307,6 +315,81 @@ class _Planner:
         if not layout.file.text.startswith(bracket, start):
             raise ValueError(f"expected {bracket!r} at index {start} of {layout.file.path}")
         return start + 1
+
+    # --- conversion to mapping form --------------------------------------------------------------
+
+    def convert_include(
+        self, site: IncludeSite, entries: Sequence[tuple[str, NewValue]], path: ConfigPath
+    ) -> None:
+        """Convert the scalar-form include at ``site`` to mapping form, ``entries`` as overrides.
+
+        The edits go into the file holding the include string; the included file never changes
+        (5.5). In a flow collection the include string becomes ``{$ref: <string>, k: v}`` (5.4).
+        In a block collection the include string must end on its key's (or ``-``'s) line, else
+        the layout is refused (research.md Decision 7). The owner's line then keeps its bytes
+        through the ``:`` (or ``-``), followed by the whitespace before an end-of-line comment and
+        the comment, which is not re-aligned (5.2, Decision 6); ``$ref: <string>`` and the
+        entries follow on the next lines one indentation step deeper than the key (5.1), or two
+        columns right of the ``-`` (5.3). A list item without a comment is compact: ``$ref:
+        <string>`` replaces the include string on the ``-`` line.
+        """
+        include = site.node.include
+        if include is None:  # pragma: no cover - the placement walk only converts include roots
+            raise ValueError("not an include root")
+        file = include.directive.file
+        layout = self._guard(file, path, lambda: self._layout(file))
+        slot = self._guard(file, path, lambda: self._include_slot(layout, site, path))
+        extent = self._guard(file, path, lambda: layout.inline_extent(slot))
+        raw = layout.file.text[extent.start : extent.end]
+        siblings = SiblingStyles(key=ScalarStyle.PLAIN, value=_raw_style(raw))
+        ctx = self._context(layout, extent.end, path)
+        if slot.parent_style is CollectionStyle.FLOW:
+            text = self._render(
+                lambda: render_flow_ref_form(raw, entries, siblings, ctx), layout, path
+            )
+            self._add(layout, [TextEdit(extent.start, extent.end, text, EditKind.INLINE)])
+            return
+        line = layout.line_of(slot.indicator_end)
+        if layout.line_of(extent.start) != line or layout.line_of(extent.end) != line:
+            _refuse(
+                path,
+                layout.file,
+                f"this layout cannot be written: the include string {raw} does not stay on the "
+                "line of its key",
+            )
+        comment = layout.comment_start(line)
+        compact = slot.in_sequence and comment is None
+        column = slot.owner_column + (_COMPACT_INDENT if slot.in_sequence else ctx.step)
+        ctx = self._context(layout, self._following_start(layout, extent.end), path)
+        following = self._render(
+            lambda: render_ref_form_lines(
+                raw, entries, column, siblings, ctx, with_ref=not compact
+            ),
+            layout,
+            path,
+        )
+        edits: list[TextEdit] = []
+        if compact:
+            edits.append(
+                TextEdit(extent.start, extent.end, f"{INCLUDE_REF_KEY}: {raw}", EditKind.INLINE)
+            )
+        else:
+            end = extent.end if comment is not None else layout.line_span(line).end
+            edits.append(TextEdit(slot.indicator_end, end, "", EditKind.LINES))
+        strip = not _needs_final_break(entries[-1][1])
+        edits.append(
+            self._following_edit(layout, extent.end, following, ctx.line_break, strip=strip)
+        )
+        self._add(layout, edits)
+
+    @staticmethod
+    def _include_slot(layout: FileLayout, site: IncludeSite, path: ConfigPath) -> ValueSlot:
+        """The written slot of the include string at ``site`` (its parent may be merged)."""
+        parent = site.parent
+        if isinstance(parent, ConfigMapping):
+            written, entry = physical_entry(parent, str(site.key))
+            return layout.entry_slot(written, entry, path)
+        return layout.item_slot(parent, int(site.key), path)
 
     # --- slot change decision --------------------------------------------------------------------
 
@@ -903,6 +986,15 @@ def _sibling_styles(
     if not items:
         return SiblingStyles(key=None, value=None)
     return SiblingStyles(key=None, value=_value_style(items[-1]))
+
+
+def _raw_style(raw: str) -> QuoteStyle:
+    """The quote style of an include string from its source text."""
+    if raw.startswith("'"):
+        return ScalarStyle.SINGLE_QUOTED
+    if raw.startswith('"'):
+        return ScalarStyle.DOUBLE_QUOTED
+    return ScalarStyle.PLAIN
 
 
 def _value_style(node: ConfigNode) -> QuoteStyle | None:

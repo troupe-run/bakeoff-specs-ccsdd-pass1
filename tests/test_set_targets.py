@@ -84,10 +84,12 @@ def test_existing_value_in_yaml_include_is_changed_in_the_included_file(
     _assert_only_changed(theatre, before, CODER_FILE, "model: large\ntemperature: 0.2\n")
 
 
-def test_new_key_below_yaml_include_is_added_in_the_included_file(
+def test_new_key_below_yaml_include_is_written_as_an_override(
     make_theatre: MakeTheatre,
 ) -> None:
-    """Req 3.1, 2.6: `agents.coder.top_p` is appended to the mapping in coder.yaml."""
+    """Req 4.1, 5.1, 5.5 (config-include-overrides, superseding the old rule 2 / Req 3.1 here):
+    `agents.coder.top_p` converts the scalar-form include in troupe.yml to mapping form with the
+    new key as its override; coder.yaml is unchanged."""
     theatre = _agents_theatre(make_theatre)
     before = snapshot_tree(theatre)
 
@@ -95,7 +97,10 @@ def test_new_key_below_yaml_include_is_added_in_the_included_file(
 
     _assert_success(result)
     _assert_only_changed(
-        theatre, before, CODER_FILE, "model: small\ntemperature: 0.2\ntop_p: 0.9\n"
+        theatre,
+        before,
+        ROOT,
+        "model: gpt\nagents:\n  coder:\n    $ref: file:agents/coder.yaml\n    top_p: 0.9\n",
     )
 
 

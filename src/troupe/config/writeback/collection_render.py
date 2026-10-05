@@ -12,11 +12,17 @@ Flow style (8.5, 8.6, 9.3): ``{k: v, k2: v2}`` and ``[a, b]``; multi-line string
 
 Sibling styles (7.1-7.3) apply only to the first-level new key and value; every key and string
 inside a new collection is written in the minimal style (7.4).
+
+Mapping-form includes (config-include-overrides 5.1, 5.3, 5.4): the conversion of a scalar-form
+include writes ``$ref: <include string as written>`` followed by the new override entries, as block
+lines at one column or as the flow mapping ``{$ref: <string>, k: v}``.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
+from troupe.config.constants import INCLUDE_REF_KEY
 from troupe.config.paths import ConfigPath
 from troupe.config.writeback.block_scalar import literal_fits, render_literal
 from troupe.config.writeback.scalar_render import Context, QuoteStyle, render_key, render_scalar
@@ -119,6 +125,43 @@ def render_flow_entry(
     if key is None:
         return _flow(value, siblings.value, ctx)
     return _flow_pair(key, value, siblings, ctx)
+
+
+def render_ref_form_lines(
+    raw: str,
+    entries: Sequence[tuple[str, NewValue]],
+    column: int,
+    siblings: SiblingStyles,
+    ctx: RenderContext,
+    *,
+    with_ref: bool,
+) -> str:
+    """Render the block lines of a mapping-form include at ``column`` (5.1, 5.3).
+
+    ``raw`` is the include string exactly as written (quotes kept). With ``with_ref`` the first
+    line is ``$ref: <raw>``; without it (a compact list item that holds ``$ref`` on its ``-``
+    line) only the new entries are rendered. The entries use the sibling styles (those of the
+    ``$ref`` entry). Every line ends with a line break.
+    """
+    head = " " * column + INCLUDE_REF_KEY + ": " + raw + ctx.line_break if with_ref else ""
+    return head + "".join(
+        render_block_entry(key, value, column, siblings, ctx) for key, value in entries
+    )
+
+
+def render_flow_ref_form(
+    raw: str,
+    entries: Sequence[tuple[str, NewValue]],
+    siblings: SiblingStyles,
+    ctx: RenderContext,
+) -> str:
+    """Render the flow mapping ``{$ref: <raw>, k: v}`` of a mapping-form include (5.4).
+
+    ``raw`` is the include string exactly as written; the entries use the sibling styles.
+    """
+    pairs = [INCLUDE_REF_KEY + ": " + raw]
+    pairs.extend(render_flow_entry(key, value, siblings, ctx) for key, value in entries)
+    return "{" + ", ".join(pairs) + "}"
 
 
 def render_flow_value(value: NewValue, ctx: RenderContext) -> str:

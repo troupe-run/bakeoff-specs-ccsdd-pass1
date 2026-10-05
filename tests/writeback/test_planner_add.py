@@ -337,12 +337,13 @@ def test_new_entries_use_crlf_in_a_crlf_file(tmp_path: Path) -> None:
 # --- included files ------------------------------------------------------------------------------
 
 
-def test_new_key_goes_into_the_included_file_holding_the_mapping(tmp_path: Path) -> None:
-    """Req 3.1, 3.2: the deepest existing mapping is the include's content, so only the included
-    file changes."""
+def test_new_key_below_an_include_is_written_as_an_override(tmp_path: Path) -> None:
+    """Req 3.2 (config-include-overrides 4.1, 5.1, 5.5, superseding the old rule 2 / Req 3.1
+    here): the deepest existing mapping is the include's content, so the scalar-form include is
+    converted to mapping form holding the new key; the included file does not change."""
     config = "agents: file:agents.yaml\n"
     patched = _plan(tmp_path, config, "agents.lead.model", "x", {"agents.yaml": "coder: y\n"})
-    assert patched == {"agents.yaml": b"coder: y\nlead:\n  model: x\n"}
+    assert patched == {"troupe.yml": b"agents:\n  $ref: file:agents.yaml\n  lead:\n    model: x\n"}
 
 
 def test_append_goes_into_the_included_file_holding_the_list(tmp_path: Path) -> None:

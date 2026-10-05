@@ -24,9 +24,11 @@ from troupe.config.writeback.collection_render import (
     render_block_entry,
     render_block_value,
     render_flow_entry,
+    render_flow_ref_form,
     render_flow_value,
+    render_ref_form_lines,
 )
-from troupe.config.writeback.compare import PlainValue, node_to_plain
+from troupe.config.writeback.compare import IncludeDirective, PlainValue, node_to_plain
 from troupe.config.writeback.value import NewMapping, NewScalar, NewSequence, NewValue
 
 PLAIN: Final = ScalarStyle.PLAIN
@@ -365,6 +367,73 @@ def test_flow_entries_with_sibling_styles(tmp_path: Path) -> None:
     ) == {
         "m": {"a": 1, "k": "v", "t": "one\ntwo", "a,b": {}},
         "l": ["x", "x", ["a,b", "c"]],
+    }
+
+
+# --- mapping-form includes (config-include-overrides 5.x) -----------------------------------------
+
+
+def _reload_with_include(tmp_path: Path, text: str) -> PlainValue:
+    """Reload ``text`` next to the included file ``inc.yaml`` (``model: y``)."""
+    (tmp_path / "inc.yaml").write_bytes(b"model: y\n")
+    return _reload(tmp_path, text)
+
+
+def test_ref_form_lines_with_the_ref_line(tmp_path: Path) -> None:
+    """Req 5.1: the `$ref` line with the include string as written, then the new entries, all
+    at the given column, each ending with the line break."""
+    entries = [("temperature", n(0.3, "0.3"))]
+    rendered = render_ref_form_lines(
+        "file:inc.yaml", entries, 2, NO_SIBLINGS, _ctx(), with_ref=True
+    )
+    assert rendered == "  $ref: file:inc.yaml\n  temperature: 0.3\n"
+    assert _reload_with_include(tmp_path, "coder:\n" + rendered) == {
+        "coder": IncludeDirective("file:inc.yaml", {"model": "y", "temperature": 0.3})
+    }
+
+
+def test_ref_form_lines_without_the_ref_line(tmp_path: Path) -> None:
+    """Req 5.3: for a compact list item the `$ref` entry is written inline elsewhere; only the
+    new entries follow, at the given column."""
+    entries = [("temperature", n(0.3, "0.3"))]
+    rendered = render_ref_form_lines(
+        "file:inc.yaml", entries, 2, NO_SIBLINGS, _ctx(), with_ref=False
+    )
+    assert rendered == "  temperature: 0.3\n"
+    assert _reload_with_include(tmp_path, "l:\n- $ref: file:inc.yaml\n" + rendered) == {
+        "l": [IncludeDirective("file:inc.yaml", {"model": "y", "temperature": 0.3})]
+    }
+
+
+def test_ref_form_lines_keep_a_quoted_include_string_and_nest_entries(tmp_path: Path) -> None:
+    """Req 5.1: a quoted include string is written verbatim; a nested new mapping is one step
+    deeper; the sibling value style (double-quoted) applies to the first-level string only;
+    CRLF line breaks are used throughout."""
+    entries: list[tuple[str, NewValue]] = [("params", m(("mode", s("fast")))), ("name", s("x"))]
+    siblings = SiblingStyles(PLAIN, DOUBLE)
+    rendered = render_ref_form_lines(
+        '"file:inc.yaml"', entries, 4, siblings, _ctx(4, 4, "\r\n"), with_ref=True
+    )
+    assert rendered == (
+        '    $ref: "file:inc.yaml"\r\n    params:\r\n        mode: fast\r\n    name: "x"\r\n'
+    )
+    assert _reload_with_include(tmp_path, "coder:\r\n" + rendered) == {
+        "coder": IncludeDirective(
+            "file:inc.yaml", {"model": "y", "params": {"mode": "fast"}, "name": "x"}
+        )
+    }
+
+
+def test_flow_ref_form(tmp_path: Path) -> None:
+    """Req 5.4: `{$ref: <string>, k: v}` with the include string kept as written and the new
+    entries in flow style."""
+    entries: list[tuple[str, NewValue]] = [("params", m(("t", n(1, "1")))), ("name", s("x"))]
+    rendered = render_flow_ref_form(
+        "'file:inc.yaml'", entries, SiblingStyles(PLAIN, SINGLE), _ctx()
+    )
+    assert rendered == "{$ref: 'file:inc.yaml', params: {t: 1}, name: 'x'}"
+    assert _reload_with_include(tmp_path, f"a: [{rendered}]\n") == {
+        "a": [IncludeDirective("file:inc.yaml", {"model": "y", "params": {"t": 1}, "name": "x"})]
     }
 
 

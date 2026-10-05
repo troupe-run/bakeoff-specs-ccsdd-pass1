@@ -1,11 +1,13 @@
 """Unit tests of the PatchPlanner writing new keys at their placement (config-include-overrides
-task 3.4): ``troupe.config.writeback.planner.plan_patch`` for add-key targets whose placement is a
-written mapping.
+tasks 3.4 and 3.5): ``troupe.config.writeback.planner.plan_patch`` for add-key targets whose
+placement is a written mapping or a scalar-form include to convert to mapping form.
 
 A new key below an include is written as an override in the including file: into an existing
 override (the override side of a merged mapping), into a bare ``$ref`` mapping, or with the
 intermediate mappings the override lacks; the step 1 rules for new keys in that mapping apply
-(insertion point, sibling styles, block or flow). A key below a plain mapping is written as before.
+(insertion point, sibling styles, block or flow). A scalar-form include is first converted to
+mapping form in the file holding its include string (the contract example, research.md Decisions 6
+and 7). A key below a plain mapping is written as before.
 
 Each case loads a real theatre configuration (root file and included files on disk), resolves the
 set with the real TargetResolver, plans the patch, compares the patched files byte-exactly (the
@@ -18,6 +20,9 @@ Traceability: every test names the requirement IDs it proves at the start of its
 from collections.abc import Mapping
 from pathlib import Path
 
+import pytest
+
+from troupe.config.errors import ExitCode, WriteRefusedError
 from troupe.config.loader import load_config
 from troupe.config.paths import ConfigPath
 from troupe.config.writeback.compare import plain_equal, root_plain
@@ -36,8 +41,7 @@ def _plan(tmp_path: Path, files: Mapping[str, str], path: str, value: str) -> di
     Also proves that the target is a new key, that every patch changes its file and that the
     patched texts, re-loaded together, are the intended configuration (including key order).
     """
-    for name, text in files.items():
-        (tmp_path / name).write_bytes(text.encode("utf-8"))
+    _write(tmp_path, files)
     document = load_config(tmp_path / ROOT)
     config_path = ConfigPath.parse(path)
     request = resolve_target(document, config_path, parse_value(value, config_path))
@@ -51,6 +55,12 @@ def _plan(tmp_path: Path, files: Mapping[str, str], path: str, value: str) -> di
     result = {patch.file.real_path.name: patch.new_text for patch in patches}
     assert len(result) == len(patches), "never two patches for the same file"
     return result
+
+
+def _write(tmp_path: Path, files: Mapping[str, str]) -> None:
+    for name, text in files.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_bytes(text.encode("utf-8"))
 
 
 # --- an existing override ------------------------------------------------------------------------
@@ -207,3 +217,156 @@ def test_new_key_beside_an_include_in_a_plain_mapping(tmp_path: Path) -> None:
     root = "agents:\n  coder: file:coder.yaml\n"
     patched = _plan(tmp_path, {ROOT: root, "coder.yaml": CODER}, "agents.lead", "x")
     assert patched == {ROOT: "agents:\n  coder: file:coder.yaml\n  lead: x\n"}
+
+
+# --- converting a scalar-form include (task 3.5) -------------------------------------------------
+
+
+def test_conversion_reproduces_the_contract_example(tmp_path: Path) -> None:
+    """Req 5.1, 5.2, 5.5: `coder: file:agents/coder.yaml  # c` + `set coder.temperature 0.3`
+    gives exactly `coder:  # c` / `  $ref: file:agents/coder.yaml` / `  temperature: 0.3`; the
+    included file is not patched."""
+    files = {ROOT: "coder: file:agents/coder.yaml  # c\n", "agents/coder.yaml": CODER}
+    patched = _plan(tmp_path, files, "coder.temperature", "0.3")
+    assert patched == {ROOT: "coder:  # c\n  $ref: file:agents/coder.yaml\n  temperature: 0.3\n"}
+
+
+def test_conversion_without_a_comment_ends_the_key_line_at_the_colon(tmp_path: Path) -> None:
+    """Req 5.1, 5.2, 5.5: without a comment the key's line ends right after the `:` (trailing
+    spaces go too); the following entries are untouched."""
+    root = "agents:\n  coder: file:coder.yaml   \n  lead: x\nother: 1\n"
+    patched = _plan(tmp_path, {ROOT: root, "coder.yaml": CODER}, "agents.coder.temp", "0.5")
+    assert patched == {
+        ROOT: "agents:\n  coder:\n    $ref: file:coder.yaml\n    temp: 0.5\n  lead: x\nother: 1\n"
+    }
+
+
+def test_conversion_of_a_block_list_item_without_a_comment_is_compact(tmp_path: Path) -> None:
+    """Req 5.3, 6.3: a list-item include becomes `- $ref: <string>` with the override two columns
+    right of the `-`, in the file holding the list."""
+    root = "l:\n  - file:coder.yaml\n  - x\n"
+    patched = _plan(tmp_path, {ROOT: root, "coder.yaml": CODER}, "l.0.temp", "0.5")
+    assert patched == {ROOT: "l:\n  - $ref: file:coder.yaml\n    temp: 0.5\n  - x\n"}
+
+
+def test_conversion_of_a_block_list_item_with_a_comment(tmp_path: Path) -> None:
+    """Req 5.2, 5.3, 6.3: with a comment the item keeps `-` and the comment on its line; the
+    `$ref` entry and the override follow two columns right of the `-`."""
+    root = "l:\n- file:coder.yaml  # c\n- x\n"
+    patched = _plan(tmp_path, {ROOT: root, "coder.yaml": CODER}, "l.0.temp", "0.5")
+    assert patched == {ROOT: "l:\n-  # c\n  $ref: file:coder.yaml\n  temp: 0.5\n- x\n"}
+
+
+def test_conversion_in_a_flow_mapping(tmp_path: Path) -> None:
+    """Req 5.4: in a flow mapping the include string becomes `{$ref: <string>, k: v}`; the
+    pushed end-of-line comment keeps one space (step 1 comment rule)."""
+    root = "agents: {coder: file:coder.yaml, x: 1}  # note\n"
+    patched = _plan(tmp_path, {ROOT: root, "coder.yaml": CODER}, "agents.coder.temp", "0.5")
+    assert patched == {ROOT: "agents: {coder: {$ref: file:coder.yaml, temp: 0.5}, x: 1} # note\n"}
+
+
+def test_conversion_in_a_flow_sequence(tmp_path: Path) -> None:
+    """Req 5.4, 6.3: a flow list item include becomes a flow `$ref` mapping in place."""
+    root = "l: [file:coder.yaml, x]\n"
+    patched = _plan(tmp_path, {ROOT: root, "coder.yaml": CODER}, "l.0.temp", "0.5")
+    assert patched == {ROOT: "l: [{$ref: file:coder.yaml, temp: 0.5}, x]\n"}
+
+
+@pytest.mark.parametrize(
+    ("written", "value"),
+    [
+        pytest.param('"file:coder.yaml"', '"fast"', id="double"),
+        pytest.param("'file:coder.yaml'", "'fast'", id="single"),
+    ],
+)
+def test_conversion_keeps_a_quoted_include_string_verbatim(
+    tmp_path: Path, written: str, value: str
+) -> None:
+    """Req 5.1, 5.2: the include string keeps its quotes; the new string value copies the style
+    of the `$ref` entry's value (sibling style)."""
+    root = f"coder: {written} # c\n"
+    patched = _plan(tmp_path, {ROOT: root, "coder.yaml": CODER}, "coder.mode", "fast")
+    assert patched == {ROOT: f"coder: # c\n  $ref: {written}\n  mode: {value}\n"}
+
+
+def test_conversion_creates_the_intermediate_keys(tmp_path: Path) -> None:
+    """Req 4.4, 5.1: below an included nested mapping the override gains the intermediate
+    mappings (prefix and missing keys) holding the new key."""
+    root = "coder: file:coder.yaml\n"
+    patched = _plan(tmp_path, {ROOT: root, "coder.yaml": CODER_PARAMS}, "coder.params.k.j", "2")
+    assert patched == {ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    k:\n      j: 2\n"}
+
+
+def test_conversion_uses_the_files_indentation_step(tmp_path: Path) -> None:
+    """Req 5.1: the `$ref` mapping is one step of the file's indentation (4) deeper."""
+    root = "agents:\n    coder: file:coder.yaml\n    lead:\n        a: 1\n"
+    patched = _plan(tmp_path, {ROOT: root, "coder.yaml": CODER}, "agents.coder.params.t", "1")
+    assert patched == {
+        ROOT: "agents:\n    coder:\n        $ref: file:coder.yaml\n        params:\n"
+        "            t: 1\n    lead:\n        a: 1\n"
+    }
+
+
+def test_conversion_in_a_crlf_file(tmp_path: Path) -> None:
+    """Req 5.1, 5.2, 5.5: the new lines use the file's CRLF line breaks."""
+    root = "coder: file:coder.yaml  # c\r\nother: 1\r\n"
+    patched = _plan(tmp_path, {ROOT: root, "coder.yaml": CODER}, "coder.temp", "0.5")
+    assert patched == {
+        ROOT: "coder:  # c\r\n  $ref: file:coder.yaml\r\n  temp: 0.5\r\nother: 1\r\n"
+    }
+
+
+@pytest.mark.parametrize(
+    ("line", "key_line"),
+    [
+        pytest.param("coder: file:coder.yaml", "coder:", id="no-comment"),
+        pytest.param("coder: file:coder.yaml # c", "coder: # c", id="comment"),
+    ],
+)
+def test_conversion_at_a_file_end_without_a_final_line_break(
+    tmp_path: Path, line: str, key_line: str
+) -> None:
+    """Req 5.1, 5.2, 5.5: the file keeps ending without a final line break."""
+    root = "other: 1\n" + line
+    patched = _plan(tmp_path, {ROOT: root, "coder.yaml": CODER}, "coder.temp", "0.5")
+    assert patched == {ROOT: f"other: 1\n{key_line}\n  $ref: file:coder.yaml\n  temp: 0.5"}
+
+
+def test_conversion_with_nested_includes_happens_in_the_middle_file(tmp_path: Path) -> None:
+    """Req 4.2, 5.1, 5.5: the include of `leaf.yaml` written in `mid.yaml` is converted there;
+    the root file and the innermost file are unchanged."""
+    files = {ROOT: "a: file:mid.yaml\n", "mid.yaml": "b: file:leaf.yaml\n", "leaf.yaml": "y: 2\n"}
+    patched = _plan(tmp_path, files, "a.b.z", "3")
+    assert patched == {"mid.yaml": "b:\n  $ref: file:leaf.yaml\n  z: 3\n"}
+
+
+def test_conversion_of_an_override_that_is_a_scalar_form_include(tmp_path: Path) -> None:
+    """Req 4.3, 5.1: an override written as a scalar-form include is converted in place in the
+    `$ref` mapping."""
+    files = {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params: file:p.yaml\n",
+        "coder.yaml": CODER_PARAMS,
+        "p.yaml": "u: 1\n",
+    }
+    patched = _plan(tmp_path, files, "coder.params.k", "2")
+    assert patched == {
+        ROOT: "coder:\n  $ref: file:coder.yaml\n  params:\n    $ref: file:p.yaml\n    k: 2\n"
+    }
+
+
+def test_conversion_of_an_include_string_on_the_line_after_its_key_is_refused(
+    tmp_path: Path,
+) -> None:
+    """Req 5.5 (research.md Decision 7): an include string that does not end on its key's line
+    is refused with exit 3, naming the file and PATH."""
+    _write(tmp_path, {ROOT: "coder:\n  file:coder.yaml\n", "coder.yaml": CODER})
+    document = load_config(tmp_path / ROOT)
+    config_path = ConfigPath.parse("coder.temp")
+    request = resolve_target(document, config_path, parse_value("0.5", config_path))
+    with pytest.raises(WriteRefusedError) as raised:
+        plan_patch(document, request)
+    assert raised.value.exit_code is ExitCode.WRITE_REFUSED
+    message = str(raised.value)
+    assert str(tmp_path / ROOT) in message
+    assert "coder.temp" in message
+    assert "this layout cannot be written" in message
