@@ -272,6 +272,33 @@ def test_merged_mapping_records_its_layers_and_origins(make_theatre: MakeTheatre
     assert _mapping_at(document, "coder", "params").layers is not None
 
 
+def test_included_side_keeps_the_include_of_a_target_whose_root_is_a_ref_mapping(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 1.6, 1.2: overrides on a file whose root is a bare `$ref` mapping keep that include.
+
+    The included side of the merge is the middle file's own include, so its `$ref` mapping stays
+    reachable for writers (the middle file's lines are written text like any other).
+    """
+    theatre = make_theatre(
+        "coder:\n  $ref: file:mid.yaml\n  temperature: 0.3\n",
+        files={".troupe/mid.yaml": "$ref: file:base.yaml\n", ".troupe/base.yaml": "model: gpt\n"},
+    )
+    document = load_config(_config(theatre))
+    coder = _mapping_at(document, "coder")
+    mid = (theatre / ".troupe" / "mid.yaml").resolve()
+
+    assert coder.layers is not None
+    assert coder.include is not None and coder.include.spec == "mid.yaml"
+    inner = coder.layers.base.include
+    assert inner is not None
+    assert inner.spec == "base.yaml"
+    assert inner.form is not None and inner.form.origin.file.real_path == mid
+    assert _plain(document) == {
+        "coder": IncludeDirective("file:mid.yaml", {"model": "gpt", "temperature": 0.3})
+    }
+
+
 def test_scalar_overrides_a_mapping_and_mapping_overrides_a_scalar(
     make_theatre: MakeTheatre,
 ) -> None:

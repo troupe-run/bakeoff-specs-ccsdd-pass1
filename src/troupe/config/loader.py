@@ -391,7 +391,9 @@ class _Builder:
                     file=self._source.path,
                     path=_text(path),
                 )
-            return deep_merge(dataclasses.replace(embedded, include=None), form, include=ref)
+            # ``embedded`` carries an include only when the target's root is itself a mapping-form
+            # include; keeping it keeps that file's ``$ref`` mapping reachable for writers.
+            return deep_merge(embedded, form, include=ref)
         if embedded is None:
             return ConfigScalar(
                 value=None,

@@ -214,7 +214,7 @@ class IncludeRef:
 
 @dataclass(frozen=True)
 class MergeLayers:
-    base: "ConfigMapping"   # the included side, as loaded (an include root's base has include=None)
+    base: "ConfigMapping"   # the included side, as loaded (an include root's base keeps only the target root's own include, if any)
     over: "ConfigMapping"   # the override side as loaded; for an include root, its `$ref` mapping
 
 @dataclass(frozen=True)
