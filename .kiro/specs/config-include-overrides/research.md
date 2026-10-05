@@ -192,6 +192,30 @@ All six decisions presented (requirements.md Boundary Context choices 1, 2, 5, 7
   - Choices 7 and 8: exit 3, consistent with rule 4 under `set`.
 - **Status**: confirmed; revisit only if the contract changes.
 
+### Decision 10: An include's own string over its overrides is refused (choice 16, 2026-10-05)
+- **Context**: `set agents.coder file:agents/coder.yaml` while `agents.coder` is `{$ref: file:agents/coder.yaml,
+  temperature: 0.5}`. Implementation had treated a contentless include VALUE as equal to any loaded include with
+  the same string, so this exited 0 and kept the overrides.
+- **Alternatives**: a no-op (config-set-writeback 2.8 read literally); removing the overrides (a new write path the
+  contract does not define); exit 3.
+- **Selected**: exit 3. Dropping the overrides changes the value at a place whose whole value comes from an include,
+  which choice 8 and step 1 rule 4 refuse. A silent no-op would hide that the overrides were kept. The product owner
+  confirmed this is out of contract and accepted the choice.
+- **Detail**: a VALUE include equals the loaded include only when the string is the same and its overrides are
+  exactly the written overrides (none for a scalar-form or bare include, so 2.8 still holds there).
+- **Revisit**: if the contract adds a way to remove overrides.
+
+### Decision 11: A shared including file receives the override (choice 17, 2026-10-05)
+- **Context**: the file holding the include reference (for example a middle file of a chain) is itself included at
+  two places. Step 1's read-back check (config-set-writeback 14.2) refused such a write, because the key then
+  appears at both places.
+- **Selected (product owner)**: follow the contract's definition. The override is written in that file, and the
+  new key appears wherever the file is included. The intended configuration used by the read-back therefore gains
+  the same keys at every place reaching that written mapping or include site, in merged position. It applies to
+  new keys placed by the override rule (Requirements 4 and 7.3). Changes of existing values and `--in-include`
+  keep the step 1 check (config-set-writeback 14.2), which this decision does not touch.
+- **Revisit**: if the product owner wants the same for existing values in shared files.
+
 ### Product owner review of CR-B (2026-10-05)
 Requirement 10 and choices 12–15 (Decision 8) are approved.
 - **Contract meaning, confirmed**:

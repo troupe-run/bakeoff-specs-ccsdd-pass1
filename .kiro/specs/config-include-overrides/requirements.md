@@ -282,6 +282,17 @@ Terms used below:
     - choices 1 and 2 (exit 4);
     - choices 7 and 8 (exit 3, consistent with rule 4 under `set`).
 
+- **Product owner decisions after implementation (2026-10-05)**:
+  16. *Setting a mapping-form include that has overrides to its own include string* (`set agents.coder
+      file:agents/coder.yaml`, or a VALUE `{$ref: <same string>}` with fewer or other overrides than are written):
+      out of contract, our choice, accepted. The set is refused with exit 3, because dropping or changing the overrides
+      changes the value, which choice 8 and step 1 rule 4 refuse. A VALUE equal to what is written (the same string and
+      exactly the written overrides, or the same string over an include without overrides, config-set-writeback 2.8)
+      stays a no-op (7.5).
+  17. *A new key whose including file is itself included at more than one place*: the contract's definition applies
+      (choice 5). The override is written in the file that holds the include reference, and it then appears at every
+      place that file is included, like any other content of that file. Neither a refusal nor a fallback to an outer
+      file is correct (4.8).
 - **Product owner review of CR-B (2026-10-05)**: Requirement 10 and choices 12–15 are approved.
   - *Confirmed as the contract's meaning*:
     - choice 12 (the flag changes only where a new key is written; existing values still change where they live);
@@ -331,6 +342,7 @@ Terms used below:
 #### Acceptance Criteria
 1. When `troupe config set` adds a key whose deepest existing ancestor comes from an included file, the troupe CLI shall write the key, with any missing intermediate mappings, as an override in the including file of that include, and shall leave the included file byte-identical.
 2. When the deepest existing ancestor lies below several nested includes, the troupe CLI shall write the override for the nearest include above it, in the file that holds that include's reference, even when that file is itself included.
+8. When the file that holds that include reference is itself included at more than one place, the troupe CLI shall still write the override in that file, so that the new key appears at every place where that file is included, and shall treat that as the intended configuration (Requirement 9.2).
 3. When the deepest existing ancestor is written in an override (alone, or also in the included file), the troupe CLI shall write the new key into that override's mapping in the including file.
 4. When the deepest existing ancestor is a mapping inside the included content that the overrides do not yet contain, the troupe CLI shall create in the overrides those mappings along the path from the include down to that ancestor that the overrides do not yet contain, holding the new key, so that the merged value keeps every included key and gains the new one.
 5. When the include is already in mapping form, the troupe CLI shall add the new override under config-set-writeback's rules for new keys in that mapping (placement after the last entry and its trailing comments, sibling quoting style, block or flow style).
@@ -363,7 +375,7 @@ Terms used below:
 2. When PATH resolves to a value below a mapping-form include that is not overridden, the troupe CLI shall change it in the file it comes from, as config-set-writeback Requirement 2.6 specifies.
 3. When VALUE replaces a mapping at or below a mapping-form include, the troupe CLI shall apply 7.1 and 7.2 to each changed entry, Requirement 4 to each added key, and 7.4 to each removed key.
 4. When a collection replacement removes a key below an include, the troupe CLI shall remove it from every file in which it is written (the override, the included file, or both), under config-set-writeback's removal rules.
-5. If PATH names the place of a mapping-form include and VALUE differs from its merged value, then the troupe CLI shall exit with code 3, name PATH and the included file, and change no file, as for a scalar-form include (config-set-writeback 2.5). "Differs" is judged as for a scalar-form include (step 1 rule 4, config-set-writeback 2.5): the place holds an include, and a VALUE that is not an include never equals it, so a mapping equal to the merged mapping still differs (exit 3).
+5. If PATH names the place of a mapping-form include and VALUE differs from its merged value, then the troupe CLI shall exit with code 3, name PATH and the included file, and change no file, as for a scalar-form include (config-set-writeback 2.5). "Differs" is judged as for a scalar-form include (step 1 rule 4, config-set-writeback 2.5): the place holds an include, and a VALUE that is not an include never equals it, so a mapping equal to the merged mapping still differs (exit 3). A VALUE that names the same include with overrides other than those written (including the bare include string, or `{$ref: <same string>}`, over an include that has overrides) also differs (exit 3, choice 16); the same include string over an include without overrides is unchanged (config-set-writeback 2.8).
 6. When PATH names a text include in bare mapping form and VALUE is a string, the troupe CLI shall replace the target file's content as for a scalar-form text include (config-set-writeback 2.2–2.4).
 
 ### Requirement 8: `$ref` in PATH and VALUE
