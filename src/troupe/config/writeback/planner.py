@@ -158,7 +158,7 @@ def plan_patch(document: ConfigDocument, request: SetRequest) -> tuple[FilePatch
     root that would change (2.5), a non-string or another include over a text include (2.4), a
     layout the planner cannot write (14.9), or a set that would change nothing.
     """
-    planner = _Planner(document, request.path)
+    planner = _Planner(document, request.path, in_include=request.in_include)
     target = request.target
     if isinstance(target, ReplaceTarget):
         planner.replace(target, request.value)
@@ -172,9 +172,11 @@ def plan_patch(document: ConfigDocument, request: SetRequest) -> tuple[FilePatch
 class _Planner:
     """Collects the edits of one set per file and turns them into file patches."""
 
-    def __init__(self, document: ConfigDocument, path: ConfigPath) -> None:
+    def __init__(self, document: ConfigDocument, path: ConfigPath, *, in_include: bool) -> None:
         self._document = document
         self._path = path
+        # `set --in-include`: new keys of a collection replacement use the step 1 rule (10.3).
+        self._in_include = in_include
         # Keyed by ``SourceFile.real_path``.
         self._layouts: dict[Path, FileLayout] = {}
         self._edits: dict[Path, list[TextEdit]] = {}
@@ -641,7 +643,7 @@ class _Planner:
 
     def _placement(self, node: ConfigMapping, at: ConfigPath) -> KeyPlacement | None:
         """Where new keys of ``node`` (at ``at``) go; ``None`` for ``node`` itself (step 1)."""
-        placement = place_new_keys(self._document, at)
+        placement = place_new_keys(self._document, at, in_include=self._in_include)
         if placement.mapping is node and not placement.prefix:
             return None
         return placement
@@ -682,7 +684,8 @@ class _Planner:
         existing = {entry.key for entry in node.entries}
         added = [(key, item) for key, item in value.entries if key not in existing]
         if added:
-            self._place(place_new_keys(self._document, at), added, path)
+            placement = place_new_keys(self._document, at, in_include=self._in_include)
+            self._place(placement, added, path)
 
     def _empty_layered(
         self, layout: FileLayout, node: ConfigMapping, path: ConfigPath, at: ConfigPath

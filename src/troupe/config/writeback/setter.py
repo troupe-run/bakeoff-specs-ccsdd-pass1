@@ -42,12 +42,18 @@ class SetOutcome:
 
 
 def set_value(
-    theatre: Theatre, path: ConfigPath, value: NewValue, context: ChangeContext
+    theatre: Theatre,
+    path: ConfigPath,
+    value: NewValue,
+    context: ChangeContext,
+    *,
+    in_include: bool = False,
 ) -> SetOutcome:
     """Set the value at ``path`` to ``value`` in the files of ``theatre`` and record the history.
 
     The changes are recorded as one batch with ``context`` (``set`` passes a cli context carrying
-    the command's actor; config-lineage 3.3).
+    the command's actor; config-lineage 3.3). ``in_include`` (``set --in-include``) writes new
+    keys by the step 1 placement (config-include-overrides Requirement 10).
 
     Raises the refusal of any pure step (exit 3 or 5) before any file is written; a
     :class:`WriteRefusedError` naming the failed file and PATH when a file cannot be written (the
@@ -55,7 +61,7 @@ def set_value(
     the changes cannot be recorded (every written file restored).
     """
     document = theatre.document
-    request = resolve_target(document, path, value)
+    request = resolve_target(document, path, value, in_include=in_include)
     if plain_equal(request.current, request.intended, ordered=False):
         return SetOutcome(written=(), changes=())
     patches = plan_patch(document, request)

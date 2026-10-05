@@ -13,6 +13,11 @@
 
 A PATH with a ``$ref`` segment is refused (exit 3) before any of this (8.1).
 
+With ``in_include`` (``set --in-include``, config-include-overrides Requirement 10) new keys use the
+step 1 placement instead of the walk: the included side of the deepest existing mapping, and the
+intended configuration lists keys written into the included side of a merged mapping before its
+override-only keys (merged order, 1.3, 10.2).
+
 It also computes the intended configuration with :func:`splice`, supplying the text-include content
 rule (:func:`text_include_value`) so it applies at PATH and at any depth inside a replaced
 collection.
@@ -46,7 +51,7 @@ from troupe.config.writeback.compare import (
     root_plain,
     splice,
 )
-from troupe.config.writeback.value import NewValue
+from troupe.config.writeback.value import NewMapping, NewValue
 
 
 @dataclass(frozen=True)
@@ -121,6 +126,9 @@ class SetRequest:
     """The plain tree of the configuration as loaded."""
     intended: PlainMapping
     """The plain tree the configuration must become (include directives kept)."""
+    in_include: bool = False
+    """Whether new keys use the step 1 placement (``set --in-include``, Requirement 10); the
+    planner uses the same choice for the new keys of a collection replacement (10.3)."""
 
 
 _BARE_LINE_FEED: Final = re.compile(r"(?<!\r)\n")
@@ -137,7 +145,9 @@ def text_include_value(value: str, target: SourceFile) -> str:
     return value
 
 
-def resolve_target(document: ConfigDocument, path: ConfigPath, value: NewValue) -> SetRequest:
+def resolve_target(
+    document: ConfigDocument, path: ConfigPath, value: NewValue, *, in_include: bool = False
+) -> SetRequest:
     """Resolve PATH on ``document`` and compute the intended configuration for VALUE.
 
     Raises :class:`PathNotFoundError` (exit 5) naming PATH and the file holding the deepest
@@ -148,6 +158,11 @@ def resolve_target(document: ConfigDocument, path: ConfigPath, value: NewValue) 
     Before any of that, raises :class:`WriteRefusedError` (exit 3) naming PATH and the root file
     when a segment of PATH is ``$ref`` (config-include-overrides 8.1). The current configuration
     is the root's plain form with a root include unwrapped.
+
+    With ``in_include`` new keys are placed by the step 1 rule (:func:`place_new_keys`), and in
+    the intended configuration the keys written into the included side of a merged mapping (at
+    the deepest existing mapping, or at any merged mapping a mapping VALUE is merged into) come
+    after its included keys and before its override-only keys (10.1-10.3, 10.5).
     """
     if any(is_ref_key(segment) for segment in path.segments):
         raise WriteRefusedError(
@@ -156,7 +171,7 @@ def resolve_target(document: ConfigDocument, path: ConfigPath, value: NewValue) 
             path=str(path),
         )
     walk = walk_path(document.root, path)
-    target = _target(walk)
+    target = _target(walk, in_include=in_include)
     current = root_plain(document)
     text_targets = _text_include_targets(document.root, current)
 
@@ -164,10 +179,20 @@ def resolve_target(document: ConfigDocument, path: ConfigPath, value: NewValue) 
         return text_include_value(text, text_targets[id(directive)])
 
     intended = splice(current, path, new_to_plain(value), text_content)
-    return SetRequest(path=path, target=target, value=value, current=current, intended=intended)
+    if in_include:
+        for at, merged in _merged_receivers(walk, target, value):
+            intended = _reorder_at(intended, at, merged)
+    return SetRequest(
+        path=path,
+        target=target,
+        value=value,
+        current=current,
+        intended=intended,
+        in_include=in_include,
+    )
 
 
-def _target(walk: PathWalk) -> WriteTarget:
+def _target(walk: PathWalk, *, in_include: bool) -> WriteTarget:
     """Map a path walk to a write target, or raise the exit-5 error for it."""
     path = walk.path
     deepest = walk.deepest
@@ -188,7 +213,10 @@ def _target(walk: PathWalk) -> WriteTarget:
                 f"not found: key {digit_keys[0]!r} would have to be created, "
                 "but a key of digits only cannot be created (it reads as a list index)",
             )
-        placement = _place(_chain(walk.nodes, path.segments[: walk.consumed]))
+        if in_include:
+            placement = _included_placement(deepest)
+        else:
+            placement = _place(_chain(walk.nodes, path.segments[: walk.consumed]))
         return AddKeyTarget(mapping=deepest, missing=remaining, placement=placement)
     if walk.stop is WalkStop.INDEX_OUT_OF_RANGE and isinstance(deepest, ConfigSequence):
         index = int(segment)
@@ -225,9 +253,14 @@ class _Link:
     key: str | int | None
 
 
-def place_new_keys(document: ConfigDocument, mapping_path: ConfigPath) -> KeyPlacement:
+def place_new_keys(
+    document: ConfigDocument, mapping_path: ConfigPath, *, in_include: bool
+) -> KeyPlacement:
     """Return where new keys below the mapping at ``mapping_path`` are written (4.1-4.4, 4.6, 6.2,
     6.3; design.md "Placement walk").
+
+    With ``in_include`` the walk is not run: the step 1 placement is used instead
+    (:func:`_included_placement`, 10.1).
 
     ``mapping_path`` must name an existing mapping A of the merged configuration. The walk goes up
     from A and stops at the first of:
@@ -244,7 +277,101 @@ def place_new_keys(document: ConfigDocument, mapping_path: ConfigPath) -> KeyPla
     walk = walk_path(document.root, mapping_path)
     if walk.stop is not WalkStop.COMPLETE or not isinstance(walk.deepest, ConfigMapping):
         raise ValueError(f"{mapping_path} does not name an existing mapping")
+    if in_include:
+        return _included_placement(walk.deepest)
     return _place(_chain(walk.nodes, mapping_path.segments))
+
+
+def _included_side(mapping: ConfigMapping) -> ConfigMapping:
+    """The included side of ``mapping``: its base layer, repeatedly while that is merged; the
+    mapping itself when it is not merged (written in one file, the innermost one)."""
+    while mapping.layers is not None:
+        mapping = mapping.layers.base
+    return mapping
+
+
+def _included_placement(deepest: ConfigMapping) -> KeyPlacement:
+    """The step 1 placement for ``set --in-include`` (10.1, 10.5; requirements choice 13).
+
+    The included side of the deepest existing mapping A, with no prefix. An A written only in an
+    override is not merged, so it is A itself in the including file; below no include it is A,
+    as without the option.
+    """
+    return KeyPlacement(mapping=_included_side(deepest), convert=None, prefix=())
+
+
+def _merged_receivers(
+    walk: PathWalk, target: WriteTarget, value: NewValue
+) -> list[tuple[tuple[str, ...], ConfigMapping]]:
+    """The merged mappings whose new keys go into their included side with ``in_include``, each
+    with its path segments: the deepest existing mapping of an added key, or every merged mapping
+    a mapping VALUE is merged into (at PATH and below it, 10.3)."""
+    if isinstance(target, AddKeyTarget):
+        if target.mapping.layers is None:
+            return []
+        return [(walk.path.segments[: walk.consumed], target.mapping)]
+    if isinstance(target, ReplaceTarget):
+        found: list[tuple[tuple[str, ...], ConfigMapping]] = []
+        _collect_merged(target.node, value, walk.path.segments, found)
+        return found
+    return []
+
+
+def _collect_merged(
+    node: ConfigNode,
+    value: NewValue,
+    at: tuple[str, ...],
+    found: list[tuple[tuple[str, ...], ConfigMapping]],
+) -> None:
+    """Collect the merged mappings below ``at`` into which the mapping ``value`` is merged.
+
+    A YAML include root is replaced, never merged (2.5, 7.5), so the walk stops there.
+    """
+    if not (isinstance(node, ConfigMapping) and isinstance(value, NewMapping)):
+        return
+    if node.include is not None and node.layers is None:
+        return
+    if node.layers is not None:
+        found.append((at, node))
+    new = dict(value.entries)
+    for entry in node.entries:
+        if entry.key in new:
+            _collect_merged(entry.value, new[entry.key], (*at, entry.key), found)
+
+
+def _reorder_at(
+    plain: PlainValue, segments: tuple[str, ...], merged: ConfigMapping
+) -> PlainMapping:
+    """Return the intended root ``plain`` with the new keys of the mapping at ``segments`` moved
+    just before its first key that is not on the included side of ``merged`` (merged order 1.3,
+    10.2): keys written into the included side are listed after its keys after the reload."""
+    result = _reordered(plain, segments, merged)
+    if not isinstance(result, dict):  # pragma: no cover - the root stays a mapping
+        raise TypeError("the root must stay a mapping")
+    return result
+
+
+def _reordered(plain: PlainValue, segments: tuple[str, ...], merged: ConfigMapping) -> PlainValue:
+    if isinstance(plain, IncludeDirective) and plain.content is not None:
+        return dataclasses.replace(plain, content=_reordered(plain.content, segments, merged))
+    if segments:
+        segment, rest = segments[0], segments[1:]
+        if isinstance(plain, dict):
+            return {**plain, segment: _reordered(plain[segment], rest, merged)}
+        if isinstance(plain, list):
+            items = list(plain)
+            items[int(segment)] = _reordered(items[int(segment)], rest, merged)
+            return items
+        raise ValueError(f"segment {segment!r} lies below a scalar")  # pragma: no cover
+    if not isinstance(plain, dict):  # pragma: no cover - a merged mapping stays a mapping here
+        return plain
+    existing = {entry.key for entry in merged.entries}
+    included = {entry.key for entry in _included_side(merged).entries}
+    added = [key for key in plain if key not in existing]
+    kept = [key for key in plain if key in existing]
+    split = next((i for i, key in enumerate(kept) if key not in included), len(kept))
+    order = [*kept[:split], *added, *kept[split:]]
+    return {key: plain[key] for key in order}
 
 
 def _chain(nodes: tuple[ConfigNode, ...], segments: tuple[str, ...]) -> tuple[_Link, ...]:

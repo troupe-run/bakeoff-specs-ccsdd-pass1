@@ -36,7 +36,7 @@ config-lineage are complete. No new runtime dependency is added.
   - Done when e2e tests through the real CLI prove each of these, including a `watch` that reconciles an edit to a `$ref` target file
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 8.3_
 
-- [ ] 3. File layer: writing below mapping-form includes
+- [x] 3. File layer: writing below mapping-form includes
 - [x] 3.1 Teach the file layout about `$ref` mappings and merged mappings
   - At a slot whose value is a mapping-form include root, the layout uses the `$ref` mapping as written (inline extent, body lines, content end). The walks that find token ends (comment detection), indentation step, dash offset and block-scalar owner columns visit the written parts of merged mappings and `$ref` mappings.
   - Done when layout unit tests on files with block and flow `$ref` mappings show the right comment positions, indentation step, content ends, and insertion point of a `$ref` mapping, and an existing-value change next to such a mapping leaves its lines untouched
@@ -79,7 +79,7 @@ config-lineage are complete. No new runtime dependency is added.
   - Done when planner unit tests show the exact texts for a merge with removals in both layers, pruning of an emptied override, a merge whose new key becomes an override in an existing `$ref` mapping, and one whose new key converts a scalar-form include
   - _Requirements: 4.5, 7.3, 7.4_
 
-- [ ] 3.8 Write new keys into the included file when `--in-include` is chosen (CR-B)
+- [x] 3.8 Write new keys into the included file when `--in-include` is chosen (CR-B)
   - A set can ask for the step 1 placement. The new key (and the new keys of a mapping VALUE) then goes into the included side of the deepest existing ancestor, or into that ancestor itself when it is not merged. Existing values, appends and removals do not depend on the choice.
   - When keys go into the included side of a merged mapping, the intended configuration lists them after the included keys and before the override-only keys, so the ordered read-back holds.
   - Done when target and planner unit tests show the exact texts for: a scalar-form include, a merged mapping (with the merged order checked after reload), nested includes (innermost file), an ancestor written only in an override, a mapping VALUE with new keys, and a plain root mapping (same as without the choice)

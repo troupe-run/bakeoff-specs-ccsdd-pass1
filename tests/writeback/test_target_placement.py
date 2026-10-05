@@ -20,11 +20,13 @@ from troupe.config.errors import ExitCode, WriteRefusedError
 from troupe.config.loader import load_config
 from troupe.config.model import ConfigDocument, ConfigMapping, ConfigNode, ConfigSequence
 from troupe.config.paths import ConfigPath
-from troupe.config.writeback.compare import IncludeDirective, root_plain
+from troupe.config.writeback.compare import IncludeDirective, PlainValue, root_plain
 from troupe.config.writeback.target import (
     AddKeyTarget,
     IncludeSite,
     KeyPlacement,
+    ReplaceTarget,
+    SetRequest,
     place_new_keys,
     resolve_target,
 )
@@ -334,9 +336,164 @@ def test_place_new_keys_takes_the_path_of_the_deepest_mapping(tmp_path: Path) ->
     document = _load(
         tmp_path, "agent:\n  $ref: file:coder.yaml\n  model: big\n", {"coder.yaml": CODER}
     )
-    placement = place_new_keys(document, ConfigPath.parse("agent.params"))
+    placement = place_new_keys(document, ConfigPath.parse("agent.params"), in_include=False)
     assert placement.mapping is _override_side(_mapping_at(document, "agent"))
     assert placement.prefix == ("params",)
+
+
+# --- `--in-include`: the step 1 placement (CR-B, task 3.8) ---------------------------------------
+
+
+def _in_include(document: ConfigDocument, path: str, value: str = "1") -> SetRequest:
+    config_path = ConfigPath.parse(path)
+    return resolve_target(document, config_path, parse_value(value, config_path), in_include=True)
+
+
+def _in_include_placement(document: ConfigDocument, path: str) -> KeyPlacement:
+    target = _in_include(document, path).target
+    assert isinstance(target, AddKeyTarget)
+    return target.placement
+
+
+def _content_keys(value: PlainValue) -> list[str]:
+    if isinstance(value, IncludeDirective):
+        value = value.content
+    assert isinstance(value, dict)
+    return list(value)
+
+
+def test_in_include_below_a_scalar_form_include_places_into_the_included_root(
+    tmp_path: Path,
+) -> None:
+    """Req 10.1: with ``in_include`` a key below a scalar-form YAML include goes into the
+    included content (the included file), with no conversion."""
+    document = _load(tmp_path, "agent: file:coder.yaml\n", {"coder.yaml": CODER})
+    placement = _in_include_placement(document, "agent.top_p")
+    assert placement.mapping is _mapping_at(document, "agent")
+    assert _file(tmp_path, placement.mapping) == Path("coder.yaml")
+    assert placement.convert is None
+    assert placement.prefix == ()
+
+
+def test_in_include_below_a_merged_mapping_places_into_its_included_side(tmp_path: Path) -> None:
+    """Req 10.1, 10.2: with ``in_include`` a key below a merged mapping goes into its included
+    side, and the intended configuration lists it after the included keys and before the
+    override-only keys."""
+    document = _load(
+        tmp_path,
+        "agent:\n  $ref: file:coder.yaml\n  model: big\n  extra: 1\n",
+        {"coder.yaml": CODER},
+    )
+    agent = _mapping_at(document, "agent")
+    request = _in_include(document, "agent.top_p.x")
+    target = request.target
+    assert isinstance(target, AddKeyTarget)
+    assert target.placement.mapping is not None
+    assert agent.layers is not None
+    assert target.placement.mapping is agent.layers.base
+    assert _file(tmp_path, target.placement.mapping) == Path("coder.yaml")
+    assert target.placement.prefix == ()
+    assert target.missing == ("top_p", "x")
+    assert _content_keys(request.intended["agent"]) == ["model", "params", "top_p", "extra"]
+
+
+def test_in_include_with_nested_includes_places_into_the_innermost_file(tmp_path: Path) -> None:
+    """Req 10.1, 10.2: the included side is followed through nested merged includes to the
+    innermost file; the new key comes after the innermost keys, before every override-only
+    key."""
+    document = _load(
+        tmp_path,
+        "agent:\n  $ref: file:mid.yaml\n  a: 1\n",
+        {"mid.yaml": "$ref: file:inner.yaml\nb: 2\n", "inner.yaml": "c: 3\n"},
+    )
+    request = _in_include(document, "agent.d")
+    target = request.target
+    assert isinstance(target, AddKeyTarget)
+    assert _file(tmp_path, target.placement.mapping) == Path("inner.yaml")
+    assert _content_keys(request.intended["agent"]) == ["c", "d", "b", "a"]
+
+
+def test_in_include_below_an_override_only_mapping_places_into_it(tmp_path: Path) -> None:
+    """Req 10.1: an ancestor written only in an override is not merged, so the key goes into
+    it, in the including file."""
+    document = _load(
+        tmp_path, "agent:\n  $ref: file:coder.yaml\n  extra:\n    x: 1\n", {"coder.yaml": CODER}
+    )
+    placement = _in_include_placement(document, "agent.extra.y")
+    assert placement.mapping is _mapping_at(document, "agent.extra")
+    assert _file(tmp_path, placement.mapping) == Path("troupe.yml")
+    assert placement.prefix == ()
+
+
+def test_in_include_below_an_included_nested_mapping_places_into_it(tmp_path: Path) -> None:
+    """Req 10.1: a nested mapping only on the included side receives the key itself."""
+    document = _load(
+        tmp_path, "agent:\n  $ref: file:coder.yaml\n  model: big\n", {"coder.yaml": CODER}
+    )
+    placement = _in_include_placement(document, "agent.params.top_p")
+    assert placement.mapping is _mapping_at(document, "agent.params")
+    assert _file(tmp_path, placement.mapping) == Path("coder.yaml")
+    assert placement.prefix == ()
+
+
+def test_in_include_with_no_include_is_the_same_as_without(tmp_path: Path) -> None:
+    """Req 10.5: below no include the placement and the intended configuration are those
+    without ``in_include``."""
+    document = _load(tmp_path, "a:\n  x: 1\nb: 2\n")
+    with_option = _in_include(document, "a.p.q")
+    without = _add_key(document, "a.p.q")
+    assert isinstance(with_option.target, AddKeyTarget)
+    assert with_option.target.placement == without.placement
+    assert with_option.target.placement.mapping is _mapping_at(document, "a")
+    config_path = ConfigPath.parse("a.p.q")
+    plain = resolve_target(document, config_path, parse_value("1", config_path))
+    assert with_option.intended == plain.intended
+    assert with_option.in_include is True
+    assert plain.in_include is False
+
+
+def test_place_new_keys_in_include_takes_the_included_side(tmp_path: Path) -> None:
+    """Req 10.1, 10.3: ``place_new_keys`` with ``in_include`` gives the included side of the
+    mapping at ``mapping_path`` (also used for the new keys of a mapping VALUE)."""
+    document = _load(
+        tmp_path, "agent:\n  $ref: file:coder.yaml\n  model: big\n", {"coder.yaml": CODER}
+    )
+    agent = _mapping_at(document, "agent")
+    assert agent.layers is not None
+    placement = place_new_keys(document, ConfigPath.parse("agent"), in_include=True)
+    assert placement == KeyPlacement(mapping=agent.layers.base, convert=None, prefix=())
+
+
+def test_in_include_mapping_value_orders_new_keys_before_override_only_keys(
+    tmp_path: Path,
+) -> None:
+    """Req 10.2, 10.3: for a mapping VALUE over a merged mapping, new keys are intended after
+    the included keys and before the override-only keys, at every merged mapping below PATH."""
+    document = _load(
+        tmp_path,
+        "agent:\n  $ref: file:coder.yaml\n  params:\n    u: 3\n    inner:\n      b: 1\n",
+        {"coder.yaml": "params:\n  t: 1\n  inner:\n    a: 1\n"},
+    )
+    request = _in_include(document, "agent.params", "{t: 1, u: 3, inner: {a: 1, b: 1, c: 2}, k: 2}")
+    assert isinstance(request.target, ReplaceTarget)
+    agent = request.intended["agent"]
+    assert isinstance(agent, IncludeDirective) and isinstance(agent.content, dict)
+    params = agent.content["params"]
+    assert _content_keys(params) == ["t", "inner", "k", "u"]
+    assert isinstance(params, dict)
+    assert _content_keys(params["inner"]) == ["a", "c", "b"]
+
+
+def test_in_include_does_not_change_an_existing_value_target(tmp_path: Path) -> None:
+    """Req 10.4: an existing value resolves to the same target and intended configuration."""
+    document = _load(
+        tmp_path, "agent:\n  $ref: file:coder.yaml\n  model: big\n", {"coder.yaml": CODER}
+    )
+    config_path = ConfigPath.parse("agent.model")
+    without = resolve_target(document, config_path, parse_value("z", config_path))
+    with_option = _in_include(document, "agent.model", "z")
+    assert with_option.target == without.target
+    assert with_option.intended == without.intended
 
 
 # --- the root plain form -------------------------------------------------------------------------
