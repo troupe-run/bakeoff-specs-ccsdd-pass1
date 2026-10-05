@@ -1,4 +1,4 @@
-"""New keys below includes, end to end through the real `troupe config set` (task 4.1).
+"""Writes below includes, end to end through the real `troupe config set` (tasks 4.1, 4.2).
 
 A new key whose deepest existing ancestor comes from an included file is written as an override in
 the file holding that include's reference (4.1-4.6); a scalar-form include is first converted to
@@ -16,12 +16,21 @@ asserts:
 Every case fails if the new key is written into the included file instead (the step 1 rule): the
 included file would change and the including file would not.
 
+Task 4.2 adds, with the same checks: lists (6.1-6.3, including a list-item include converted in
+the list's file, 5.3), existing values changed where they are written (7.1, 7.2), collection
+replacements across layers with removals, pruning and ``{}`` (7.3, 7.4), the refusal to replace a
+mapping-form include root (7.5), a bare text include (7.6) and ``$ref`` in PATH and VALUE (8.1,
+8.2). Refusals assert exit 3, empty stdout, a stderr line naming the file and PATH, no file
+changed and no event (9.2, 9.3).
+
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
 
 import json
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from set_support import TreeSnapshot, assert_file_bytes, run_config, run_set, snapshot_tree
 from support import LINEAGE_KEYS, STEP1_KEYS, CliResult, MakeTheatre
@@ -395,3 +404,460 @@ def test_new_key_beside_an_include_in_a_root_mapping_stays_in_the_root_file(
 
     _assert_only_changed(theatre, before, ROOT, CONTRACT_ROOT + "  helper:\n    model: tiny\n")
     _assert_set_events(theatre, start, [("set", "agents.helper.model", None, "tiny", "cli")])
+
+
+# =================================================================================================
+# Task 4.2: lists, existing values, collection replacement and `$ref` (6.x, 7.x, 8.x, 9.x)
+# =================================================================================================
+
+
+def _assert_refused(theatre: Path, result: CliResult, file: Path, path: str, before: int) -> str:
+    """Assert exit 3, empty stdout, one stderr line ``<file>: <path>: <problem>`` and no history
+    event after the first ``before`` lines; return the problem text. Callers also compare the
+    tree snapshot (no file changed, added or removed)."""
+    prefix = f"{file}: {path}: "
+    assert result.exit_code == 3, result.stderr
+    assert result.stdout == b""
+    assert result.stderr.startswith(prefix), result.stderr
+    assert result.stderr.endswith("\n") and result.stderr.count("\n") == 1, result.stderr
+    assert len(_history(theatre)) == before
+    return result.stderr[len(prefix) : -1]
+
+
+# ---- 6.1: appending to a list stays in the file holding the list ----
+
+TOOLS_CODER = "model: small\ntools:  # list\n  - read\n  - write\n"
+
+OVERRIDE_ROOT = """\
+agents:
+  coder:  # c
+    $ref: file:agents/coder.yaml
+    model: big  # mine
+  lead: x
+"""
+
+
+def test_append_to_an_included_list_stays_in_the_included_file(make_theatre: MakeTheatre) -> None:
+    """Req 6.1, 9.1, 9.3: `set agents.coder.tools.2 grep`, the list written in coder.yaml below a
+    mapping-form include with an override, appends the item in coder.yaml; troupe.yml (holding
+    the include and its override) is unchanged; one `set` event."""
+    theatre = make_theatre(OVERRIDE_ROOT, files={CODER_FILE: TOOLS_CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "agents.coder.tools.2", "grep"))
+
+    _assert_only_changed(theatre, before, CODER_FILE, TOOLS_CODER + "  - grep\n")
+    _assert_set_events(theatre, start, [("set", "agents.coder.tools.2", None, "grep", "cli")])
+    assert _show(theatre, "agents.coder.tools") == b"- read\n- write\n- grep\n"
+
+
+def test_append_to_an_overriding_list_stays_in_the_override(make_theatre: MakeTheatre) -> None:
+    """Req 6.1, 9.1, 9.3: a list written as an override (it replaces the included list) gains the
+    item in the override, in its flow style; coder.yaml is unchanged."""
+    root = "agents:\n  coder:\n    $ref: file:agents/coder.yaml\n    tools: [read]\n"
+    theatre = make_theatre(root, files={CODER_FILE: TOOLS_CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "agents.coder.tools.1", "grep"))
+
+    _assert_only_changed(theatre, before, ROOT, root.replace("[read]", "[read, grep]"))
+    _assert_set_events(theatre, start, [("set", "agents.coder.tools.1", None, "grep", "cli")])
+
+
+# ---- 6.2: a new key in a list item of an included list ----
+
+STEPS_CODER = "model: small\nsteps:\n  - name: a  # first\n    run: x\n  - name: b\n"
+
+
+def test_new_key_in_an_item_of_an_included_list_goes_to_the_included_file(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 6.2, 9.1, 9.3: `agents.coder.steps.0.retries`, whose deepest ancestor is an item of a
+    list written in coder.yaml, is added to that item in coder.yaml (no conversion of the
+    `coder` include in troupe.yml); one `set` event."""
+    theatre = make_theatre(CONTRACT_ROOT, files={CODER_FILE: STEPS_CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "agents.coder.steps.0.retries", "3"))
+
+    _assert_only_changed(
+        theatre, before, CODER_FILE, STEPS_CODER.replace("run: x\n", "run: x\n    retries: 3\n")
+    )
+    _assert_set_events(theatre, start, [("set", "agents.coder.steps.0.retries", None, 3, "cli")])
+
+
+# ---- 6.3, 5.3: a list-item include is converted in the list's file ----
+
+
+def test_list_item_include_is_converted_compactly_in_the_lists_file(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 6.3, 5.3, 5.5, 9.1, 9.3: a block list item `- file:agents/coder.yaml` without a
+    comment gaining a key becomes the compact `- $ref: file:agents/coder.yaml` / `  temperature:
+    0.3` in troupe.yml; coder.yaml is unchanged; one `set` event and none for the conversion."""
+    root = "name: demo\nagents:\n  - file:agents/coder.yaml\n  - lead\n"
+    theatre = make_theatre(root, files={CODER_FILE: CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "agents.0.temperature", "0.3"))
+
+    _assert_only_changed(
+        theatre,
+        before,
+        ROOT,
+        "name: demo\nagents:\n  - $ref: file:agents/coder.yaml\n    temperature: 0.3\n  - lead\n",
+    )
+    _assert_set_events(theatre, start, [("set", "agents.0.temperature", None, 0.3, "cli")])
+    assert _show(theatre, "agents.0") == b"model: small\nmax_tokens: 100\ntemperature: 0.3\n"
+
+
+def test_list_item_include_with_a_comment_starts_the_mapping_on_the_next_line(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 6.3, 5.2, 5.3, 5.5, 9.1, 9.3: a block list item `- file:agents/coder.yaml  # c` keeps
+    `-` with the whitespace and comment (`-  # c`) and the `$ref` line and override follow on the
+    next lines at the item's content column; coder.yaml is unchanged; one `set` event."""
+    root = "name: demo\nagents:\n  - file:agents/coder.yaml  # c\n  - lead\n"
+    theatre = make_theatre(root, files={CODER_FILE: CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "agents.0.temperature", "0.3"))
+
+    _assert_only_changed(
+        theatre,
+        before,
+        ROOT,
+        "name: demo\nagents:\n"
+        "  -  # c\n    $ref: file:agents/coder.yaml\n    temperature: 0.3\n"
+        "  - lead\n",
+    )
+    _assert_set_events(theatre, start, [("set", "agents.0.temperature", None, 0.3, "cli")])
+
+
+# ---- 7.1, 7.2: existing values change where they are written ----
+
+
+def test_overridden_value_changes_in_the_override(make_theatre: MakeTheatre) -> None:
+    """Req 7.1, 9.1, 9.3: `agents.coder.model` (overridden: `big` over `small`) changes in
+    troupe.yml, keeping its end-of-line comment's column; coder.yaml is unchanged."""
+    theatre = make_theatre(OVERRIDE_ROOT, files={CODER_FILE: CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "agents.coder.model", "huge"))
+
+    _assert_only_changed(
+        theatre, before, ROOT, OVERRIDE_ROOT.replace("model: big  # mine", "model: huge # mine")
+    )
+    _assert_set_events(theatre, start, [("set", "agents.coder.model", "big", "huge", "cli")])
+
+
+def test_value_that_is_not_overridden_changes_in_the_included_file(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 7.2, 9.1, 9.3: `agents.coder.max_tokens` (only in coder.yaml) changes in coder.yaml,
+    its comment, blank line and end-of-line comment kept; troupe.yml is unchanged."""
+    theatre = make_theatre(OVERRIDE_ROOT, files={CODER_FILE: CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "agents.coder.max_tokens", "200"))
+
+    _assert_only_changed(
+        theatre, before, CODER_FILE, CODER.replace("max_tokens: 100", "max_tokens: 200")
+    )
+    _assert_set_events(theatre, start, [("set", "agents.coder.max_tokens", 100, 200, "cli")])
+
+
+# ---- 7.3, 7.4: collection replacement across layers ----
+
+PARAMS_CODER = "model: small\nparams:  # tuning\n  top_k: 40\n  seed: 7\nmax_tokens: 100\n"
+
+PARAMS_ROOT = """\
+agents:
+  coder:
+    $ref: file:agents/coder.yaml
+    params:
+      seed: 9  # mine
+      temp: 0.3
+    model: big
+"""
+
+
+def _assert_two_changed(theatre: Path, before: TreeSnapshot, expected: dict[str, str]) -> None:
+    """Assert that exactly the files of ``expected`` hold their texts and every other file is
+    unchanged, with no file added or removed."""
+    for relative, text in expected.items():
+        assert_file_bytes(theatre / relative, text)
+    after = snapshot_tree(theatre)
+    assert set(after) == set(before)
+    assert {k: v for k, v in after.items() if k not in expected} == {
+        k: v for k, v in before.items() if k not in expected
+    }
+
+
+def test_collection_replacement_changes_removes_and_adds_across_layers(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 7.3, 7.1, 7.2, 7.4, 4.1, 9.1, 9.3: `set agents.coder.params {top_k: 50, seed: 10,
+    top_p: 0.9}` over the merged `params` changes `top_k` in coder.yaml (not overridden), `seed`
+    in the override (coder.yaml's `seed: 7` untouched), removes the override-only `temp` from
+    troupe.yml and adds `top_p` as an override; one change with one event per leaf."""
+    theatre = make_theatre(PARAMS_ROOT, files={CODER_FILE: PARAMS_CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "agents.coder.params", "{top_k: 50, seed: 10, top_p: 0.9}"))
+
+    _assert_two_changed(
+        theatre,
+        before,
+        {
+            CODER_FILE: PARAMS_CODER.replace("top_k: 40", "top_k: 50"),
+            ROOT: PARAMS_ROOT.replace(
+                "      seed: 9  # mine\n      temp: 0.3\n",
+                "      seed: 10 # mine\n      top_p: 0.9\n",
+            ),
+        },
+    )
+    _assert_set_events(
+        theatre,
+        start,
+        [
+            ("set", "agents.coder.params.top_k", 40, 50, "cli"),
+            ("set", "agents.coder.params.seed", 9, 10, "cli"),
+            ("set", "agents.coder.params.top_p", None, 0.9, "cli"),
+            ("remove", "agents.coder.params.temp", 0.3, None, "cli"),
+        ],
+    )
+    assert _show(theatre, "agents.coder.params") == b"top_k: 50\nseed: 10\ntop_p: 0.9\n"
+
+
+def test_key_removed_by_a_replacement_leaves_both_layers(make_theatre: MakeTheatre) -> None:
+    """Req 7.4, 7.3, 9.1, 9.3: a replacement dropping `seed`, written in coder.yaml and in the
+    override, removes it from both files; the other override entry stays."""
+    theatre = make_theatre(PARAMS_ROOT, files={CODER_FILE: PARAMS_CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "agents.coder.params", "{top_k: 40, temp: 0.3}"))
+
+    _assert_two_changed(
+        theatre,
+        before,
+        {
+            CODER_FILE: PARAMS_CODER.replace("  seed: 7\n", ""),
+            ROOT: PARAMS_ROOT.replace("      seed: 9  # mine\n", ""),
+        },
+    )
+    _assert_set_events(theatre, start, [("remove", "agents.coder.params.seed", 9, None, "cli")])
+    assert _show(theatre, "agents.coder.params") == b"top_k: 40\ntemp: 0.3\n"
+
+
+def test_override_emptied_by_a_replacement_is_pruned(make_theatre: MakeTheatre) -> None:
+    """Req 7.4, 7.3, 9.1, 9.3 (research Decision 4): when every entry of the nested `params`
+    override is removed, its `params:` entry is removed instead of being left null; `seed` also
+    leaves coder.yaml."""
+    theatre = make_theatre(PARAMS_ROOT, files={CODER_FILE: PARAMS_CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "agents.coder.params", "{top_k: 40}"))
+
+    _assert_two_changed(
+        theatre,
+        before,
+        {
+            CODER_FILE: PARAMS_CODER.replace("  seed: 7\n", ""),
+            ROOT: "agents:\n  coder:\n    $ref: file:agents/coder.yaml\n    model: big\n",
+        },
+    )
+    _assert_set_events(
+        theatre,
+        start,
+        [
+            ("remove", "agents.coder.params.seed", 9, None, "cli"),
+            ("remove", "agents.coder.params.temp", 0.3, None, "cli"),
+        ],
+    )
+    assert _show(theatre, "agents.coder.params") == b"top_k: 40\n"
+
+
+def test_mapping_losing_every_key_becomes_an_empty_flow_mapping(make_theatre: MakeTheatre) -> None:
+    """Req 7.3, 7.4, 9.1, 9.3 (research Decision 9): `set agents.coder.params {}` prunes the
+    override and writes `params: {}` in coder.yaml (never a null `params:`), the comment one space
+    after the longer value (config-set-writeback 12.2); every removed leaf is recorded."""
+    theatre = make_theatre(PARAMS_ROOT, files={CODER_FILE: PARAMS_CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "agents.coder.params", "{}"))
+
+    _assert_two_changed(
+        theatre,
+        before,
+        {
+            CODER_FILE: "model: small\nparams: {} # tuning\nmax_tokens: 100\n",
+            ROOT: "agents:\n  coder:\n    $ref: file:agents/coder.yaml\n    model: big\n",
+        },
+    )
+    _assert_set_events(
+        theatre,
+        start,
+        [
+            ("remove", "agents.coder.params.top_k", 40, None, "cli"),
+            ("remove", "agents.coder.params.seed", 9, None, "cli"),
+            ("remove", "agents.coder.params.temp", 0.3, None, "cli"),
+        ],
+    )
+    assert _show(theatre, "agents.coder.params") == b"{}\n"
+
+
+# ---- 7.5: a mapping-form include root is never replaced ----
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["{model: big, params: {top_k: 40, seed: 9, temp: 0.3}}", "none", "[a]"],
+)
+def test_replacing_a_mapping_form_include_root_is_refused(
+    make_theatre: MakeTheatre, value: str
+) -> None:
+    """Req 7.5, 9.1: setting `agents.coder`, a mapping-form include with overrides, to a value
+    differing from its merged value exits 3 with empty stdout and a stderr line naming PATH and
+    the included file; no file changes and nothing is recorded."""
+    theatre = make_theatre(PARAMS_ROOT, files={CODER_FILE: PARAMS_CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    result = run_set(theatre, "agents.coder", value)
+
+    problem = _assert_refused(theatre, result, theatre / CODER_FILE, "agents.coder", start)
+    assert "file:agents/coder.yaml" in problem
+    assert snapshot_tree(theatre) == before
+
+
+# ---- 7.6: a bare text include in mapping form ----
+
+
+@pytest.mark.parametrize(
+    "root",
+    [
+        "agents:\n  coder:\n    $ref: file:prompt.md  # bare\n  lead: x\n",
+        "agents:\n  coder: {$ref: file:prompt.md}\n  lead: x\n",
+    ],
+    ids=["block", "flow"],
+)
+def test_bare_text_include_in_mapping_form_replaces_the_target_content(
+    make_theatre: MakeTheatre, root: str
+) -> None:
+    """Req 7.6, 9.1, 9.3: `set agents.coder "You review code."` over a bare `$ref` text include
+    replaces prompt.md's content with VALUE exactly; troupe.yml is unchanged; one `set`."""
+    theatre = make_theatre(root, files={".troupe/prompt.md": "You write code.\n"})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    _assert_success(run_set(theatre, "agents.coder", "You review code."))
+
+    _assert_only_changed(theatre, before, ".troupe/prompt.md", "You review code.")
+    _assert_set_events(
+        theatre,
+        start,
+        [("set", "agents.coder", "You write code.\n", "You review code.", "cli")],
+    )
+
+
+# ---- 8.1: `$ref` in PATH ----
+
+
+@pytest.mark.parametrize("path", ["agents.coder.$ref", "agents.helper.$ref", "$ref"])
+def test_ref_segment_in_path_is_refused(make_theatre: MakeTheatre, path: str) -> None:
+    """Req 8.1, 9.1: a PATH with a `$ref` segment (an existing include's, a new one's, the root's)
+    exits 3 with empty stdout and a stderr line naming PATH and saying `$ref` is reserved for
+    includes; no file changes and nothing is recorded."""
+    theatre = make_theatre(OVERRIDE_ROOT, files={CODER_FILE: CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    result = run_set(theatre, path, "file:agents/coder.yaml")
+
+    problem = _assert_refused(theatre, result, theatre / ROOT, path, start)
+    assert "`$ref` is reserved for includes" in problem
+    assert snapshot_tree(theatre) == before
+
+
+# ---- 8.2: `$ref` in VALUE ----
+
+PLAIN_ROOT = "name: demo\nagents:\n  lead: x\n"
+
+
+def test_ref_value_round_trips_as_an_include(make_theatre: MakeTheatre) -> None:
+    """Req 8.2, 9.1, 9.2, 9.3: `set agents.coder {$ref: file:agents/coder.yaml, temperature: 0.3}`
+    writes the mapping as written; it reads back as the include with its override (`show`
+    gives the merged content), records one `set` per merged leaf, and a second identical set is
+    a no-op."""
+    theatre = make_theatre(PLAIN_ROOT, files={CODER_FILE: CODER})
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+    value = "{$ref: file:agents/coder.yaml, temperature: 0.3}"
+
+    _assert_success(run_set(theatre, "agents.coder", value))
+
+    _assert_only_changed(
+        theatre,
+        before,
+        ROOT,
+        PLAIN_ROOT + "  coder:\n    $ref: file:agents/coder.yaml\n    temperature: 0.3\n",
+    )
+    _assert_set_events(
+        theatre,
+        start,
+        [
+            ("set", "agents.coder.model", None, "small", "cli"),
+            ("set", "agents.coder.max_tokens", None, 100, "cli"),
+            ("set", "agents.coder.temperature", None, 0.3, "cli"),
+        ],
+    )
+    assert _show(theatre, "agents.coder") == b"model: small\nmax_tokens: 100\ntemperature: 0.3\n"
+    get = run_config("get", "agents.coder.model", "--theatre", str(theatre), cwd=theatre)
+    assert (get.exit_code, get.stdout, get.stderr) == (0, b"small\n", "")
+
+    again = snapshot_tree(theatre)
+    count = len(_history(theatre))
+    _assert_success(run_set(theatre, "agents.coder", value))
+    assert snapshot_tree(theatre) == again
+    assert len(_history(theatre)) == count
+
+
+@pytest.mark.parametrize(
+    ("value", "named"),
+    [
+        ("{$ref: file:agents/missing.yaml, temperature: 0.3}", ".troupe/agents/missing.yaml"),
+        ("{$ref: file:prompt.md, temperature: 0.3}", ".troupe/prompt.md"),
+        ("{$ref: 7, temperature: 0.3}", ROOT),
+    ],
+    ids=["missing-target", "text-target-with-overrides", "not-an-include-string"],
+)
+def test_ref_value_that_does_not_read_back_as_an_include_is_refused(
+    make_theatre: MakeTheatre, value: str, named: str
+) -> None:
+    """Req 8.2, 9.2, 9.3: a `$ref` VALUE that does not load as the include it describes (missing
+    target, overrides on a text target, a `$ref` that is not an include string) exits 3 with
+    empty stdout, a stderr line naming PATH and the include target or file; no file changes, no
+    file is left behind and nothing is recorded."""
+    theatre = make_theatre(
+        PLAIN_ROOT, files={CODER_FILE: CODER, ".troupe/prompt.md": "You write code.\n"}
+    )
+    start = _imported(theatre)
+    before = snapshot_tree(theatre)
+
+    result = run_set(theatre, "agents.coder", value)
+
+    problem = _assert_refused(theatre, result, theatre / ROOT, "agents.coder", start)
+    assert str(theatre / named) in problem
+    assert snapshot_tree(theatre) == before

@@ -91,7 +91,7 @@ config-lineage are complete. No new runtime dependency is added.
   - Done when these e2e tests pass through the real CLI and each fails if the override is written into the included file
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 5.1, 5.2, 5.3, 5.4, 5.5, 9.1, 9.3_
 
-- [ ] 4.2 Validate lists, existing values, collection replacement and `$ref` end to end
+- [x] 4.2 Validate lists, existing values, collection replacement and `$ref` end to end
   - Appending to a list in an included file stays there. A new key inside a list item of an included list goes to the included file. A list-item include is converted in the list's file.
   - An overridden value changes in the override. A non-overridden value changes in the included file. A collection replacement under an include changes, removes and adds across layers. Replacing a mapping-form include root is refused with exit 3 and no change.
   - A `$ref` PATH segment gives exit 3 with no change. A VALUE with `$ref` round-trips as an include, and one with a missing target is refused with exit 3 and no change.
@@ -117,3 +117,4 @@ config-lineage are complete. No new runtime dependency is added.
 - 3.5: `_Planner.convert_include(site, entries, path)` is the single conversion entry point (3.7 routes merge additions to it). A list item written with extra spaces after `-` cannot be converted (read-back refuses, exit 3), as step 1 already behaves for scalar → block mapping on such items.
 - 3.6: `_change_value` has an interim exit-3 refusal for a merged mapping replaced by a mapping (`node.layers is not None and isinstance(value, NewMapping)`) and its test `test_merged_mapping_replaced_by_a_mapping_is_refused_for_now`; 3.7 must replace both with the layered merge.
 - 3.7: removals and additions into written mappings are deferred to `_flush_removals` (start of `patches()`), so pruning and sibling styles see the final picture; emptied non-prunable mappings become `{}` (research Decision 9). The 3.6 interim refusal is gone.
+- 4.2: setting a mapping-form include root to a mapping equal to its merged value exits 3, exactly as for a scalar-form include (rule 4: a directive never equals a non-directive VALUE). 7.5 says "as for a scalar-form include", so this is kept; 4.4 pins it with a test and clarifies 7.5's wording.
