@@ -48,8 +48,27 @@ file.
 A merged mapping never contains a ``$ref`` entry. Scalar-form includes and unmerged nodes have
 ``include.form is None`` and ``layers is None``.
 
-Invariants: keys within one mapping are unique; no node has an explicit tag or anchor; values are
-built-ins only.
+Anchors, alias places and merge keys
+------------------------------------
+A node written with an anchor property ``&name`` records it in ``anchor: Anchor`` (the name and the
+span of the property). An anchored node's ``origin.span`` excludes its property. Keys never carry
+anchors.
+
+The loader expands every alias ``*name`` into the anchored node built again for its path: an **alias
+place**. Its root records ``alias: AliasRef`` (the name, the ``*name`` token as written and the node
+as built at its anchor). An alias place and its descendants carry the anchored node's origins; the
+alias place's own written text is ``alias.token``.
+
+A mapping with a merge key (a plain ``<<`` key) is the **merged view** of the mapping as written
+(``troupe.config.merge_keys.merge_mapping``): its own entries in written order, and at the place of
+the ``<<`` entry the keys of the merge sources that it does not write itself, earlier sources first.
+Its ``merge: MergeKey`` keeps the mapping as written (with its ``<<`` entry) and the ``<<`` key's
+origin. A mapping with ``merge`` never has a ``<<`` entry in ``entries``; entries with
+``via_merge`` come from ``merge.written``'s ``<<`` value. All these fields are ``None``/``False``
+on nodes without anchors, aliases or merge keys.
+
+Invariants: keys within one mapping are unique; no node has an explicit tag; anchors only on
+values; values are built-ins only.
 """
 
 from dataclasses import dataclass
@@ -93,6 +112,31 @@ class Origin:
 
     file: SourceFile
     span: Span
+
+
+@dataclass(frozen=True)
+class Anchor:
+    """The anchor property ``&name`` written on a value node."""
+
+    name: str
+    span: Span  # the ``&name`` property, in the node's own file
+
+
+@dataclass(frozen=True)
+class AliasRef:
+    """The alias an alias place stands for."""
+
+    name: str
+    token: Origin  # the ``*name`` token as written (file and span)
+    anchored: "ConfigNode"  # the node as built at its anchor (written structure, for copies)
+
+
+@dataclass(frozen=True)
+class MergeKey:
+    """The mapping as written behind a merged view (a mapping with a merge key)."""
+
+    written: "ConfigMapping"  # own entries and the ``<<`` entry, in written order
+    key_origin: Origin  # the ``<<`` key token
 
 
 class IncludeKind(Enum):
@@ -147,6 +191,8 @@ class ConfigScalar:
     style: ScalarStyle | None  # None only for text includes
     origin: Origin
     include: IncludeRef | None = None
+    anchor: Anchor | None = None
+    alias: AliasRef | None = None
 
 
 @dataclass(frozen=True)
@@ -157,6 +203,7 @@ class MappingEntry:
     key_origin: Origin  # span of the key scalar (incl. quotes)
     key_style: ScalarStyle  # derived from the key node's style
     value: "ConfigNode"
+    via_merge: bool = False  # True when the entry comes from a merge key, not written here
 
 
 @dataclass(frozen=True)
@@ -179,6 +226,9 @@ class ConfigMapping:
     origin: Origin
     include: IncludeRef | None = None
     layers: MergeLayers | None = None  # set on every merged mapping, None otherwise
+    anchor: Anchor | None = None
+    alias: AliasRef | None = None
+    merge: MergeKey | None = None  # set on the merged view of a mapping with a merge key
 
     def get(self, key: str) -> MappingEntry | None:
         """Return the entry whose key equals ``key``, or ``None`` when there is none."""
@@ -196,6 +246,8 @@ class ConfigSequence:
     style: CollectionStyle
     origin: Origin
     include: IncludeRef | None = None
+    anchor: Anchor | None = None
+    alias: AliasRef | None = None
 
 
 # A runtime union (not a ``type`` statement) so callers can also use it with ``isinstance``.

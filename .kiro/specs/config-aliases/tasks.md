@@ -32,7 +32,7 @@ the earlier contract sections in force. This covers the design clarifications re
 between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
 
 - [ ] 1. Foundation: provenance model, merge-key merge and alias recording
-- [ ] 1.1 Record anchors, alias places and merge keys in the model, and provide the merge-key merge
+- [x] 1.1 Record anchors, alias places and merge keys in the model, and provide the merge-key merge
   - Every node can record the anchor written on it (name and the span of the `&name` property) and, at an alias place, the alias it stands for (name, the `*name` token's position, and the node as built at its anchor). A mapping can record the mapping as written behind its merge key. An entry can say that it came from a merge key. All new fields default to "none", so every existing construction and test is unchanged.
   - The merge-key merge is pure. It builds a mapping's merged view from the mapping as written and its merge sources: own entries in written order, and at the place of the `<<` entry the keys of the sources that the mapping does not write itself, with earlier sources first. Merged entries are marked, and no `<<` key is in the result.
   - The loader does not accept `<<` yet (task 2.3), so these tests merge mappings loaded from real files. The tests add the `<<` entry to the written mapping themselves, and the merge drops it at its index.
@@ -188,3 +188,6 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
   - Traceability is checked over this spec's own test files only (the list under "Where this spec's tests live"). Earlier specs' tests also name `Req N.M` with overlapping numbers. To keep the check exact, every test written for this spec, including accepted cases that replace old refusal rows, lives in those files. Existing files only lose or adjust rows. The check collects every `Req N.M` from those files' docstrings with a grep and compares the set with this spec's requirement IDs.
   - Done when that check lists no requirement of this spec without a test and no test naming an unknown ID, and `pytest`, `mypy --strict` and `ruff` all pass
   - _Requirements: 1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 7.1, 8.1, 9.1, 10.1_
+
+## Implementation Notes
+- 1.1: the `<<` text currently has two private homes (`loader._MERGE_KEY`, `yaml_style._MERGE_KEY`). Task 2.3 must make one module its single named home and have the other import it (structure.md "one decision, one place"). `merge_mapping` requires `merge_index` to point at the plain `<<` entry of `written`.
