@@ -291,6 +291,16 @@ Terms used below:
   17. *A set reached through an alias whose VALUE equals the current value*: still refused with exit 3 without
       `--expand-alias` (5.3). The contract's rule has no exception for no-op sets, and the user learns about the
       sharing either way.
+- **Product owner review (2026-10-06)**: the requirements are approved as consistent with the step 6 "Aliases"
+  section and the earlier contract sections in force.
+  - *Confirmed as the contract's meaning*: writes at an anchor change the anchor (Requirement 4). A path reached
+    through an alias, including the alias's own key (choice 2) and a no-op set (choice 17), exits 3 and mentions
+    `--expand-alias` (Requirement 5). `--expand-alias` writes a block-style copy with the comment two spaces after
+    the key, sets the value in the copy, and leaves the anchor and the other aliases unchanged (Requirement 7).
+    Merge keys are never written (Requirement 9).
+  - *Out of contract, our choice, accepted*: reading through merge keys (choice 1), several aliases on one PATH
+    (choice 3), `--expand-alias` with no alias on PATH (choice 9), an alias inside a flow collection (choice 5), and
+    a key line that already has a comment (choice 6), together with the other recorded choices.
 
 ## Requirements
 
