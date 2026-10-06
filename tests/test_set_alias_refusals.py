@@ -1,10 +1,10 @@
-"""``troupe config set`` refusals for anchors, aliases and merge keys (config-aliases).
+"""``troupe config set`` refusals for aliases, merge keys and anchors, end to end (config-aliases).
 
-Temporary (tasks.md, "Safety window"): from task 2.1 the loader accepts anchors, but ``set`` only
-learns to write them in task 4.1. Until then ``set`` refuses (exit 3, no file changed) any
-configuration that contains an anchor, an alias or a merge key. Since task 2.2 aliases load, so the
-refusal also covers sets at, through and below alias places. Task 4.1 removes this refusal
-together with the tests marked "temporary" below.
+Every refusal runs the real ``troupe`` console script on a real theatre and checks the whole
+contract of a refusal: exit 3, empty stdout, one stderr line naming the file, PATH and the alias
+or anchor (and ``--expand-alias`` for a set reached through an alias, Requirement 5), every file
+under the theatre unchanged byte for byte, and no history event beyond the import that the first
+command ran (Requirements 4.6, 4.7, 5.1-5.4, 9.2).
 
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
@@ -13,55 +13,23 @@ from pathlib import Path
 
 import pytest
 
-from set_support import run_config, run_set, snapshot_tree
+from set_support import assert_file_bytes, run_config, run_set, snapshot_tree
 from support import CliResult, MakeTheatre
 
-# (case id, root file, included files, PATH, VALUE, file named in the refusal, construct named)
-TEMPORARY_REFUSALS: list[tuple[str, str, dict[str, str], str, str, str, str]] = [
-    ("at-the-anchor", "a: &x 1\nb: 2\n", {}, "a", "5", ".troupe/troupe.yml", "anchor '&x'"),
-    ("elsewhere", "a: &x 1\nb: 2\n", {}, "b", "3", ".troupe/troupe.yml", "anchor '&x'"),
-    ("new-key", "m: &m\n  k: v\n", {}, "n", "1", ".troupe/troupe.yml", "anchor '&m'"),
-    ("no-op", "a: &x 1\nb: 2\n", {}, "b", "2", ".troupe/troupe.yml", "anchor '&x'"),
-    ("anchored-root", "&r\na: 1\n", {}, "a", "2", ".troupe/troupe.yml", "anchor '&r'"),
-    (
-        "in-an-included-file",
-        "a: 1\ninc: file:inc.yml\n",
-        {".troupe/inc.yml": "k: &k v\n"},
-        "a",
-        "2",
-        ".troupe/inc.yml",
-        "anchor '&k'",
-    ),
-    (
-        "on-an-include-string",
-        "a: 1\ninc: &i file:inc.yml\n",
-        {".troupe/inc.yml": "k: v\n"},
-        "inc.k",
-        "w",
-        ".troupe/troupe.yml",
-        "anchor '&i'",
-    ),
-    ("through-an-alias", "a: &x 1\nb: *x\n", {}, "b", "5", ".troupe/troupe.yml", "anchor '&x'"),
-    (
-        "below-an-alias",
-        "d: &d\n  m: 1\nc:\n  s: *d\n",
-        {},
-        "c.s.m",
-        "2",
-        ".troupe/troupe.yml",
-        "anchor '&d'",
-    ),
-    ("at-an-aliased-anchor", "a: &x 1\nb: *x\n", {}, "a", "5", ".troupe/troupe.yml", "anchor '&x'"),
-    (
-        "alias-in-an-included-file",
-        "a: 1\ninc: file:inc.yml\n",
-        {".troupe/inc.yml": "k: &k v\nl: [*k]\n"},
-        "inc.l.0",
-        "w",
-        ".troupe/inc.yml",
-        "anchor '&k'",
-    ),
-]
+ISSUE_2 = "defaults: &d\n  model: opus\ncoder:\n  settings: *d\nreviewer:\n  settings: *d\n"
+"""The reporter's file of tracker issue #2."""
+
+ALIAS_PROBLEM = (
+    "value is shared through alias '*{name}' (anchor '&{name}'); setting it here would change "
+    "every place that uses the anchor; use --expand-alias to give this place its own copy"
+)
+
+MERGE_PROBLEM = (
+    "value comes from merge key '<<' at {key_path}; merge keys are never written, "
+    "and --expand-alias cannot expand them"
+)
+
+ROOT_FILE = ".troupe/troupe.yml"
 
 
 def _history(theatre: Path) -> bytes:
@@ -70,67 +38,132 @@ def _history(theatre: Path) -> bytes:
     return result.stdout
 
 
-def _assert_refused(result: CliResult, file: Path, path: str, construct: str) -> None:
-    prefix = f"{file}: {path}: "
+def _assert_refused(result: CliResult, file: Path, path: str, problem: str) -> None:
     assert (result.exit_code, result.stdout) == (3, b""), result.stderr
-    assert result.stderr.startswith(prefix), result.stderr
-    assert result.stderr.count("\n") == 1, result.stderr
-    problem = result.stderr[len(prefix) :]
-    assert construct in problem, problem
-    assert "anchors, aliases or merge keys" in problem, problem
+    assert result.stderr == f"{file}: {path}: {problem}\n", result.stderr
 
 
-@pytest.mark.parametrize(
-    ("config", "files", "path", "value", "named_file", "construct"),
-    [case[1:] for case in TEMPORARY_REFUSALS],
-    ids=[case[0] for case in TEMPORARY_REFUSALS],
-)
-def test_temporary_set_refuses_a_configuration_with_an_anchor(
-    make_theatre: MakeTheatre,
-    config: str,
-    files: dict[str, str],
-    path: str,
-    value: str,
-    named_file: str,
-    construct: str,
+def _refused_without_change(
+    theatre: Path, path: str, value: str, named_file: str, problem: str
 ) -> None:
-    """Req 1.6: temporary (removed by task 4.1) - while ``set`` cannot write anchors yet, a set on
-    a configuration that contains an anchor anywhere (also with aliases, which now load) exits 3
-    naming the file holding it and PATH, and changes no file and no history."""
-    theatre = make_theatre(config, files=files)
+    """Run ``set PATH VALUE`` after an import; assert the refusal, no file and no event changed."""
     history = _history(theatre)
     before = snapshot_tree(theatre)
 
     result = run_set(theatre, path, value)
 
-    _assert_refused(result, theatre / named_file, path, construct)
+    _assert_refused(result, theatre / named_file, path, problem)
     assert snapshot_tree(theatre) == before
     assert _history(theatre) == history
 
 
-def test_set_without_anchors_still_writes(make_theatre: MakeTheatre) -> None:
-    """Req 1.6: the temporary refusal applies only to configurations with anchors, aliases or
-    merge keys; a configuration without them is written as before."""
-    theatre = make_theatre("a: 1\nb: 2\n")
-
-    result = run_set(theatre, "a", "5")
-
-    assert (result.exit_code, result.stdout, result.stderr) == (0, b"", "")
-    assert (theatre / ".troupe" / "troupe.yml").read_bytes() == b"a: 5\nb: 2\n"
+# (case id, PATH, VALUE)
+ISSUE_2_REFUSALS: list[tuple[str, str, str]] = [
+    ("issue-2", "coder.settings.model", "sonnet"),
+    ("the-alias-own-key", "coder.settings", "{model: x}"),
+    ("no-op-through-the-alias", "coder.settings.model", "opus"),
+    ("new-key-below-the-alias", "coder.settings.temperature", "0.3"),
+]
 
 
-def test_temporary_set_refuses_a_configuration_with_only_an_inline_merge(
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [case[1:] for case in ISSUE_2_REFUSALS],
+    ids=[case[0] for case in ISSUE_2_REFUSALS],
+)
+def test_set_reached_through_an_alias_is_refused(
+    make_theatre: MakeTheatre, path: str, value: str
+) -> None:
+    """Req 5.1, 5.3, 5.4: a set whose PATH (or the deepest existing ancestor of a new key) is
+    reached through an alias, including the alias's own key and a VALUE equal to the current
+    value, exits 3 naming the file, PATH, `*d` and `--expand-alias`, with no file and no history
+    changed."""
+    theatre = make_theatre(ISSUE_2)
+    _refused_without_change(theatre, path, value, ROOT_FILE, ALIAS_PROBLEM.format(name="d"))
+    assert_file_bytes(theatre / ROOT_FILE, ISSUE_2)
+
+
+def test_replacement_changing_a_value_through_an_alias_below_path_is_refused(
     make_theatre: MakeTheatre,
 ) -> None:
-    """Req 2.1: temporary (removed by task 4.1) - since task 2.3 merge keys load, and a set on a
-    configuration whose only special construct is an inline merge (no anchor, no alias) exits 3
-    naming the file and PATH, and changes no file and no history."""
-    theatre = make_theatre("<<: {a: 1}\nb: 2\n")
-    history = _history(theatre)
-    before = snapshot_tree(theatre)
+    """Req 5.2, 5.4: a collection replacement that would change a value reached through an alias
+    below PATH exits 3 naming the file, PATH, `*d` and `--expand-alias`, with no file and no
+    history changed."""
+    theatre = make_theatre(ISSUE_2)
+    _refused_without_change(
+        theatre, "coder", "{settings: {model: x}}", ROOT_FILE, ALIAS_PROBLEM.format(name="d")
+    )
 
-    result = run_set(theatre, "b", "3")
 
-    _assert_refused(result, theatre / ".troupe" / "troupe.yml", "b", "merge key '<<'")
-    assert snapshot_tree(theatre) == before
-    assert _history(theatre) == history
+def test_set_through_an_alias_in_an_included_file_names_the_included_file(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 5.1, 5.4: an alias written in an included file is named with that file, not the root
+    file; no file and no history changed."""
+    theatre = make_theatre(
+        "a: 1\ninc: file:inc.yml\n",
+        files={".troupe/inc.yml": "d: &d\n  m: 1\nu: *d\n"},
+    )
+    _refused_without_change(
+        theatre, "inc.u.m", "2", ".troupe/inc.yml", ALIAS_PROBLEM.format(name="d")
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [("m.model", "x"), ("m.model", "opus"), ("m", "{own: 1}")],
+    ids=["merged-value", "no-op-at-a-merged-value", "replacement-dropping-merged-values"],
+)
+def test_set_of_a_value_received_from_a_merge_key_is_refused(
+    make_theatre: MakeTheatre, path: str, value: str
+) -> None:
+    """Req 9.2: a set that would change a value a mapping receives from its merge key exits 3
+    naming the file, PATH and the merge key, says merge keys are never written (and that
+    `--expand-alias` cannot expand them), with no file and no history changed."""
+    theatre = make_theatre("d: &d\n  model: opus\n  temperature: 0.1\nm:\n  <<: *d\n  own: 1\n")
+    _refused_without_change(theatre, path, value, ROOT_FILE, MERGE_PROBLEM.format(key_path="m.<<"))
+
+
+def test_removing_an_anchor_still_used_by_an_alias_is_refused(make_theatre: MakeTheatre) -> None:
+    """Req 4.6: a collection replacement that would remove an anchored node still used by an
+    alias elsewhere in the file exits 3 naming the file, PATH and `&d`, with no file and no
+    history changed."""
+    theatre = make_theatre(
+        "shared:\n  defaults: &d  # anchored\n    model: opus\n  other: 1\ncoder: *d\n"
+    )
+    _refused_without_change(
+        theatre,
+        "shared",
+        "{other: 1}",
+        ROOT_FILE,
+        "anchor '&d' is still used by alias '*d' at coder",
+    )
+
+
+@pytest.mark.parametrize(
+    "config",
+    ["i: &i file:inc.yml\n", "i: &i file:inc.yml\nx: *i\n"],
+    ids=["anchored-include", "anchored-include-with-alias"],
+)
+def test_converting_an_anchored_include_is_refused(make_theatre: MakeTheatre, config: str) -> None:
+    """Req 4.7: a new key at an anchored scalar-form include, which would convert it to mapping
+    form, exits 3 naming the file, PATH and `&i`, with no file and no history changed."""
+    theatre = make_theatre(config, files={".troupe/inc.yml": "k: v\n"})
+    _refused_without_change(
+        theatre,
+        "i.extra",
+        "1",
+        ROOT_FILE,
+        "the include at anchor '&i' cannot be converted to mapping form",
+    )
+
+
+def test_set_at_the_anchor_is_no_longer_blocked(make_theatre: MakeTheatre) -> None:
+    """Req 5.1: the guard refuses only sets reached through an alias; a set at the anchor itself
+    of the issue #2 file proceeds (exit 0) and writes at the anchor."""
+    theatre = make_theatre(ISSUE_2)
+
+    result = run_set(theatre, "defaults.model", "sonnet")
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, b"", "")
+    assert_file_bytes(theatre / ROOT_FILE, ISSUE_2.replace("opus", "sonnet"))

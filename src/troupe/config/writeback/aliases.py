@@ -255,8 +255,9 @@ class _Guard:
         ``intended``, in document order (5.2, 8.2, 9.2). A child that is removed, replaced by
         another kind or given new keys or items counts on every side; below it, only its changed
         children are searched."""
+        same_kind = _same_kind(node, intended)
         for key, child in _children(node):
-            child_intended = _child(intended, key)
+            child_intended = _child(intended, key) if same_kind else _MISSING
             current = node_to_plain(child)
             if not isinstance(child_intended, _Missing) and plain_equal(
                 current, child_intended, ordered=False
@@ -367,6 +368,16 @@ def _child(value: _Intended, key: str | int) -> _Intended:
         index = int(key)
         return value[index] if index < len(value) else _MISSING
     return _MISSING
+
+
+def _same_kind(node: ConfigNode, intended: _Intended) -> bool:
+    """Whether ``intended`` is a collection of ``node``'s kind, so that its children are found by
+    ``node``'s keys (a mapping replaced by a list, or the reverse, has none of them)."""
+    if isinstance(intended, IncludeDirective):
+        intended = _MISSING if intended.content is None else intended.content
+    if isinstance(node, ConfigMapping):
+        return isinstance(intended, dict)
+    return isinstance(node, ConfigSequence) and isinstance(intended, list)
 
 
 def _children(node: ConfigNode) -> Iterator[tuple[str | int, ConfigNode]]:

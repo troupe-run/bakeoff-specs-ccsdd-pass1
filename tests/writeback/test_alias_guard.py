@@ -493,3 +493,19 @@ def test_anchor_uses_is_empty_without_aliases(make_theatre: MakeTheatre) -> None
     """Req 4.6: a configuration with an unused anchor and no alias has no anchor uses."""
     document = _document(make_theatre, "d: &d\n  a: 1\nb: 2\n")
     assert dict(anchor_uses(document)) == {}
+
+
+def test_replacement_by_another_collection_kind_compares_children_by_kind(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 5.2, 6.3: a mapping replaced by a list (or a list by a mapping) has no intended child
+    for any of its keys; without an alias below PATH the guard proceeds, and with one it refuses
+    naming the alias."""
+    document = _document(make_theatre, "m:\n  model: x\nl:\n  - 1\n")
+    for path, value in (("m", "[a]"), ("l", "{a: 1}")):
+        for expand in (False, True):
+            assert _sites(document, path, value, expand=expand) == ()
+    aliased = make_theatre("d: &d\n  model: x\nc:\n  s: *d\n", name="aliased")
+    document = load_config(aliased / ".troupe" / "troupe.yml")
+    error = _refusal(document, "c", "[a]", expand=False)
+    assert (error.path, error.problem) == ("c", _alias_problem("d"))

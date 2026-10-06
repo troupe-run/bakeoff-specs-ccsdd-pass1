@@ -144,7 +144,7 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
   - _Requirements: 4.3, 10.1, 10.2_
 
 - [ ] 4. Integration: the `set` command
-- [ ] 4.1 Run the guard in `set` and refuse writes through aliases and merge keys
+- [x] 4.1 Run the guard in `set` and refuse writes through aliases and merge keys
   - `set` runs the guard after target resolution and before its no-op check. The temporary refusal of task 2.1 and its tests (tasks 2.1 and 2.3) are removed. A set through an alias, including the alias's own key and a no-op, is refused with no file changed and no event other than the import or reconcile it ran first. A set through a merge key is refused. The 4.6 and 4.7 refusals reach the CLI.
   - Done when e2e tests through the real CLI prove each refusal of Requirements 4.6, 4.7, 5 and 9.2, with its exit code, empty stdout, stderr naming the file, PATH and the alias or anchor (and `--expand-alias` for Requirement 5), unchanged file bytes and unchanged history
   - _Depends: 3.3, 3.5_
@@ -216,3 +216,4 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
 - 3.7: at the end of a file without a final line break, a copy adds no final break (config-set-writeback 11.6) unless its last line ends a clip or keep block scalar (`_Copy.final_break`). The layout measures the indentation step from the first nested mapping. When that mapping starts with an explicit `?` key, the layout measures after the `?`, which is existing behaviour outside this spec.
 - 3.8: a slot replacement of an anchored node is also stored under the node's own written location (`WrittenChanges.anchored`), and `_Rebuild` returns it at every alias place and merge use. `_graft`/`_changed` use an `_ABSENT` marker, so a null value can be copied off PATH. A merge source replaced by a non-mapping merges nothing in the intended configuration, and read-back refuses it with exit 3. The one-space comment after `&d 5` follows config-set-writeback 12.2. Review of 3.8 found that an anchored block list item replaced by a mapping writes `- &d k: 1`; task 3.9 was added for it.
 - 3.9: `FileLayout.has_property(slot)` tells whether a slot's value has its own `&name` written there. `_replace_value` uses the compact item form only when there is no end-of-line comment and no property, so an anchored item replaced by a collection keeps `- &d` alone on its line.
+- 4.1: the temporary `set` refusal is gone. `set_value` calls `alias_sites(..., expand=False)` between `resolve_target` and the no-op check. Wiring it in exposed a guard crash when a mapping is replaced by a list, fixed with `_same_kind` (a change of collection kind removes every child). Task 4.4 must add the e2e case for 9.2 with `--expand-alias`, still refused.

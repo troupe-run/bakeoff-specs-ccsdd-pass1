@@ -13,28 +13,23 @@ Since step 4 the batch is recorded with the caller's context (``handle_set`` pas
 with the command's actor and ``--reason``), so the set's own events form one change, separate from
 the reconcile change recorded when the theatre was opened (config-lineage 3.3, 4.1, 4.2, 6.1).
 
-Temporary (config-aliases tasks.md, "Safety window"; removed by task 4.1): since task 2.1 the
-loader accepts anchors, but writing at anchors, through aliases and next to merge keys is only
-taught to ``set`` by task 4.1. Until then ``set_value`` refuses (exit 3, before any other step) a
-configuration that contains an anchor, an alias or a merge key anywhere.
+Since config-aliases (step 6) the guard runs right after target resolution and before the no-op
+check: a set reached through an alias or a merge key is refused (exit 3) even when it would change
+nothing, and every planner refusal comes after it (config-aliases 5.1-5.3, 9.2; research.md
+Decision 5).
 """
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from troupe.config.errors import TroupeError, WriteRefusedError
 from troupe.config.history import LeafChange
 from troupe.config.lineage import ChangeContext
-from troupe.config.model import (
-    ConfigDocument,
-    ConfigMapping,
-    ConfigNode,
-    ConfigSequence,
-    SourceFile,
-)
+from troupe.config.model import SourceFile
 from troupe.config.paths import ConfigPath
 from troupe.config.theatre import Theatre
+from troupe.config.writeback.aliases import alias_sites
 from troupe.config.writeback.atomic import restore_file, write_atomically
 from troupe.config.writeback.compare import plain_equal
 from troupe.config.writeback.leaf_diff import diff_leaves
@@ -72,8 +67,9 @@ def set_value(
     the changes cannot be recorded (every written file restored).
     """
     document = theatre.document
-    _refuse_alias_constructs(document, path)  # temporary: task 4.1 removes this refusal
     request = resolve_target(document, path, value, in_include=in_include)
+    # Before the no-op check, so a no-op through an alias is refused too (config-aliases 5.3).
+    alias_sites(document, request, expand=False)
     if plain_equal(request.current, request.intended, ordered=False):
         return SetOutcome(written=(), changes=())
     plan = plan_set(document, request)
@@ -91,48 +87,6 @@ def set_value(
             raise _naming_unrestored(error, unrestored) from error
         raise
     return SetOutcome(written=tuple(patch.file.path for patch in patches), changes=changes)
-
-
-def _refuse_alias_constructs(document: ConfigDocument, path: ConfigPath) -> None:
-    """Temporary (removed by config-aliases task 4.1): refuse a set on a configuration that
-    contains an anchor, an alias or a merge key, naming the file that holds the first one."""
-    for node in _all_nodes(document.root):
-        construct = None
-        file = node.origin.file.path
-        if node.alias is not None:
-            construct, file = f"alias '*{node.alias.name}'", node.alias.token.file.path
-        elif node.anchor is not None:
-            construct = f"anchor '&{node.anchor.name}'"
-            if node.include is not None:
-                file = node.include.directive.file.path
-        elif isinstance(node, ConfigMapping) and node.merge is not None:
-            construct, file = "merge key '<<'", node.merge.key_origin.file.path
-        if construct is not None:
-            raise WriteRefusedError(
-                f"{construct} is written here; set cannot change a configuration with anchors, "
-                "aliases or merge keys yet",
-                file=file,
-                path=str(path),
-            )
-
-
-def _all_nodes(node: ConfigNode) -> Iterator[ConfigNode]:
-    """Yield ``node`` and every node below it, including the written sides that a merged view
-    hides (override layers, ``$ref`` mappings, mappings written behind a merge key)."""
-    yield node
-    if node.include is not None and node.include.form is not None:
-        yield from _all_nodes(node.include.form)
-    if isinstance(node, ConfigSequence):
-        for item in node.items:
-            yield from _all_nodes(item)
-    elif isinstance(node, ConfigMapping):
-        for entry in node.entries:
-            yield from _all_nodes(entry.value)
-        if node.layers is not None:
-            yield from _all_nodes(node.layers.base)
-            yield from _all_nodes(node.layers.over)
-        if node.merge is not None:
-            yield from _all_nodes(node.merge.written)
 
 
 def write_patches(patches: Sequence[FilePatch], path: ConfigPath) -> None:
