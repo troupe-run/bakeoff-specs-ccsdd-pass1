@@ -117,3 +117,20 @@ def test_set_without_anchors_still_writes(make_theatre: MakeTheatre) -> None:
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, b"", "")
     assert (theatre / ".troupe" / "troupe.yml").read_bytes() == b"a: 5\nb: 2\n"
+
+
+def test_temporary_set_refuses_a_configuration_with_only_an_inline_merge(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 2.1: temporary (removed by task 4.1) - since task 2.3 merge keys load, and a set on a
+    configuration whose only special construct is an inline merge (no anchor, no alias) exits 3
+    naming the file and PATH, and changes no file and no history."""
+    theatre = make_theatre("<<: {a: 1}\nb: 2\n")
+    history = _history(theatre)
+    before = snapshot_tree(theatre)
+
+    result = run_set(theatre, "b", "3")
+
+    _assert_refused(result, theatre / ".troupe" / "troupe.yml", "b", "merge key '<<'")
+    assert snapshot_tree(theatre) == before
+    assert _history(theatre) == history

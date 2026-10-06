@@ -47,8 +47,9 @@ def deep_merge(
     override entry, or by a merged entry when both values are mappings, followed by the entries
     only in ``over`` in their order (1.3). The ``$ref`` entry of ``over`` is skipped (1.5).
 
-    The result has ``base``'s style, origin, anchor and alias (config-aliases: an alias place or
-    anchored node behind overrides keeps its provenance), the given ``include`` and
+    The result has ``base``'s style, origin, anchor, alias and merge (config-aliases: an alias
+    place, anchored node or merge-key mapping behind overrides keeps its provenance; entries are
+    reused, so a merged entry keeps its ``via_merge`` mark), the given ``include`` and
     ``layers=MergeLayers(base, over)``. A nested merged mapping carries its ``base`` value's
     include. Scalars and lists are the very nodes of their layer, so their origins name their own
     file. Neither input is changed.
@@ -72,6 +73,7 @@ def deep_merge(
         layers=MergeLayers(base=base, over=over),
         anchor=base.anchor,
         alias=base.alias,
+        merge=base.merge,
     )
 
 

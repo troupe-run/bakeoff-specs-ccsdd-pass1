@@ -2,10 +2,10 @@
 ``troupe.config.merge_keys.merge_mapping`` and ``Anchor``, ``AliasRef``, ``MergeKey`` and
 ``MappingEntry.via_merge`` in ``troupe.config.model``.
 
-The loader does not accept a plain ``<<`` key yet (task 2.3), so each case loads a real theatre
-file in which the merge key is written quoted (an ordinary key), and the test turns that entry into
-the plain ``<<`` entry of the mapping as written, with the merge sources as its value, as the
-loader will.
+To test the merge independently of the loader (whose merge keys task 2.3 adds), each case loads a
+real theatre file in which the merge key is written quoted (an ordinary key), and the test turns
+that entry into the plain ``<<`` entry of the mapping as written, with the merge sources as its
+value, as the loader does.
 
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """

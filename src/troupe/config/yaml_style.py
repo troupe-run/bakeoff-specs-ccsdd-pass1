@@ -32,6 +32,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
+from troupe.config.constants import MERGE_KEY
 from troupe.config.model import ScalarStyle
 from troupe.config.scalars import resolve_plain_scalar
 
@@ -67,9 +68,6 @@ _CONTROL_EXCEPT_TAB: Final = re.compile("[\x00-\x08\x0a-\x1f\x7f-\x9f]")
 _NOT_PRINTABLE: Final = re.compile("[\ud800-\udfff\ufffe\uffff]")
 """Non-control characters YAML cannot hold literally (outside ``c-printable``)."""
 _FLOW_INDICATORS: Final = frozenset(",[]{}")
-_MERGE_KEY: Final = "<<"
-"""A plain key with this text is a YAML merge key, which the loader refuses (see the merge-key
-rule in ``troupe.config.loader``, whose constant is private); such a key is quoted instead."""
 
 _NAMED_ESCAPES: Final = {
     "\x00": "\\0",
@@ -167,7 +165,7 @@ def _plain_possible(text: str, context: Context) -> bool:
         return False
     if context not in _KEY_CONTEXTS and not isinstance(resolve_plain_scalar(text), str):
         return False
-    if context in _KEY_CONTEXTS and text == _MERGE_KEY:
+    if context in _KEY_CONTEXTS and text == MERGE_KEY:  # a plain ``<<`` key is a merge key
         return False
     return all(_probe(document, pick, text) for document, pick in _probes(text, context))
 

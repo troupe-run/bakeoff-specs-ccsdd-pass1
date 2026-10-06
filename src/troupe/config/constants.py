@@ -18,6 +18,12 @@ INCLUDE_PREFIX: Final = "file:"
 INCLUDE_REF_KEY: Final = "$ref"
 """Reserved key of a mapping-form include ``{$ref: "file:...", <overrides>}``."""
 
+MERGE_KEY: Final = "<<"
+"""Text of a YAML merge key: a mapping key written plain with this text (config-aliases 2.4).
+
+The loader merges such a key's value into its mapping, and no writer writes it plain as a key.
+"""
+
 YAML_INCLUDE_SUFFIXES: Final = (".yml", ".yaml")
 """Include targets with these suffixes (case-sensitive) are embedded as parsed YAML.
 

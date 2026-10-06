@@ -236,33 +236,8 @@ def test_explicit_tag_exits_4_naming_the_file_and_key_path(
     assert (theatre / ".troupe" / config_name).read_bytes() == content.encode()
 
 
-# ---- 3.9: merge keys name the file and the key path ----
-# Since config-aliases task 2.1 anchors load and since task 2.2 aliases load
-# (tests/test_e2e_aliases.py). Until task 2.3 a merge key is refused.
-
-
-@pytest.mark.parametrize("config_name", CONFIG_NAMES)
-@pytest.mark.parametrize(
-    ("content", "key_path"),
-    [
-        ("<<: {a: 1}\n", "<<"),
-        ("agents:\n  <<: {lead: alice}\n", "agents.<<"),
-    ],
-)
-def test_merge_key_exits_4_naming_the_file_and_key_path(
-    make_theatre: MakeTheatre,
-    run_cli: RunCli,
-    config_name: str,
-    content: str,
-    key_path: str,
-) -> None:
-    theatre = make_theatre(content, config_name=config_name)
-
-    result = run_cli("config", "show", "a", "--theatre", str(theatre))
-
-    problem = _assert_load_failure(result, theatre / ".troupe" / config_name, key_path)
-    assert "merge key" in problem
-    assert (theatre / ".troupe" / config_name).read_bytes() == content.encode()
+# 3.9 is superseded by config-aliases: anchors, aliases and merge keys load, and their refusals are
+# tested end to end in tests/test_e2e_aliases.py.
 
 
 # ---- 3.4: the top-level node must be a mapping ----

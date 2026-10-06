@@ -5,7 +5,9 @@ Task 2.1: a file with an anchor is read like any other file (the anchor-only row
 config-foundation refused with exit 4), and an anchor on a mapping key is still refused, with no
 history state created. Task 2.2: aliases load (the alias row that config-foundation refused), and
 an alias used as a key, an alias inside its own anchored node and an undefined alias are refused
-with exit 4 and no history state created.
+with exit 4 and no history state created. Task 2.3: merge keys load (the merge-key rows
+config-foundation refused), and a bad merge value or a merge key among ``$ref`` overrides is
+refused with exit 4 and no history state created.
 
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
@@ -208,6 +210,115 @@ def test_refused_alias_exits_4_with_no_history_state(
     inside its own anchored node and an alias used as a key exit 4 with empty stdout and one
     stderr line naming the file and the alias or key path; no file is changed and no history
     state is created."""
+    theatre = make_theatre(content, files=files)
+    before = {path: path.read_bytes() for path in theatre.rglob("*") if path.is_file()}
+
+    result = _get(run_cli, theatre, "a")
+
+    assert (result.exit_code, result.stdout) == (4, b"")
+    assert result.stderr == f"{theatre / '.troupe' / named}: {message}\n"
+    assert {path: path.read_bytes() for path in theatre.rglob("*") if path.is_file()} == before
+    assert _no_history_state(theatre)
+
+
+# ---- Task 2.3: merge keys load (the merge-key rows config-foundation refused) ----
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+@pytest.mark.parametrize(
+    ("content", "path", "expected"),
+    [
+        ("<<: {a: 1}\n", "a", b"1\n"),
+        ("agents:\n  <<: {lead: alice}\n", "agents.lead", b"alice\n"),
+    ],
+)
+def test_get_reads_a_value_merged_by_a_merge_key(
+    make_theatre: MakeTheatre,
+    run_cli: RunCli,
+    config_name: str,
+    content: str,
+    path: str,
+    expected: bytes,
+) -> None:
+    """Req 2.1, 1.6: an inline merge at the root and in a nested mapping loads; ``get`` prints
+    the merged value and the file is unchanged."""
+    theatre = make_theatre(content, config_name=config_name)
+
+    result = _get(run_cli, theatre, path)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, expected, "")
+    assert (theatre / ".troupe" / config_name).read_bytes() == content.encode()
+
+
+def test_show_prints_the_merged_view_without_merge_keys(
+    make_theatre: MakeTheatre, run_cli: RunCli
+) -> None:
+    """Req 2.1, 2.2, 2.4: ``show`` prints a mapping with merge keys as its merged view: own keys
+    in written order, the merged keys it does not write itself where ``<<`` is written (earlier
+    sources first), and no ``<<`` key."""
+    theatre = make_theatre(
+        "a: &a {x: 1, y: 1}\nb: &b {y: 2, z: 2}\nm:\n  first: 0\n  <<: [*a, *b]\n  x: 9\n"
+    )
+
+    result = run_cli("config", "show", "m", "--theatre", str(theatre))
+
+    assert (result.exit_code, result.stderr) == (0, "")
+    assert result.stdout == b"first: 0\ny: 1\nz: 2\nx: 9\n"
+
+
+# (case id, root file, included files, file named in the error, the rest of the stderr line)
+MERGE_LOAD_REFUSALS: list[tuple[str, str, dict[str, str], str, str]] = [
+    (
+        "scalar-value",
+        "a: 1\nm:\n  <<: 5\n",
+        {},
+        "troupe.yml",
+        "m.<<: merge key '<<' needs a mapping, an alias of a mapping or a list of those; "
+        "found a scalar",
+    ),
+    (
+        "list-with-a-scalar",
+        "a: 1\nd: &d {k: 1}\nm:\n  <<: [*d, x]\n",
+        {},
+        "troupe.yml",
+        "m.<<: merge key '<<' needs a mapping, an alias of a mapping or a list of those; "
+        "item 1 is a scalar",
+    ),
+    (
+        "include-as-merge-source",
+        "a: 1\nm:\n  <<: file:base.yml\n",
+        {".troupe/base.yml": "k: 1\n"},
+        "troupe.yml",
+        "m.<<: merge key '<<' needs a mapping, an alias of a mapping or a list of those; "
+        "found an include",
+    ),
+    (
+        "among-ref-overrides",
+        "a: 1\nx:\n  $ref: file:inc.yml\n  <<: {k: 2}\n",
+        {".troupe/inc.yml": "k: 1\n"},
+        "troupe.yml",
+        "x.<<: merge key '<<' is not supported among the overrides of a mapping-form include",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("content", "files", "named", "message"),
+    [case[1:] for case in MERGE_LOAD_REFUSALS],
+    ids=[case[0] for case in MERGE_LOAD_REFUSALS],
+)
+def test_refused_merge_key_exits_4_with_no_history_state(
+    make_theatre: MakeTheatre,
+    run_cli: RunCli,
+    content: str,
+    files: dict[str, str],
+    named: str,
+    message: str,
+) -> None:
+    """Req 2.3, 1.7: a bad merge value (also an include) and a merge key among ``$ref`` overrides
+    exit 4 with empty
+    stdout and one stderr line naming the file and the key path of the merge key; no file is
+    changed and no history state is created."""
     theatre = make_theatre(content, files=files)
     before = {path: path.read_bytes() for path in theatre.rglob("*") if path.is_file()}
 

@@ -346,7 +346,6 @@ def test_indirect_cycle_names_every_file_in_the_cycle(make_theatre: MakeTheatre)
         ("a: 1\na: 2\n", "inc.a"),
         ("a: !tag 1\n", "inc.a"),
         ("a:\n  &k b: 1\n", "inc.a.b"),
-        ("<<: {a: 1}\n", "inc.<<"),
         ("? [a]\n: 1\n", "inc"),
         (b"a: \xff\n", None),
     ],

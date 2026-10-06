@@ -465,8 +465,6 @@ REFUSALS: list[tuple[str, str | bytes, str | None, str]] = [
     ("anchor-on-key", "a:\n  &k b: 1\n", "a.b", "anchor on a mapping key is not supported"),
     ("anchor-after-tag", "a: !!str &x 5\n", "a", "explicit tag"),
     ("undefined-alias", "a: *x\n", None, "line 1"),
-    ("merge-key", "<<: {a: 1}\n", "<<", "merge key"),
-    ("nested-merge-key", "a:\n  b: 1\n  <<: {c: 2}\n", "a.<<", "merge key"),
     ("complex-key-sequence", "? [a]\n: 1\n", None, "key"),
     ("complex-key-nested", "a:\n  ? {b: 1}\n  : 2\n", "a", "key"),
     ("root-sequence", "- 1\n- 2\n", None, "mapping"),

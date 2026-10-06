@@ -14,9 +14,9 @@ composer inserts removed (3.8).
 Unsupported YAML is refused with :class:`ConfigLoadError` naming the file and, where known, the
 key path (product-owner decisions H and I): non-UTF-8 bytes, syntax errors, several documents,
 duplicate keys, explicit tags, anchors on mapping keys, undefined aliases (a composer error),
-aliases used as keys or inside their own anchored node, plain ``<<`` merge keys, non-scalar keys
-and a top-level node that is not a mapping. An empty or comment-only file is an empty block mapping
-at ``Span(0, 0)``.
+aliases used as keys or inside their own anchored node, merge keys whose value cannot be merged
+and merge keys among ``$ref`` overrides (config-aliases 2.3), non-scalar keys and a top-level node
+that is not a mapping. An empty or comment-only file is an empty block mapping at ``Span(0, 0)``.
 
 Anchors (config-aliases 1.1, 1.5): an anchor ``&name`` on any value node is recorded as
 :class:`Anchor` (the name and the span of the property), and the node's own span is its value
@@ -33,6 +33,14 @@ rebuilt, includes inside it are included again, and a reused name refers to the 
 definition before the alias (ruamel resolves each alias to that node). Aliases are file-local: an
 alias to an anchor defined only in another file is an undefined alias. An alias used as a mapping
 key, and an alias inside its own anchored node, are refused naming the key path.
+
+Merge keys (config-aliases 2.1-2.4, research.md Decision 4): a mapping with a plain
+:data:`MERGE_KEY` key has its ``<<`` value built as usual; it must be a mapping, an alias place of a
+mapping or a list of those (the merge sources), and no source may be an include (an include string,
+a ``$ref`` mapping or an alias of either; nested values of a source may be includes). The loaded
+mapping is the merged view of :func:`troupe.config.merge_keys.merge_mapping`, with the mapping as
+written kept in ``merge``. A merge key among the overrides of a mapping-form include is refused. A
+quoted ``<<`` key is an ordinary key.
 
 Includes (4.1-4.7): any string scalar value (any style, never a key) starting with
 :data:`INCLUDE_PREFIX` is replaced by its target, ``including_file.path.parent / spec``. A target
@@ -66,8 +74,14 @@ from ruamel.yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 from ruamel.yaml.tokens import AnchorToken, TagToken
 
 from troupe.config.compose import AliasOccurrence, AliasSlot, ComposedFile, compose_file
-from troupe.config.constants import INCLUDE_PREFIX, INCLUDE_REF_KEY, YAML_INCLUDE_SUFFIXES
+from troupe.config.constants import (
+    INCLUDE_PREFIX,
+    INCLUDE_REF_KEY,
+    MERGE_KEY,
+    YAML_INCLUDE_SUFFIXES,
+)
 from troupe.config.errors import ConfigLoadError
+from troupe.config.merge_keys import merge_mapping
 from troupe.config.model import (
     AliasRef,
     Anchor,
@@ -102,8 +116,10 @@ _SCALAR_STYLES: Final[dict[str | None, ScalarStyle]] = {
 _FOLD_MARKER: Final = "\x07"
 """Inserted by ruamel's round-trip composer into folded values; never part of a folded value."""
 
-_MERGE_KEY: Final = "<<"
-"""A plain mapping key with this text is a YAML merge key."""
+_MERGE_VALUE_NEEDED: Final = (
+    f"merge key '{MERGE_KEY}' needs a mapping, an alias of a mapping or a list of those"
+)
+"""Start of the refusal of a merge key whose value cannot be merged (config-aliases 2.3)."""
 
 
 def load_config(
@@ -353,9 +369,11 @@ class _Builder:
         )
 
     def _build_mapping(self, node: MappingNode, path: ConfigPath) -> ConfigNode:
-        """Build a mapping; one with a ``$ref`` key is a mapping-form include (Req 1.1)."""
+        """Build a mapping; one with a ``$ref`` key is a mapping-form include (Req 1.1), and one
+        with a plain ``<<`` key is the merged view of its merge sources (config-aliases 2.1)."""
         entries: list[MappingEntry] = []
         directive: ConfigScalar | None = None
+        merge_at: int | None = None
         seen_text: set[str] = set()
         seen_values: set[tuple[type, ScalarValue]] = set()
         key_alias = self._aliases.get((id(node), None))
@@ -373,12 +391,6 @@ class _Builder:
             key = str(key_node.value) if key_style is not ScalarStyle.FOLDED else str(key_value)
             key_path = path.child(key)
             self._refuse_properties(key_node, key_path, key=True)
-            if key_style is ScalarStyle.PLAIN and key == _MERGE_KEY:
-                raise ConfigLoadError(
-                    "merge key '<<' is not supported (anchors, aliases and merge keys are refused)",
-                    file=self._source.path,
-                    path=_text(key_path),
-                )
             # Paths are textual, so equal key text is a duplicate; equal typed plain values
             # (``true``/``True``, ``~``/``null``) are duplicates under YAML 1.2 as well.
             typed = (type(key_value), key_value)
@@ -397,6 +409,8 @@ class _Builder:
                 value: ConfigNode = directive
             else:
                 value = self._child(slot, value_node, key_path)
+                if key_style is ScalarStyle.PLAIN and key == MERGE_KEY:
+                    merge_at = len(entries)
             entries.append(
                 MappingEntry(
                     key=key,
@@ -411,10 +425,60 @@ class _Builder:
             origin=self._origin(node),
             anchor=self._anchor(node),
         )
+        if merge_at is not None:
+            mapping = self._merged_view(mapping, merge_at, path, form=directive is not None)
         if directive is None:
             return mapping
         assert isinstance(directive.value, str)  # checked by ``_ref_value``
         return self.include(directive, directive.value[len(INCLUDE_PREFIX) :], path, form=mapping)
+
+    def _merged_view(
+        self, written: ConfigMapping, merge_at: int, path: ConfigPath, *, form: bool
+    ) -> ConfigMapping:
+        """Return the merged view of ``written``, whose plain ``<<`` entry is at ``merge_at``
+        (config-aliases 2.1, 2.2); refuse a value that cannot be merged and a merge key among the
+        overrides of a mapping-form include (``form``), naming the merge key's path (2.3)."""
+        entry = written.entries[merge_at]
+        key_path = path.child(MERGE_KEY)
+        if form:
+            raise ConfigLoadError(
+                f"merge key '{MERGE_KEY}' is not supported among the overrides of a "
+                "mapping-form include",
+                file=self._source.path,
+                path=_text(key_path),
+            )
+        sources = self._merge_sources(entry.value, key_path)
+        return merge_mapping(written, merge_at, sources, entry.key_origin)
+
+    def _merge_sources(self, value: ConfigNode, key_path: ConfigPath) -> tuple[ConfigMapping, ...]:
+        """Return the mappings a merge key's ``value`` merges: the mapping (or alias place of a
+        mapping) itself, or each item of a list of those; refuse any other value naming the merge
+        key's path (config-aliases 2.3). An include (an include string, a ``$ref`` mapping, or an
+        alias place of either) is written as a scalar or a ``$ref`` mapping, never as a mapping, so
+        it is refused as a source, which also keeps the two merge mechanisms apart (research.md
+        Decision 4); a source's nested values may be includes."""
+        if value.include is not None:
+            raise self._bad_merge_value("found an include", key_path)
+        if isinstance(value, ConfigMapping):
+            return (value,)
+        if isinstance(value, ConfigScalar):
+            raise self._bad_merge_value("found a scalar", key_path)
+        if value.alias is not None:
+            raise self._bad_merge_value("found an alias of a list", key_path)
+        sources: list[ConfigMapping] = []
+        for index, item in enumerate(value.items):
+            if item.include is not None:
+                raise self._bad_merge_value(f"item {index} is an include", key_path)
+            if not isinstance(item, ConfigMapping):
+                kind = "a scalar" if isinstance(item, ConfigScalar) else "a list"
+                raise self._bad_merge_value(f"item {index} is {kind}", key_path)
+            sources.append(item)
+        return tuple(sources)
+
+    def _bad_merge_value(self, found: str, key_path: ConfigPath) -> ConfigLoadError:
+        return ConfigLoadError(
+            f"{_MERGE_VALUE_NEEDED}; {found}", file=self._source.path, path=_text(key_path)
+        )
 
     def _ref_value(
         self, slot: AliasSlot, node: Node, key_path: ConfigPath, path: ConfigPath
