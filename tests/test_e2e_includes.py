@@ -292,7 +292,7 @@ def test_include_cycle_back_to_the_root_names_every_file_in_the_cycle(
     [
         ("x: 1\nx: 2\n", "inc.x", "duplicate key"),
         ("x: !!str 5\n", "inc.x", "!!str"),
-        ("x: &a 1\n", "inc.x", "anchor"),
+        ("x:\n  &a y: 1\n", "inc.x.y", "anchor on a mapping key"),
         ("x: [1, 2\n", None, "invalid YAML"),
     ],
 )

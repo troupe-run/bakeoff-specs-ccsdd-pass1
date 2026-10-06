@@ -48,7 +48,7 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
   - _Requirements: 1.1, 1.2, 1.3_
 
 - [ ] 2. Core: loading anchors, aliases and merge keys
-- [ ] 2.1 Accept anchors on values, with value spans that exclude the property
+- [x] 2.1 Accept anchors on values, with value spans that exclude the property
   - An anchor on any value node is accepted and recorded. The node's span is its value without the property: the first key for a block mapping, the first `-` for a block list, the next token for scalars and flow collections, and empty at the property's end for an empty null. An anchor on a mapping key stays a load error (exit 4) naming the file and the key path. Tags stay refused.
   - Until task 2.2 builds alias places, every alias recorded by the composer is a load error (exit 4) naming the file and the alias's key path ("aliases are not supported yet"). This keeps an alias from silently loading as a plain copy. `anchor-then-alias` in `tests/test_loader.py` and the `a: &x 1\nb: *x` row of `tests/test_e2e_locate_load.py` change their expected key path and message to this interim refusal.
   - `set` temporarily refuses (exit 3, no file changed) a configuration that contains an anchor, an alias or a merge key (see Safety window). This is pinned by a test in `tests/test_set_alias_refusals.py` that task 4.1 removes.
@@ -192,3 +192,4 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
 ## Implementation Notes
 - 1.1: the `<<` text currently has two private homes (`loader._MERGE_KEY`, `yaml_style._MERGE_KEY`). Task 2.3 must make one module its single named home and have the other import it (structure.md "one decision, one place"). `merge_mapping` requires `merge_index` to point at the plain `<<` entry of `written`.
 - 1.2: every alias used as a key in one mapping shares the slot `(id(parent), None)`, and only the first is recorded. That is enough for the alias-as-key refusal (2.2). `yaml_style.py` composes on its own, so a later task writing at anchors should check that it cannot print `ReusedAnchorWarning`.
+- 2.1: an anchor written on an include string or a `$ref` mapping is recorded on the included node, but its `Anchor.span` lies in the **including** file (the file of `include.directive`), not in the node's `origin` file. Layout (3.1) and planner (3.5) must use the directive's file for such anchors. Tags next to an anchor are detected by a token scan (`_tags_next_to_anchors`), because ruamel starts an anchored node's marks at the anchor. The interim alias-as-key refusal names the mapping's path; 2.2 owns the final message. The temporary `set` refusal sits at the top of `set_value` and walks `layers`, `include.form` and `merge.written`.

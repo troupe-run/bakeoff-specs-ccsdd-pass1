@@ -236,33 +236,46 @@ def test_explicit_tag_exits_4_naming_the_file_and_key_path(
     assert (theatre / ".troupe" / config_name).read_bytes() == content.encode()
 
 
-# ---- 3.9: anchors, aliases and merge keys name the file and the key path ----
+# ---- 3.9: aliases and merge keys name the file and the key path ----
+# Since config-aliases task 2.1 anchors load (tests/test_e2e_aliases.py). Until task 2.2 an alias
+# is refused at its own key path; until task 2.3 a merge key is refused.
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_alias_exits_4_naming_the_file_and_key_path(
+    make_theatre: MakeTheatre, run_cli: RunCli, config_name: str
+) -> None:
+    content = "a: &x 1\nb: *x\n"
+    theatre = make_theatre(content, config_name=config_name)
+
+    result = run_cli("config", "show", "a", "--theatre", str(theatre))
+
+    problem = _assert_load_failure(result, theatre / ".troupe" / config_name, "b")
+    assert "aliases are not supported yet" in problem
+    assert (theatre / ".troupe" / config_name).read_bytes() == content.encode()
 
 
 @pytest.mark.parametrize("config_name", CONFIG_NAMES)
 @pytest.mark.parametrize(
-    ("content", "key_path", "marker"),
+    ("content", "key_path"),
     [
-        ("a: &x 1\n", "a", "anchor"),
-        ("a: &x 1\nb: *x\n", "a", "anchor"),
-        ("<<: {a: 1}\n", "<<", "merge key"),
-        ("agents:\n  <<: {lead: alice}\n", "agents.<<", "merge key"),
+        ("<<: {a: 1}\n", "<<"),
+        ("agents:\n  <<: {lead: alice}\n", "agents.<<"),
     ],
 )
-def test_anchor_alias_or_merge_key_exits_4_naming_the_file_and_key_path(
+def test_merge_key_exits_4_naming_the_file_and_key_path(
     make_theatre: MakeTheatre,
     run_cli: RunCli,
     config_name: str,
     content: str,
     key_path: str,
-    marker: str,
 ) -> None:
     theatre = make_theatre(content, config_name=config_name)
 
     result = run_cli("config", "show", "a", "--theatre", str(theatre))
 
     problem = _assert_load_failure(result, theatre / ".troupe" / config_name, key_path)
-    assert marker in problem
+    assert "merge key" in problem
     assert (theatre / ".troupe" / config_name).read_bytes() == content.encode()
 
 

@@ -3,8 +3,8 @@
 Each case writes a real file, reads it back as a ``SourceFile`` and composes it. The tests pin, for
 every alias, the recorded name and the span of its ``*name`` token, keyed by the parent node and
 the slot it fills: the key node of a mapping value, the index of a list item, or ``None`` for an
-alias used as a mapping key. The loader still refuses anchors at this point (task 2.1), so the
-end-to-end cases only check that composing reports and stays silent as before.
+alias used as a mapping key. The loader still refuses aliases at this point (until task 2.2), so
+the end-to-end cases only check that composing reports and stays silent as before.
 
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
@@ -265,7 +265,7 @@ def test_cli_writes_no_reused_anchor_warning_to_stderr(
     make_theatre: MakeTheatre, run_cli: RunCli
 ) -> None:
     """Req 1.2: a reused anchor name writes no warning to stderr; the only line on stderr is the
-    load error (anchors themselves are still refused until task 2.1)."""
+    load error (aliases are still refused until task 2.2)."""
     theatre = make_theatre("a: &x 1\nb: *x\nc: &x 2\nd: *x\n")
 
     result = run_cli("config", "get", "b", cwd=theatre)

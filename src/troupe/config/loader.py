@@ -13,10 +13,17 @@ composer inserts removed (3.8).
 
 Unsupported YAML is refused with :class:`ConfigLoadError` naming the file and, where known, the
 key path (product-owner decisions H and I): non-UTF-8 bytes, syntax errors, several documents,
-duplicate keys, explicit tags, anchors, aliases (a defined alias is caught by its anchor, which
-comes first in the document; an undefined one is a composer error), plain ``<<`` merge keys,
-non-scalar keys and a top-level node that is not a mapping. An empty or comment-only file is an
-empty block mapping at ``Span(0, 0)``.
+duplicate keys, explicit tags, anchors on mapping keys, aliases (an undefined one is a composer
+error), plain ``<<`` merge keys, non-scalar keys and a top-level node that is not a mapping. An
+empty or comment-only file is an empty block mapping at ``Span(0, 0)``.
+
+Anchors (config-aliases 1.1, 1.5): an anchor ``&name`` on any value node is recorded as
+:class:`Anchor` (the name and the span of the property), and the node's own span is its value
+without the property (config-aliases research.md, Decision 3): the first key of a block mapping,
+the first ``-`` of a block list, the next token for scalars and flow collections, and empty at the
+property's end for an empty null. The anchor of an include string or ``$ref`` mapping is recorded
+on the included node. Until alias places are built (config-aliases task 2.2), every alias the
+composer recorded is refused, so that no alias silently loads as a plain copy.
 
 Includes (4.1-4.7): any string scalar value (any style, never a key) starting with
 :data:`INCLUDE_PREFIX` is replaced by its target, ``including_file.path.parent / spec``. A target
@@ -45,12 +52,15 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
+from ruamel.yaml import YAML
 from ruamel.yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
+from ruamel.yaml.tokens import AnchorToken, TagToken
 
-from troupe.config.compose import compose_file
+from troupe.config.compose import AliasOccurrence, AliasSlot, ComposedFile, compose_file
 from troupe.config.constants import INCLUDE_PREFIX, INCLUDE_REF_KEY, YAML_INCLUDE_SUFFIXES
 from troupe.config.errors import ConfigLoadError
 from troupe.config.model import (
+    Anchor,
     CollectionStyle,
     ConfigDocument,
     ConfigMapping,
@@ -98,12 +108,13 @@ def load_config(
     loader = _Loader({} if overrides is None else dict(overrides))
     root_file = loader.read_source(config_file)
     composed = _compose(root_file)
-    if composed is None:
+    if composed.root is None:
         root = ConfigMapping(
             entries=(), style=CollectionStyle.BLOCK, origin=Origin(root_file, Span(0, 0))
         )
     else:
-        node = _Builder(root_file, loader, (root_file,)).build(composed, ROOT)
+        builder = _Builder(root_file, loader, (root_file,), composed.aliases)
+        node = builder.build(composed.root, ROOT)
         if not isinstance(node, ConfigMapping):
             kind = "a list" if isinstance(node, ConfigSequence) else "a scalar"
             raise ConfigLoadError(
@@ -127,7 +138,7 @@ def load_include(including: SourceFile, spec: str, overrides: Mapping[Path, str]
     directive = ConfigScalar(
         value=INCLUDE_PREFIX + spec, style=ScalarStyle.PLAIN, origin=Origin(including, Span(0, 0))
     )
-    return _Builder(including, loader, (including,)).include(directive, spec, ROOT)
+    return _Builder(including, loader, (including,), {}).include(directive, spec, ROOT)
 
 
 class _Loader:
@@ -222,22 +233,32 @@ def _detect_line_ending(text: str) -> LineEnding:
 
 # ruamel.yaml's node attributes are typed ``Any`` upstream; the loader narrows them with
 # ``isinstance`` checks and explicit ``str``/``int`` conversions at this boundary.
-def _compose(source: SourceFile) -> Node | None:
-    """Compose the single document of ``source``; ``None`` for an empty or comment-only file."""
-    return compose_file(source).root
+def _compose(source: SourceFile) -> ComposedFile:
+    """Compose the single document of ``source`` (root ``None`` for an empty or comment-only
+    file), with its alias occurrences."""
+    return compose_file(source)
 
 
 class _Builder:
     """Builds model nodes for one composed file, refusing unsupported YAML on the way.
 
     ``chain`` holds the YAML files from the root down to this builder's file (inclusive); a YAML
-    include of any of them is a cycle.
+    include of any of them is a cycle. ``aliases`` are the alias occurrences recorded when this
+    builder's file was composed.
     """
 
-    def __init__(self, source: SourceFile, loader: _Loader, chain: tuple[SourceFile, ...]) -> None:
+    def __init__(
+        self,
+        source: SourceFile,
+        loader: _Loader,
+        chain: tuple[SourceFile, ...],
+        aliases: Mapping[AliasSlot, AliasOccurrence],
+    ) -> None:
         self._source = source
         self._loader = loader
         self._chain = chain
+        self._aliases = aliases
+        self._tags_by_anchor: dict[int, str] | None = None
 
     def build(self, node: Node, path: ConfigPath) -> ConfigNode:
         self._refuse_properties(node, path)
@@ -247,11 +268,15 @@ class _Builder:
                 return self.include(scalar, scalar.value[len(INCLUDE_PREFIX) :], path)
             return scalar
         if isinstance(node, SequenceNode):
-            items = tuple(
-                self.build(item, path.child(index)) for index, item in enumerate(node.value)
-            )
+            items: list[ConfigNode] = []
+            for index, item in enumerate(node.value):
+                self._refuse_alias((id(node), index), path.child(index))
+                items.append(self.build(item, path.child(index)))
             return ConfigSequence(
-                items=items, style=_collection_style(node), origin=self._origin(node)
+                items=tuple(items),
+                style=_collection_style(node),
+                origin=self._origin(node),
+                anchor=self._anchor(node),
             )
         if isinstance(node, MappingNode):
             return self._build_mapping(node, path)
@@ -263,7 +288,10 @@ class _Builder:
         """Build a scalar as written, without include expansion."""
         style = self._scalar_style(node, path)
         return ConfigScalar(
-            value=_scalar_value(node, style), style=style, origin=self._origin(node)
+            value=_scalar_value(node, style),
+            style=style,
+            origin=self._origin(node),
+            anchor=self._anchor(node),
         )
 
     def _build_mapping(self, node: MappingNode, path: ConfigPath) -> ConfigNode:
@@ -272,6 +300,14 @@ class _Builder:
         directive: ConfigScalar | None = None
         seen_text: set[str] = set()
         seen_values: set[tuple[type, ScalarValue]] = set()
+        key_alias = self._aliases.get((id(node), None))
+        if key_alias is not None:
+            # Interim (config-aliases task 2.1): task 2.2 names the key path of the alias key.
+            raise ConfigLoadError(
+                f"alias '*{key_alias.name}' used as a mapping key: aliases are not supported yet",
+                file=self._source.path,
+                path=_text(path),
+            )
         for key_node, value_node in node.value:
             if not isinstance(key_node, ScalarNode):
                 raise ConfigLoadError(
@@ -283,7 +319,7 @@ class _Builder:
             key_value = _scalar_value(key_node, key_style)
             key = str(key_node.value) if key_style is not ScalarStyle.FOLDED else str(key_value)
             key_path = path.child(key)
-            self._refuse_properties(key_node, key_path)
+            self._refuse_properties(key_node, key_path, key=True)
             if key_style is ScalarStyle.PLAIN and key == _MERGE_KEY:
                 raise ConfigLoadError(
                     "merge key '<<' is not supported (anchors, aliases and merge keys are refused)",
@@ -301,6 +337,7 @@ class _Builder:
             seen_text.add(key)
             if is_typed:
                 seen_values.add(typed)
+            self._refuse_alias((id(node), id(key_node)), key_path)
             if is_ref_key(key):
                 # The include string stays as written in the form; it is expanded below.
                 directive = self._ref_value(value_node, key_path, path)
@@ -316,7 +353,10 @@ class _Builder:
                 )
             )
         mapping = ConfigMapping(
-            entries=tuple(entries), style=_collection_style(node), origin=self._origin(node)
+            entries=tuple(entries),
+            style=_collection_style(node),
+            origin=self._origin(node),
+            anchor=self._anchor(node),
         )
         if directive is None:
             return mapping
@@ -349,7 +389,24 @@ class _Builder:
         ``form`` is the ``$ref`` mapping of a mapping-form include (Req 1.1). Bare, the result is
         exactly the scalar form's, with ``include.form`` set (1.4); with overrides, it is the deep
         merge of the included mapping with ``form`` (1.2, 1.3).
+
+        An anchor written on the include string, or on the ``$ref`` mapping, is recorded on the
+        result (config-aliases 1.5). It replaces an anchor on the target file's root, which no
+        alias can use (aliases are file-local, and one inside the root's own node is recursive).
         """
+        anchor = directive.anchor if form is None else form.anchor
+        node = self._include(directive, spec, path, form=form)
+        return node if anchor is None else dataclasses.replace(node, anchor=anchor)
+
+    def _include(
+        self,
+        directive: ConfigScalar,
+        spec: str,
+        path: ConfigPath,
+        *,
+        form: ConfigMapping | None,
+    ) -> ConfigNode:
+        """Return :meth:`include`'s result before the include's own anchor is recorded."""
         has_overrides = form is not None and bool(override_entries(form))
         target_path = self._source.path.parent / spec
         if not target_path.name.endswith(YAML_INCLUDE_SUFFIXES):
@@ -373,8 +430,9 @@ class _Builder:
         ref = IncludeRef(IncludeKind.YAML, spec, target, directive.origin, form)
         composed = _compose(target)
         embedded: ConfigNode | None = None
-        if composed is not None:
-            embedded = _Builder(target, self._loader, (*self._chain, target)).build(composed, path)
+        if composed.root is not None:
+            builder = _Builder(target, self._loader, (*self._chain, target), composed.aliases)
+            embedded = builder.build(composed.root, path)
         if form is not None and has_overrides:
             if not isinstance(embedded, ConfigMapping):
                 if embedded is None:
@@ -412,24 +470,95 @@ class _Builder:
         cycle.append(str(target_path))
         raise ConfigLoadError(f"include cycle: {' -> '.join(cycle)}", file=target_path)
 
-    def _refuse_properties(self, node: Node, path: ConfigPath) -> None:
-        """Refuse an anchor or explicit tag written on ``node`` itself (3.7, 3.9)."""
-        if node.anchor is not None:
+    def _refuse_alias(self, slot: AliasSlot, path: ConfigPath) -> None:
+        """Refuse an alias in ``slot`` (interim, config-aliases task 2.1).
+
+        Task 2.2 replaces this by building the alias place. Until then an alias would otherwise
+        load as a plain copy of its anchored node, which writers could not tell from the anchor.
+        """
+        occurrence = self._aliases.get(slot)
+        if occurrence is not None:
             raise ConfigLoadError(
-                f"anchor '&{node.anchor}' is not supported "
-                "(anchors, aliases and merge keys are refused)",
+                f"alias '*{occurrence.name}': aliases are not supported yet",
                 file=self._source.path,
                 path=_text(path),
             )
-        prefix = self._own_property_text(node)
-        explicit_shorthand = node.ctag.handle is not None
-        if explicit_shorthand or prefix.startswith("!"):
-            tag = prefix.split()[0] if prefix.startswith("!") else str(node.tag)
+
+    def _refuse_properties(self, node: Node, path: ConfigPath, *, key: bool = False) -> None:
+        """Refuse an explicit tag written on ``node`` itself (3.7), and an anchor on a mapping key
+        (config-aliases 1.4). Anchors on values are accepted (config-aliases 1.1)."""
+        tag = self._explicit_tag(node)
+        if tag is not None:
             raise ConfigLoadError(
                 f"explicit tag '{tag}' is not supported",
                 file=self._source.path,
                 path=_text(path),
             )
+        if key and node.anchor is not None:
+            raise ConfigLoadError(
+                "anchor on a mapping key is not supported",
+                file=self._source.path,
+                path=_text(path),
+            )
+
+    def _explicit_tag(self, node: Node) -> str | None:
+        """Return the explicit tag written on ``node`` itself, or ``None`` when it has none."""
+        if node.anchor is not None:
+            # ruamel starts an anchored node at its anchor even when a tag comes first, and keeps
+            # no trace of a non-specific ``!`` or a verbatim tag; the tokens next to the anchor do.
+            tag = self._tags_next_to_anchors().get(int(node.start_mark.index))
+            if tag is not None:
+                return tag
+            if node.ctag.handle is not None:  # pragma: no cover - the token is found above
+                return str(node.tag)
+            return None
+        prefix = self._own_property_text(node)
+        if prefix.startswith("!"):
+            return prefix.split()[0]
+        if node.ctag.handle is not None:
+            return str(node.tag)
+        return None
+
+    def _tags_next_to_anchors(self) -> dict[int, str]:
+        """Map the start of each anchor token in this file to the tag written next to it.
+
+        The file is scanned once, on the first anchored node; it composed, so it scans.
+        """
+        if self._tags_by_anchor is None:
+            tags: dict[int, str] = {}
+            tokens = list(YAML(typ="rt").scan(self._source.text))
+            for before, token, after in zip(
+                [None, *tokens[:-1]], tokens, [*tokens[1:], None], strict=True
+            ):
+                if not isinstance(token, AnchorToken):
+                    continue
+                for neighbour in (before, after):
+                    if isinstance(neighbour, TagToken):
+                        start = int(neighbour.start_mark.index)
+                        end = int(neighbour.end_mark.index)
+                        tags[int(token.start_mark.index)] = self._source.text[start:end]
+            self._tags_by_anchor = tags
+        return self._tags_by_anchor
+
+    def _anchor(self, node: Node) -> Anchor | None:
+        """Return the anchor written on value ``node``, or ``None`` (config-aliases 1.1).
+
+        An anchored node starts at its ``&name`` property (tags, which ruamel would put first,
+        are refused before this).
+        """
+        if node.anchor is None:
+            return None
+        name = str(node.anchor)
+        start = int(node.start_mark.index)
+        span = Span(start, start + 1 + len(name))
+        written = self._source.text[span.start : span.end]
+        if written != f"&{name}":  # pragma: no cover - ruamel starts anchored nodes at the anchor
+            raise ConfigLoadError(
+                f"internal error: anchor '&{name}' expected at characters "
+                f"{span.start}-{span.end}, where the file reads {written!r}",
+                file=self._source.path,
+            )
+        return Anchor(name, span)
 
     def _own_property_text(self, node: Node) -> str:
         """Return the source text from ``node``'s start that may hold its own properties.
@@ -455,7 +584,18 @@ class _Builder:
         return style
 
     def _origin(self, node: Node) -> Origin:
-        return Origin(self._source, Span(int(node.start_mark.index), int(node.end_mark.index)))
+        """Return where ``node`` is written; an anchored node's span excludes its property
+        (config-aliases research.md, Decision 3)."""
+        start = int(node.start_mark.index)
+        end = int(node.end_mark.index)
+        anchor = self._anchor(node)
+        if anchor is None:
+            return Origin(self._source, Span(start, end))
+        after = anchor.span.end
+        if isinstance(node, ScalarNode) and end <= after:
+            # An empty null: nothing is written after the property.
+            return Origin(self._source, Span(after, after))
+        return Origin(self._source, Span(_next_token(self._source.text, after, end), end))
 
 
 def _scalar_value(node: ScalarNode, style: ScalarStyle) -> ScalarValue:
@@ -466,6 +606,22 @@ def _scalar_value(node: ScalarNode, style: ScalarStyle) -> ScalarValue:
     if style is ScalarStyle.FOLDED:
         return text.replace(_FOLD_MARKER, "")
     return text
+
+
+def _next_token(text: str, start: int, end: int) -> int:
+    """Return the index of the first character at or after ``start`` (before ``end``) that is
+    neither white space nor part of a comment: the start of the next token."""
+    index = start
+    while index < end:
+        char = text[index]
+        if char in " \t\r\n":
+            index += 1
+        elif char == "#":
+            line_end = text.find("\n", index, end)
+            index = end if line_end < 0 else line_end + 1
+        else:
+            break
+    return index
 
 
 def _collection_style(node: MappingNode | SequenceNode) -> CollectionStyle:
