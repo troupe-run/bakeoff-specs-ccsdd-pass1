@@ -343,3 +343,120 @@ def test_conversion_of_an_unanchored_include_beside_an_anchor_is_planned(tmp_pat
     config = "a: &a 1\ni: file:inc.yml\n"
     new_text = _set(tmp_path, config, "i.extra", "1", AddKeyTarget)
     assert new_text == "a: &a 1\ni:\n  $ref: file:inc.yml\n  extra: 1\n"
+
+
+# --- replacing an anchored node itself (task 3.8) -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("config", "path", "value", "expected", "intended"),
+    [
+        # A scalar replaced at its anchor.
+        ("a: &d 1\nu: *d\n", "a", "2", "a: &d 2\nu: *d\n", {"a": 2, "u": 2}),
+        # A null replacement is a value, not an absent one, at the alias place.
+        ("a: &d 1\nu: *d\n", "a", "null", "a: &d null\nu: *d\n", {"a": None, "u": None}),
+        # Scalar to mapping: the comment after the anchor keeps its column (11.4, 11.5).
+        (
+            "a: &d 1  # c\nu: *d\n",
+            "a",
+            "{k: 1}",
+            "a: &d    # c\n  k: 1\nu: *d\n",
+            {"a": {"k": 1}, "u": {"k": 1}},
+        ),
+        # Mapping to scalar: the value reaches the comment's column, so one space (12.1, 12.2).
+        (
+            SHARED,
+            "shared.defaults",
+            "5",
+            "shared:\n  defaults: &d 5 # anchored\n  other: 1\ncoder: *d\n",
+            {"shared": {"defaults": 5, "other": 1}, "coder": 5},
+        ),
+        # Mapping to scalar with room before the comment: the comment keeps its column (12.1).
+        (
+            "d: &d    # c\n  k: 1\nu: *d\n",
+            "d",
+            "5",
+            "d: &d 5  # c\nu: *d\n",
+            {"d": 5, "u": 5},
+        ),
+        # Mapping to `{}`.
+        (
+            SHARED,
+            "shared.defaults",
+            "{}",
+            "shared:\n  defaults: &d {} # anchored\n  other: 1\ncoder: *d\n",
+            {"shared": {"defaults": {}, "other": 1}, "coder": {}},
+        ),
+        # A list to `[]`, used by an alias list item.
+        (
+            "l: &d [1]  # c\nu:\n  - *d\n",
+            "l",
+            "[]",
+            "l: &d []   # c\nu:\n  - *d\n",
+            {"l": [], "u": [[]]},
+        ),
+        # An anchored list item replaced in its slot.
+        (
+            "l:\n  - &d 1  # c\n  - *d\n",
+            "l.0",
+            "22",
+            "l:\n  - &d 22 # c\n  - *d\n",
+            {"l": [22, 22]},
+        ),
+        # An anchored node used through `<<: *d`, replaced by `{}`: it merges nothing any more.
+        (
+            "defaults: &d  # anchored\n  model: opus\ncoder:\n  <<: *d\n  t: 1\n",
+            "defaults",
+            "{}",
+            "defaults: &d {} # anchored\ncoder:\n  <<: *d\n  t: 1\n",
+            {"defaults": {}, "coder": {"t": 1}},
+        ),
+        # An anchored node inside an anchored mapping, replaced while merging the outer one.
+        (
+            "o: &o\n  a: &d 1\np: *o\nu: *d\n",
+            "o",
+            "{a: [2]}",
+            "o: &o\n  a: &d\n    - 2\np: *o\nu: *d\n",
+            {"o": {"a": [2]}, "p": {"a": [2]}, "u": [2]},
+        ),
+    ],
+)
+def test_replaced_anchored_node_keeps_its_anchor_and_reads_back_at_every_alias(
+    tmp_path: Path,
+    config: str,
+    path: str,
+    value: str,
+    expected: str,
+    intended: dict[str, object],
+) -> None:
+    """Req 4.1, 4.3, 4.5, 10.2: replacing an anchored node itself writes the new value once, at
+    the anchor, keeping `&d` and the end-of-line comment's column (byte for byte); the widened
+    intended configuration holds it at every alias place and merge use, and the read-back
+    passes."""
+    (tmp_path / ROOT).write_bytes(config.encode("utf-8"))
+    document = load_config(tmp_path / ROOT)
+    config_path = ConfigPath.parse(path)
+    request = resolve_target(document, config_path, parse_value(value, config_path))
+    plan = plan_set(document, request)
+    assert plan.intended == intended
+    assert [patch.new_text for patch in plan.patches] == [expected]
+    verify_patch(tmp_path / ROOT, document, plan.patches, replace(request, intended=plan.intended))
+
+
+def test_anchored_mapping_merged_by_a_merge_key_replaced_by_a_scalar_is_refused(
+    tmp_path: Path,
+) -> None:
+    """Req 4.5, 10.2: a scalar at the anchor would leave `<<: *d` merging a scalar; the read-back
+    refuses it (exit 3) with the loader's message, and nothing crashes on the way."""
+    config = "defaults: &d {model: opus}\ncoder:\n  <<: *d\n"
+    (tmp_path / ROOT).write_bytes(config.encode("utf-8"))
+    document = load_config(tmp_path / ROOT)
+    config_path = ConfigPath.parse("defaults")
+    request = resolve_target(document, config_path, parse_value("5", config_path))
+    plan = plan_set(document, request)
+    with pytest.raises(WriteRefusedError) as caught:
+        verify_patch(
+            tmp_path / ROOT, document, plan.patches, replace(request, intended=plan.intended)
+        )
+    assert caught.value.exit_code is ExitCode.WRITE_REFUSED
+    assert "merge key '<<' needs a mapping" in caught.value.problem

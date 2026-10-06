@@ -298,3 +298,67 @@ def test_unedited_recomputation_with_aliases_equals_the_loaded_plain_tree(
     assert _ordered(rebuilt_plain(document.root, WrittenChanges())) == _ordered(
         node_to_plain(document.root)
     )
+
+
+# --- a replacement of an anchored node itself (task 3.8) ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("config", "path", "value", "expected"),
+    [
+        ("a: &d 1\nu: *d\n", "a", "2", {"a": 2, "u": 2}),
+        ("a: &d 1\nu: *d\n", "a", "null", {"a": None, "u": None}),
+        ("a: &d 1\nu: *d\n", "a", "{k: 1}", {"a": {"k": 1}, "u": {"k": 1}}),
+        ("a: &d {k: 1}\nu: *d\n", "a", "5", {"a": 5, "u": 5}),
+        ("a: &d {k: 1}\nu: *d\n", "a", "{}", {"a": {}, "u": {}}),
+        ("a: &d [1]\nu:\n  - *d\n", "a", "[]", {"a": [], "u": [[]]}),
+    ],
+)
+def test_replaced_anchored_node_is_intended_at_every_alias_place(
+    tmp_path: Path, config: str, path: str, value: str, expected: PlainMapping
+) -> None:
+    """Req 4.1, 4.5, 10.2: a replacement recorded at the slot of the anchored node itself (a
+    scalar, or a kind change) is intended at every alias place of that node too."""
+    document = _loaded(tmp_path, {ROOT: config})
+    intended = _widen(
+        document, path, value, lambda changes: changes.replace(document.root, path, _new(value))
+    )
+    assert _ordered(intended) == _ordered(expected)
+
+
+def test_replaced_anchored_node_is_intended_in_every_mapping_that_merges_it(
+    tmp_path: Path,
+) -> None:
+    """Req 4.1, 10.2: `&d` replaced by `{}` merges nothing into `reviewer` and `plain` any more;
+    `reviewer` keeps its own `t`, and the plain alias is `{}`."""
+    document = _loaded(tmp_path, {ROOT: SHARED})
+    intended = _widen(
+        document,
+        "defaults",
+        "{}",
+        lambda changes: changes.replace(document.root, "defaults", _new("{}")),
+    )
+    assert _ordered(intended) == _ordered(
+        {"defaults": {}, "coder": {"settings": {}}, "reviewer": {"t": 2}, "plain": {}}
+    )
+
+
+def test_replaced_anchored_node_inside_an_anchored_node_reaches_both_aliases(
+    tmp_path: Path,
+) -> None:
+    """Req 4.1, 10.2: `&d` written inside `&o` and replaced in its slot is intended at `*d` and
+    inside the alias place of `*o`."""
+    document = _loaded(tmp_path, {ROOT: "o: &o\n  a: &d 1\np: *o\nu: *d\n"})
+    o = _mapping(document, "o")
+    intended = _widen(document, "o.a", "[2]", lambda changes: changes.replace(o, "a", _new("[2]")))
+    assert _ordered(intended) == _ordered({"o": {"a": [2]}, "p": {"a": [2]}, "u": [2]})
+
+
+def test_replaced_value_without_an_anchor_stays_at_its_own_place(tmp_path: Path) -> None:
+    """Req 10.2: a replacement at an unanchored slot whose value equals an anchored node's is not
+    replicated to that node's aliases."""
+    document = _loaded(tmp_path, {ROOT: "a: &d 1\nb: 1\nu: *d\n"})
+    intended = _widen(
+        document, "b", "2", lambda changes: changes.replace(document.root, "b", _new("2"))
+    )
+    assert intended == {"a": 1, "b": 2, "u": 1}

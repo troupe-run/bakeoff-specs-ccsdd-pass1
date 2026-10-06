@@ -15,7 +15,10 @@ at an anchored node is written once, at the anchor. An alias place carries the a
 origins, so it is rebuilt from the same written locations and shows the change; a mapping with a
 merge key is rebuilt from the mapping as written and merged again (own keys first, as the loader's
 ``merge_mapping``), so the change also appears in every mapping that merges the anchored node,
-unless that mapping writes the key itself.
+unless that mapping writes the key itself. A replacement of the anchored node itself is recorded at
+its parent's slot, which an alias place does not share, so it is also recorded at the anchored
+node's own written location (:attr:`WrittenChanges.anchored`), and every alias place of that node
+(including a merge key's alias) is rebuilt as the replacement.
 
 How it works. The planner records every change it plans as a semantic edit of a written location
 (:class:`WrittenChanges`): the value of an entry or item of a written mapping or list replaced,
@@ -147,6 +150,9 @@ class WrittenChanges:
 
     replaced: dict[_Slot, PlainValue] = field(default_factory=dict)
     """New values of entries of written mappings and items of written lists."""
+    anchored: dict[WrittenLocation, PlainValue] = field(default_factory=dict)
+    """The new values of replaced anchored nodes, by the anchored node's own written location,
+    for its alias places (config-aliases 4.1, 4.5, 10.2)."""
     removed: dict[WrittenLocation, set[str | int]] = field(default_factory=dict)
     """Keys (mappings) or indexes (lists) deleted from written collections."""
     added: dict[WrittenLocation, list[tuple[str | None, PlainValue]]] = field(default_factory=dict)
@@ -185,6 +191,10 @@ class WrittenChanges:
         ):
             self._conflict(holder.origin.file.path)
         self.replaced[(where, key)] = plain
+        anchored = _anchored_at(holder, key)
+        if anchored is not None:
+            # The new value keeps the anchor property (4.3), so every alias place reads it.
+            self.anchored[written_location(anchored.origin)] = plain
 
     def remove(self, holder: WrittenCollection, key: str | int) -> None:
         """The entry ``key`` (or item index) of the written ``holder`` is deleted."""
@@ -233,6 +243,21 @@ class WrittenChanges:
         raise WriteRefusedError(
             CONFLICT, file=file, path=None if self.path is None else str(self.path)
         )
+
+
+def _anchored_at(holder: WrittenCollection, key: str | int) -> ConfigNode | None:
+    """The anchored node written at ``key`` of ``holder`` (not an alias place, which also carries
+    its anchored node's ``anchor``, and not an include root, which is never replaced in its slot),
+    or ``None``."""
+    if isinstance(holder, ConfigMapping):
+        entry = holder.get(str(key))
+        node = None if entry is None else entry.value
+    else:
+        index = int(key)
+        node = holder.items[index] if index < len(holder.items) else None
+    if node is None or node.alias is not None or node.anchor is None or node.include is not None:
+        return None
+    return node
 
 
 def _add_entry(
@@ -305,14 +330,21 @@ def _root_content(plain: PlainValue) -> PlainValue:
     return plain.content if isinstance(plain, IncludeDirective) else plain
 
 
+class _Absent:
+    """No value at a path of a recomputation (distinct from a null value)."""
+
+
+_ABSENT: Final = _Absent()
+
+
 def _graft(
     intended: PlainValue,
-    before: PlainValue | None,
-    after: PlainValue | None,
+    before: PlainValue | _Absent,
+    after: PlainValue | _Absent,
     segments: Sequence[str],
 ) -> PlainValue:
     """``intended`` along ``segments``; off them, ``after`` wherever it differs from ``before``."""
-    if not segments or before is None or after is None:
+    if not segments or isinstance(before, _Absent) or isinstance(after, _Absent):
         return intended
     if isinstance(intended, IncludeDirective):
         if (
@@ -327,9 +359,9 @@ def _graft(
     if isinstance(intended, dict) and isinstance(before, dict) and isinstance(after, dict):
         return {
             key: (
-                _graft(value, before.get(key), after.get(key), rest)
+                _graft(value, before.get(key, _ABSENT), after.get(key, _ABSENT), rest)
                 if key == segment
-                else _changed(value, before.get(key), after.get(key))
+                else _changed(value, before.get(key, _ABSENT), after.get(key, _ABSENT))
             )
             for key, value in intended.items()
         }
@@ -338,8 +370,8 @@ def _graft(
             return intended
         items: list[PlainValue] = []
         for index, value in enumerate(intended):
-            old = before[index] if index < len(before) else None
-            new = after[index] if index < len(after) else None
+            old = before[index] if index < len(before) else _ABSENT
+            new = after[index] if index < len(after) else _ABSENT
             if str(index) == segment:
                 items.append(_graft(value, old, new, rest))
             else:
@@ -349,10 +381,13 @@ def _graft(
 
 
 def _changed(
-    intended: PlainValue, before: PlainValue | None, after: PlainValue | None
+    intended: PlainValue, before: PlainValue | _Absent, after: PlainValue | _Absent
 ) -> PlainValue:
-    """``after`` when the changes alter this off-PATH value, else ``intended``."""
-    if before is None or after is None or plain_equal(before, after, ordered=True):
+    """``after`` when the changes alter this off-PATH value (a null value included, as at an
+    alias place of an anchored node replaced by null), else ``intended``."""
+    if isinstance(before, _Absent) or isinstance(after, _Absent):
+        return intended
+    if plain_equal(before, after, ordered=True):
         return intended
     return after
 
@@ -473,7 +508,13 @@ class _Rebuild:
         )
 
     def plain(self, node: ConfigNode) -> PlainValue:
-        """As ``node_to_plain``: the content, wrapped as a directive at an include root."""
+        """As ``node_to_plain``: the content, wrapped as a directive at an include root; an alias
+        place of a replaced anchored node is the replacement (config-aliases 4.1, 4.5)."""
+        alias = node.alias
+        if alias is not None and alias.anchored.include is None:
+            anchored = written_location(alias.anchored.origin)
+            if anchored in self._changes.anchored:
+                return self._changes.anchored[anchored]
         content = self._content(node)
         include = node.include
         if include is None:
@@ -568,10 +609,10 @@ def _merge_key(written: PlainMapping) -> PlainMapping:
 
 
 def _source(plain: PlainValue) -> PlainMapping:
+    """A merge source's mapping. A source that is not one (an anchored mapping replaced by
+    another kind at its anchor) merges nothing here; the read-back refuses it on loading."""
     source = _unwrapped(plain)
-    if not isinstance(source, dict):  # pragma: no cover - the loader requires mappings
-        raise TypeError("a merge source must be a mapping")
-    return source
+    return source if isinstance(source, dict) else {}
 
 
 def _chain(ref: IncludeRef | None) -> Iterator[IncludeRef]:
