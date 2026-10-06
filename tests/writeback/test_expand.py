@@ -5,7 +5,8 @@ tasks 3.6, 3.7).
 file and returns the new text; it loads nothing. Each case loads a real theatre configuration from
 disk, takes the alias site from the real guard (``alias_sites`` with ``expand=True`` on a request
 from the real TargetResolver), compares the expanded text byte for byte, and loads the expanded
-text again (as an override of the file) to prove that the expanded configuration is unchanged.
+text again (as an override of the file) to prove that the expanded configuration is unchanged
+and that every other alias place is still an alias of the same anchor.
 Every refusal's message, file and PATH are asserted.
 
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
@@ -18,8 +19,8 @@ import pytest
 from support import MakeTheatre
 from troupe.config.errors import ExitCode, WriteRefusedError
 from troupe.config.loader import load_config
-from troupe.config.model import ConfigDocument
-from troupe.config.paths import ConfigPath
+from troupe.config.model import ConfigDocument, ConfigMapping, ConfigNode, ConfigSequence
+from troupe.config.paths import ROOT, ConfigPath
 from troupe.config.writeback.aliases import AliasSite, alias_sites
 from troupe.config.writeback.compare import node_to_plain, plain_equal
 from troupe.config.writeback.expand import expand_alias
@@ -27,8 +28,8 @@ from troupe.config.writeback.target import resolve_target
 from troupe.config.writeback.value import parse_value
 
 
-def _config_file(make_theatre: MakeTheatre, text: str) -> Path:
-    return make_theatre(text) / ".troupe" / "troupe.yml"
+def _config_file(make_theatre: MakeTheatre, text: str, files: dict[str, str] | None = None) -> Path:
+    return make_theatre(text, files=files) / ".troupe" / "troupe.yml"
 
 
 def _site(document: ConfigDocument, path: str) -> AliasSite:
@@ -39,17 +40,36 @@ def _site(document: ConfigDocument, path: str) -> AliasSite:
     return sites[0]
 
 
-def _expanded(make_theatre: MakeTheatre, text: str, path: str) -> str:
+def _alias_names(node: ConfigNode, path: ConfigPath = ROOT) -> dict[str, str]:
+    """``{path: alias name}`` of every alias place in the expanded configuration below ``node``."""
+    found = {} if node.alias is None else {str(path): node.alias.name}
+    if isinstance(node, ConfigMapping):
+        for entry in node.entries:
+            found.update(_alias_names(entry.value, path.child(entry.key)))
+    elif isinstance(node, ConfigSequence):
+        for index, item in enumerate(node.items):
+            found.update(_alias_names(item, path.child(index)))
+    return found
+
+
+def _expanded(
+    make_theatre: MakeTheatre, text: str, path: str, files: dict[str, str] | None = None
+) -> str:
     """Expand the alias on ``path`` in a theatre whose root file is ``text``; return the new
-    text after proving that it loads to the same plain configuration."""
-    config_file = _config_file(make_theatre, text)
+    text after proving that it loads to the same plain configuration, in which every other alias
+    place (including the inner aliases of the copy) is still an alias of the same anchor."""
+    config_file = _config_file(make_theatre, text, files)
     document = load_config(config_file)
-    texts = expand_alias(document, _site(document, path))
+    site = _site(document, path)
+    texts = expand_alias(document, site)
     real_path = config_file.resolve()
     assert list(texts) == [real_path]
     assert config_file.read_bytes() == text.encode()  # nothing written
     reloaded = load_config(config_file, texts)
     assert plain_equal(node_to_plain(reloaded.root), node_to_plain(document.root), ordered=True)
+    aliases = _alias_names(document.root)
+    del aliases[str(site.path)]
+    assert _alias_names(reloaded.root) == aliases
     return texts[real_path]
 
 
@@ -294,30 +314,289 @@ def test_merge_key_behind_an_inner_alias_is_not_refused(make_theatre: MakeTheatr
     assert _expanded(make_theatre, text, "x") == expected
 
 
-@pytest.mark.parametrize(
-    "anchored",
-    ["\n  m: 1", "\n  - 1", " {m: 1}", " [1]"],
-    ids=["block-mapping", "block-list", "flow-mapping", "flow-list"],
-)
-def test_non_empty_collection_alias_is_refused_until_block_copies_exist(
-    make_theatre: MakeTheatre, anchored: str
+# --- collection copies ------------------------------------------------------------------------
+
+
+def test_issue_example_expands_coder_settings_only(make_theatre: MakeTheatre) -> None:
+    """Req 7.1, 7.2, 7.6: the tracker issue's file: `coder.settings` becomes a block copy under
+    the key's line with the comment, and `reviewer.settings` stays an alias of `&d`."""
+    text = "defaults: &d\n  model: opus\ncoder:\n  settings: *d\nreviewer:\n  settings: *d\n"
+    expected = (
+        "defaults: &d\n  model: opus\ncoder:\n  settings:  # expanded from *d by troupe\n"
+        "    model: opus\nreviewer:\n  settings: *d\n"
+    )
+    assert _expanded(make_theatre, text, "coder.settings.model") == expected
+
+
+def test_mapping_copy_is_block_style_with_nested_and_empty_collections(
+    make_theatre: MakeTheatre,
 ) -> None:
-    """Req 7.2: until block copies of collections are written (task 3.7), an alias of a non-empty
-    collection is refused cleanly (exit 3, file and PATH) instead of written wrongly."""
-    error = _refusal(make_theatre, f"d: &d{anchored}\nx: *d\n", "x")
-    assert error.problem == "expanding a collection alias is not supported yet"
+    """Req 7.2, 7.4, 7.6: a mapping is copied in block style one step right of the key; nested
+    lists use the file's dash offset, nested mappings the step, empty ones are `{}`/`[]`, scalars
+    keep their source text and no comment from inside the anchored node is copied."""
+    text = (
+        "defaults: &d  # shared\n"
+        "  model: opus  # the model\n"
+        "  # tools follow\n"
+        "  tools:\n"
+        "    - read\n"
+        "    - 'write'\n"
+        "  extra: {}\n"
+        "  none: [ ]\n"
+        "  empty:\n"
+        "  opts:\n"
+        "    a: 0x1F\n"
+        '    b: "two"\n'
+        "coder:\n"
+        "  settings: *d\n"
+        "  name: c\n"
+        "reviewer:\n"
+        "  settings: *d\n"
+    )
+    expected = (
+        "defaults: &d  # shared\n"
+        "  model: opus  # the model\n"
+        "  # tools follow\n"
+        "  tools:\n"
+        "    - read\n"
+        "    - 'write'\n"
+        "  extra: {}\n"
+        "  none: [ ]\n"
+        "  empty:\n"
+        "  opts:\n"
+        "    a: 0x1F\n"
+        '    b: "two"\n'
+        "coder:\n"
+        "  settings:  # expanded from *d by troupe\n"
+        "    model: opus\n"
+        "    tools:\n"
+        "      - read\n"
+        "      - 'write'\n"
+        "    extra: {}\n"
+        "    none: []\n"
+        "    empty:\n"
+        "    opts:\n"
+        "      a: 0x1F\n"
+        '      b: "two"\n'
+        "  name: c\n"
+        "reviewer:\n"
+        "  settings: *d\n"
+    )
+    assert _expanded(make_theatre, text, "coder.settings.model") == expected
 
 
-def test_include_alias_is_refused_until_include_copies_exist(make_theatre: MakeTheatre) -> None:
-    """Req 7.4: until includes are copied as written (task 3.7), an alias of an include is refused
-    cleanly (exit 3, file and PATH)."""
-    root = make_theatre("i: &i file:part.yml\nx: *i\n", files={".troupe/part.yml": "m: 1\n"})
-    config_file = root / ".troupe" / "troupe.yml"
-    document = load_config(config_file)
-    site = _site(document, "x.m")
-    with pytest.raises(WriteRefusedError) as raised:
-        expand_alias(document, site)
-    assert raised.value.exit_code is ExitCode.WRITE_REFUSED
-    assert raised.value.file == config_file
-    assert raised.value.path == "x"
-    assert raised.value.problem == "expanding an alias of an include is not supported yet"
+def test_list_copy_uses_the_dash_offset_and_compact_items(make_theatre: MakeTheatre) -> None:
+    """Req 7.2, 7.4: a list is copied with its `-` at the file's dash offset from the key; a
+    mapping or list item is compact (its first entry after `- `, the others two columns right of
+    the `-`)."""
+    text = "d: &d\n  - a\n  - k: 1\n    j: [x]\n  - - x\n    - y\nx: *d\n"
+    expected = (
+        "d: &d\n  - a\n  - k: 1\n    j: [x]\n  - - x\n    - y\n"
+        "x:  # expanded from *d by troupe\n  - a\n  - k: 1\n    j:\n      - x\n"
+        "  - - x\n    - y\n"
+    )
+    assert _expanded(make_theatre, text, "x.0") == expected
+
+
+def test_list_copy_in_a_file_with_dash_offset_zero(make_theatre: MakeTheatre) -> None:
+    """Req 7.2: in a file whose lists have their `-` at their key's column, the copy does too."""
+    text = "d: &d\n- a\n- b\nx: *d\n"
+    expected = "d: &d\n- a\n- b\nx:  # expanded from *d by troupe\n- a\n- b\n"
+    assert _expanded(make_theatre, text, "x.0") == expected
+
+
+def test_flow_style_anchored_mapping_is_copied_in_block_style(make_theatre: MakeTheatre) -> None:
+    """Req 7.2, 7.4: a flow mapping (with a nested flow list and mapping) is copied in block
+    style; its scalars keep their source text and empty collections stay `{}`/`[]`."""
+    text = (
+        "d: &d {model: opus, tools: [read, \"write\"], e: {}, q: 'it''s',\n"
+        "  n: {k: 1}}\nx:\n  s: *d\n  t: 1\n"
+    )
+    expected = (
+        "d: &d {model: opus, tools: [read, \"write\"], e: {}, q: 'it''s',\n"
+        "  n: {k: 1}}\nx:\n  s:  # expanded from *d by troupe\n    model: opus\n    tools:\n"
+        "      - read\n      - \"write\"\n    e: {}\n    q: 'it''s'\n    n:\n      k: 1\n  t: 1\n"
+    )
+    assert _expanded(make_theatre, text, "x.s.model") == expected
+
+
+def test_quoted_keys_keep_their_source_text(make_theatre: MakeTheatre) -> None:
+    """Req 7.4: keys of the copy are written as in the anchored node, quotes included."""
+    text = "d: &d\n  'a b': 1\n  \"c:d\": 2\n  plain: x\n  '007': [ ]\nx: *d\n"
+    expected = (
+        "d: &d\n  'a b': 1\n  \"c:d\": 2\n  plain: x\n  '007': [ ]\n"
+        "x:  # expanded from *d by troupe\n  'a b': 1\n  \"c:d\": 2\n  plain: x\n  '007': []\n"
+    )
+    assert _expanded(make_theatre, text, "x.plain") == expected
+
+
+def test_alias_of_an_include_string_copies_the_directive(make_theatre: MakeTheatre) -> None:
+    """Req 7.3, 7.4: an alias of an include string is replaced by the include string as written,
+    so the copy includes the same file."""
+    text = "i: &i 'file:part.yml'\nx:\n  y: *i\n"
+    expected = "i: &i 'file:part.yml'\nx:\n  y: 'file:part.yml'  # expanded from *i by troupe\n"
+    files = {".troupe/part.yml": "m: 1\n"}
+    assert _expanded(make_theatre, text, "x.y.m", files) == expected
+
+
+def test_includes_inside_a_mapping_are_copied_as_written(make_theatre: MakeTheatre) -> None:
+    """Req 7.4: include strings and a `$ref` mapping inside the anchored node are copied as
+    written (the `$ref` mapping in block style, `$ref` first, then its overrides)."""
+    text = 'd: &d\n  a: file:part.yml\n  b: {$ref: "file:part.yml", m: 2}\n  c: x\nx: *d\ny: *d\n'
+    expected = (
+        'd: &d\n  a: file:part.yml\n  b: {$ref: "file:part.yml", m: 2}\n  c: x\n'
+        "x:  # expanded from *d by troupe\n  a: file:part.yml\n  b:\n"
+        '    $ref: "file:part.yml"\n    m: 2\n  c: x\ny: *d\n'
+    )
+    files = {".troupe/part.yml": "m: 1\nn: 1\n"}
+    assert _expanded(make_theatre, text, "x.c", files) == expected
+
+
+def test_alias_of_a_ref_mapping_copies_it_in_block_style(make_theatre: MakeTheatre) -> None:
+    """Req 7.2, 7.4: an alias of an anchored `$ref` mapping becomes a block `$ref` mapping under
+    the key's line, `$ref` first and then the overrides (nested overrides in block style)."""
+    text = "i: &i {$ref: file:part.yml, n: {k: 2}}\nx: *i\n"
+    expected = (
+        "i: &i {$ref: file:part.yml, n: {k: 2}}\n"
+        "x:  # expanded from *i by troupe\n  $ref: file:part.yml\n  n:\n    k: 2\n"
+    )
+    files = {".troupe/part.yml": "m: 1\nn:\n  k: 1\n  j: 1\n"}
+    assert _expanded(make_theatre, text, "x.m", files) == expected
+
+
+def test_inner_alias_is_kept_and_inner_anchor_is_not_repeated(make_theatre: MakeTheatre) -> None:
+    """Req 7.5: an anchor written inside the anchored node is not repeated in the copy and an
+    alias written inside it stays the same alias, so later aliases still refer to the original."""
+    text = "d: &d\n  a: &a 1\n  b: *a\n  c: &c\n    k: v\n  l:\n    - *c\nx: *d\ny: *a\nz: *c\n"
+    expected = (
+        "d: &d\n  a: &a 1\n  b: *a\n  c: &c\n    k: v\n  l:\n    - *c\n"
+        "x:  # expanded from *d by troupe\n  a: 1\n  b: *a\n  c:\n    k: v\n  l:\n    - *c\n"
+        "y: *a\nz: *c\n"
+    )
+    assert _expanded(make_theatre, text, "x.a") == expected
+
+
+@pytest.mark.parametrize(
+    ("anchored", "copy", "path"),
+    [
+        ("\n  model: opus\n  tools: [a]", "    model: opus\n    tools:\n      - a\n", "l.0.model"),
+        (" [1, 2]", "    - 1\n    - 2\n", "l.0.0"),
+    ],
+    ids=["mapping", "list"],
+)
+def test_list_item_alias_gets_its_copy_under_the_item(
+    make_theatre: MakeTheatre, anchored: str, copy: str, path: str
+) -> None:
+    """Req 8.3, 7.2: a block list item alias gets the comment two spaces after the `-` and the
+    copy on the following lines, two columns right of the `-`."""
+    text = f"d: &d{anchored}\nl:\n  - *d\n  - other\n"
+    expected = f"d: &d{anchored}\nl:\n  -  # expanded from *d by troupe\n{copy}  - other\n"
+    assert _expanded(make_theatre, text, path) == expected
+
+
+def test_collection_copy_in_a_crlf_file_uses_crlf(make_theatre: MakeTheatre) -> None:
+    """Req 7.2, 7.6: every copied line ends with the file's line break."""
+    text = "defaults: &d\r\n  model: opus\r\n  t:\r\n    - a\r\ncoder:\r\n  settings: *d\r\n"
+    expected = (
+        "defaults: &d\r\n  model: opus\r\n  t:\r\n    - a\r\ncoder:\r\n"
+        "  settings:  # expanded from *d by troupe\r\n    model: opus\r\n    t:\r\n"
+        "      - a\r\n"
+    )
+    assert _expanded(make_theatre, text, "coder.settings.model") == expected
+
+
+def test_collection_copy_in_a_four_space_file(make_theatre: MakeTheatre) -> None:
+    """Req 7.2: the copy uses the file's indentation step and dash offset (four spaces here)."""
+    text = (
+        "defaults: &d\n    model: opus\n    tools:\n        - a\n    o:\n        k: 1\n"
+        "coder:\n    settings: *d\n"
+    )
+    expected = (
+        "defaults: &d\n    model: opus\n    tools:\n        - a\n    o:\n        k: 1\n"
+        "coder:\n    settings:  # expanded from *d by troupe\n        model: opus\n"
+        "        tools:\n            - a\n        o:\n            k: 1\n"
+    )
+    assert _expanded(make_theatre, text, "coder.settings.model") == expected
+
+
+def test_nested_scalars_on_several_lines_are_copied(make_theatre: MakeTheatre) -> None:
+    """Req 7.4: a block scalar inside the copy keeps its header and is re-indented; a multi-line
+    flow scalar is rendered on one line in its own style."""
+    text = (
+        'd: &d\n  s: |  # about s\n    one\n      two\n  q: "a\n    b"\n  l:\n    - >-\n'
+        "      f\nx:\n  y: *d\n"
+    )
+    expected = (
+        'd: &d\n  s: |  # about s\n    one\n      two\n  q: "a\n    b"\n  l:\n    - >-\n'
+        "      f\nx:\n  y:  # expanded from *d by troupe\n    s: |\n      one\n        two\n"
+        '    q: "a b"\n    l:\n      - >-\n        f\n'
+    )
+    assert _expanded(make_theatre, text, "x.y.s") == expected
+
+
+def test_collection_alias_written_below_its_key(make_theatre: MakeTheatre) -> None:
+    """Req 7.1, 7.2: an alias written on the line after its key is replaced from the key's `:`,
+    and the copy follows the key's line."""
+    text = "d: &d\n  m: 1\nother:\n  *d\nlast: 1\n"
+    expected = "d: &d\n  m: 1\nother:  # expanded from *d by troupe\n  m: 1\nlast: 1\n"
+    assert _expanded(make_theatre, text, "other.m") == expected
+
+
+# --- the end of a file without a final line break ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "path", "expected"),
+    [
+        (
+            "d: &d\n  a: 1\n  b: [x]\nx: *d",
+            "x.a",
+            "d: &d\n  a: 1\n  b: [x]\nx:  # expanded from *d by troupe\n  a: 1\n  b:\n    - x",
+        ),
+        (
+            "d: &d\n  a: 1\nl:\n  - *d",
+            "l.0.a",
+            "d: &d\n  a: 1\nl:\n  -  # expanded from *d by troupe\n    a: 1",
+        ),
+        (
+            "d: &d\n  a: 1\n  s: |-\n    one\nx: *d",
+            "x.a",
+            "d: &d\n  a: 1\n  s: |-\n    one\nx:  # expanded from *d by troupe\n  a: 1\n"
+            "  s: |-\n    one",
+        ),
+    ],
+    ids=["mapping", "list-item", "strip-block-scalar"],
+)
+def test_copy_at_the_end_of_a_file_without_a_final_break_adds_none(
+    make_theatre: MakeTheatre, text: str, path: str, expected: str
+) -> None:
+    """Req 7.2, 7.6 (config-set-writeback 11.6): a copy after the last line of a file without a
+    final line break starts on a new line and leaves the file ending without a break, also when
+    its last value is a strip block scalar, whose value does not need one."""
+    assert _expanded(make_theatre, text, path) == expected
+
+
+@pytest.mark.parametrize("header", ["|", "|+"], ids=["clip", "keep"])
+def test_copy_ending_in_a_clip_or_keep_block_scalar_keeps_the_final_break(
+    make_theatre: MakeTheatre, header: str
+) -> None:
+    """Req 7.4, 7.6: at the end of a file without a final line break, a copy whose last line ends a
+    clip or keep block scalar ends with a break as at the anchor, so the block keeps its value."""
+    text = f"d: &d\n  a: 1\n  s: {header}\n    one\nx: *d"
+    expected = (
+        f"d: &d\n  a: 1\n  s: {header}\n    one\nx:  # expanded from *d by troupe\n  a: 1\n"
+        f"  s: {header}\n    one\n"
+    )
+    assert _expanded(make_theatre, text, "x.a") == expected
+
+
+def test_key_written_over_several_lines_is_rendered_in_its_style(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 7.4: a key written over several lines cannot be copied as written in block style, so
+    it is rendered on one line in its own quoting style. (The first mapping fixes the step: the
+    layout measures an explicit key's column after its `?`.)"""
+    head = 'o:\n  k: 1\nd: &d\n  ? "a\n    b"\n  : 1\n'
+    text = head + "x: *d\n"
+    expected = head + 'x:  # expanded from *d by troupe\n  "a b": 1\n'
+    assert _expanded(make_theatre, text, "x") == expected

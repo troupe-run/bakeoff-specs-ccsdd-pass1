@@ -26,10 +26,22 @@ by ``  <comment>`` when the copy has no inline part, where the comment is
 * ``{}``/``[]`` for an empty collection;
 * a literal or folded block scalar's header indicators; its content lines follow the key's line,
   shifted by the difference between the alias's and the anchor's owner columns (the key or ``-``),
-  so an indentation indicator stays valid. The anchor's header comment is not copied (7.6).
+  so an indentation indicator stays valid. The anchor's header comment is not copied (7.6);
+* an include string's directive token as written (7.4).
 
-Comments inside the anchored node are never copied and no other byte changes (7.6). Copies of
-non-empty collections and of includes are not written yet (task 3.7): they are refused.
+A non-empty mapping or list (7.2, 8.3) has no inline part: its copy is written in block style on
+the lines after the key's line (or the list item's line), under the column rules of
+``collection_render.render_block_value`` with the file's indentation step, dash offset and line
+break: a mapping one step right of its key, a list with its ``-`` at the dash offset, a list item's
+collection two columns right of its ``-`` (compact below the copy's root, so a nested item's first
+entry follows ``- ``). Every nested collection is in block style (flow ones too), and an empty one
+is ``{}``/``[]``. Keys and single-line scalars copy their source token text (a key written over
+several lines is rendered in its own style), multi-line flow scalars and block scalars are written
+as on the key's line, an include as its directive token or its ``$ref`` mapping (``include.form``)
+in block style, and an inner alias place as ``*name`` (7.5). Only the text after an anchor
+property is ever copied, so no anchor is repeated (7.5).
+
+Comments inside the anchored node are never copied and no other byte changes (7.6).
 """
 
 from collections.abc import Iterator
@@ -45,6 +57,8 @@ from troupe.config.model import (
     ConfigNode,
     ConfigScalar,
     ConfigSequence,
+    MappingEntry,
+    Origin,
     ScalarStyle,
 )
 from troupe.config.paths import ROOT, ConfigPath
@@ -52,7 +66,12 @@ from troupe.config.writeback.aliases import AliasSite, merge_problem
 from troupe.config.writeback.collection_render import RenderContext
 from troupe.config.writeback.edits import EditKind, TextEdit, apply_edits
 from troupe.config.writeback.layout import FileLayout, ValueSlot
-from troupe.config.writeback.scalar_render import Context, quote_style_of, render_scalar
+from troupe.config.writeback.scalar_render import (
+    Context,
+    quote_style_of,
+    render_key,
+    render_scalar,
+)
 from troupe.config.writeback.value import NewScalar
 
 EXPANDED_COMMENT: Final = "# expanded from *{name} by troupe"
@@ -68,14 +87,13 @@ MERGE_PREFIX: Final = "alias '*{name}' cannot be expanded: "
 """Put before the merge-key problem of :func:`merge_problem` when the anchored node holds a merge
 key (9.1)."""
 
-COLLECTION_NOT_YET: Final = "expanding a collection alias is not supported yet"
-"""Temporary (task 3.7 writes block copies): an alias of a non-empty collection."""
-
-INCLUDE_NOT_YET: Final = "expanding an alias of an include is not supported yet"
-"""Temporary (task 3.7 copies includes as written): an alias of an include."""
-
 _COMMENT_GAP: Final = "  "
+_COMPACT_INDENT: Final = 2
+"""Entries of a list item's collection start this many columns right of its ``-`` (as in
+``collection_render``)."""
 _INLINE_SPACE: Final = " \t"
+_STRIP: Final = "-"
+"""The strip chomping indicator of a block scalar header: its value has no final line break."""
 _BLOCK_STYLES: Final = frozenset({ScalarStyle.LITERAL, ScalarStyle.FOLDED})
 
 
@@ -87,6 +105,9 @@ class _Copy:
     """Written after the indicator and one space (empty: nothing but the comment)."""
     lines: tuple[str, ...]
     """Following lines without their line breaks."""
+    final_break: bool = False
+    """The last of ``lines`` ends the content of a clip or keep block scalar, so it needs a line
+    break even at the end of a file without one (or its value would change)."""
 
 
 def expand_alias(document: ConfigDocument, site: AliasSite) -> dict[Path, str]:
@@ -95,8 +116,7 @@ def expand_alias(document: ConfigDocument, site: AliasSite) -> dict[Path, str]:
 
     Raises :class:`WriteRefusedError` (exit 3) naming the alias's file and ``site.path`` for an
     alias inside a flow collection (8.4), a line that already has a comment (8.5), and an anchored
-    node holding a merge key (9.1); and, until task 3.7, for an alias of a non-empty collection or
-    of an include.
+    node holding a merge key (9.1).
     """
     alias = site.place.alias
     if alias is None:
@@ -118,8 +138,6 @@ def expand_alias(document: ConfigDocument, site: AliasSite) -> dict[Path, str]:
     holder = _merge_holder(anchored, site.path)
     if holder is not None:
         raise refuse(MERGE_PREFIX.format(name=alias.name) + merge_problem(holder))
-    if anchored.include is not None or site.place.include is not None:
-        raise refuse(INCLUDE_NOT_YET)
 
     ctx = RenderContext(
         step=layout.indent_step(),
@@ -127,9 +145,9 @@ def expand_alias(document: ConfigDocument, site: AliasSite) -> dict[Path, str]:
         line_break=layout.line_break_at(layout.line_span(last).end),
         path=site.path,
     )
-    copy = _copy(document, layout, slot, anchored, ctx)
-    if copy is None:
-        raise refuse(COLLECTION_NOT_YET)
+    copy = _Copier(document, layout, ctx).value(
+        anchored, slot.owner_column, slot.in_sequence, compact=False
+    )
 
     end = token.end
     line_end = layout.line_span(last).end
@@ -139,7 +157,7 @@ def expand_alias(document: ConfigDocument, site: AliasSite) -> dict[Path, str]:
     inline = f" {copy.inline}{_COMMENT_GAP}{comment}" if copy.inline else _COMMENT_GAP + comment
     edits = [TextEdit(slot.indicator_end, end, inline, EditKind.INLINE)]
     if copy.lines:
-        edits.append(_lines_after(layout, last, copy.lines, ctx.line_break))
+        edits.append(_lines_after(layout, last, copy, ctx.line_break))
     return {file.real_path: apply_edits(layout, edits)}
 
 
@@ -155,48 +173,114 @@ def _slot(
     return layout.entry_slot(parent, entry, path)
 
 
-def _copy(
-    document: ConfigDocument,
-    layout: FileLayout,
-    slot: ValueSlot,
-    anchored: ConfigNode,
-    ctx: RenderContext,
-) -> _Copy | None:
-    """The copy of ``anchored`` written at ``slot``; ``None`` for a non-empty collection (task
-    3.7)."""
-    if isinstance(anchored, ConfigMapping):
-        return _Copy("{}", ()) if not anchored.entries else None
-    if isinstance(anchored, ConfigSequence):
-        return _Copy("[]", ()) if not anchored.items else None
-    if anchored.style in _BLOCK_STYLES:
-        return _block_scalar_copy(document, layout, slot, anchored)
-    span = anchored.origin.span
-    source = anchored.origin.file.text[span.start : span.end]
-    if span.end <= span.start or layout.line_of(span.start) == layout.line_of(span.end - 1):
-        return _Copy(source, ())
-    if not isinstance(anchored.value, str):  # pragma: no cover - multi-line plain is a string
-        raise ValueError(f"multi-line scalar {source!r} is not a string")
-    preferred = quote_style_of(anchored.style)
-    rendered = render_scalar(
-        NewScalar(anchored.value, None), Context.BLOCK_VALUE, preferred, ctx.path
-    )
-    return _Copy(rendered, ())
+@dataclass(frozen=True)
+class _Copier:
+    """Renders nodes of the anchored node as written, in block style, under the column rules of
+    :func:`~troupe.config.writeback.collection_render.render_block_value`."""
+
+    document: ConfigDocument
+    layout: FileLayout
+    ctx: RenderContext
+
+    def value(
+        self, node: ConfigNode, owner_column: int, in_sequence: bool, *, compact: bool = True
+    ) -> _Copy:
+        """The copy of ``node`` as the value of a key (or ``-``) at ``owner_column``. A list item's
+        collection is compact (its first entry is the inline part) unless ``compact`` is false."""
+        if node.alias is not None:  # before ``include`` and ``anchor`` (an alias place has them)
+            return _Copy("*" + node.alias.name, ())
+        if node.include is not None:
+            if node.include.form is None:
+                return _Copy(_source(node.include.directive), ())
+            node = node.include.form
+        if isinstance(node, ConfigScalar):
+            return self._scalar(node, owner_column)
+        if isinstance(node, ConfigMapping) and node.merge is not None:  # pragma: no cover
+            raise ValueError("a mapping with a merge key is never copied")
+        if isinstance(node, ConfigMapping) and not node.entries:
+            return _Copy("{}", ())
+        if isinstance(node, ConfigSequence) and not node.items:
+            return _Copy("[]", ())
+        if in_sequence:
+            column = owner_column + _COMPACT_INDENT
+        elif isinstance(node, ConfigMapping):
+            column = owner_column + self.ctx.step
+        else:
+            column = owner_column + self.ctx.dash_offset
+        lines = self._collection(node, column)
+        if not (in_sequence and compact):
+            return lines
+        return _Copy(lines.lines[0][column:], lines.lines[1:], lines.final_break)
+
+    def _collection(self, node: ConfigMapping | ConfigSequence, column: int) -> _Copy:
+        """The lines of a non-empty block collection whose entries start at ``column``; its
+        final break is that of its last entry."""
+        entries: list[_Copy] = []
+        if isinstance(node, ConfigMapping):
+            for entry in node.entries:
+                head = " " * column + self._key(entry) + ":"
+                entries.append(self._entry(head, entry.value, column, in_sequence=False))
+        else:
+            for item in node.items:
+                entries.append(self._entry(" " * column + "-", item, column, in_sequence=True))
+        lines = tuple(line for copy in entries for line in (copy.inline, *copy.lines))
+        return _Copy("", lines, entries[-1].final_break)
+
+    def _entry(self, head: str, node: ConfigNode, column: int, *, in_sequence: bool) -> _Copy:
+        """An entry as a copy whose ``inline`` is its first line (the head and inline part)."""
+        copy = self.value(node, column, in_sequence)
+        first = head + (" " + copy.inline if copy.inline else "")
+        return _Copy(first, copy.lines, copy.final_break)
+
+    def _key(self, entry: MappingEntry) -> str:
+        """A key's source text, or the key rendered in its own style when written over several
+        lines."""
+        source = _source(entry.key_origin)
+        if _single_line(source):
+            return source
+        preferred = quote_style_of(entry.key_style)
+        return render_key(entry.key, Context.BLOCK_KEY, preferred, path=self.ctx.path)
+
+    def _scalar(self, node: ConfigScalar, owner_column: int) -> _Copy:
+        if node.style in _BLOCK_STYLES:
+            return _block_scalar_copy(self.document, self.layout, owner_column, node)
+        source = _source(node.origin)
+        if _single_line(source):
+            return _Copy(source, ())
+        if not isinstance(node.value, str):  # pragma: no cover - multi-line plain is a string
+            raise ValueError(f"multi-line scalar {source!r} is not a string")
+        preferred = quote_style_of(node.style)
+        rendered = render_scalar(
+            NewScalar(node.value, None), Context.BLOCK_VALUE, preferred, self.ctx.path
+        )
+        return _Copy(rendered, ())
+
+
+def _source(origin: Origin) -> str:
+    """The text written at ``origin``."""
+    return origin.file.text[origin.span.start : origin.span.end]
+
+
+def _single_line(text: str) -> bool:
+    return "\n" not in text and "\r" not in text
 
 
 def _block_scalar_copy(
-    document: ConfigDocument, layout: FileLayout, slot: ValueSlot, anchored: ConfigScalar
+    document: ConfigDocument, layout: FileLayout, owner_column: int, anchored: ConfigScalar
 ) -> _Copy:
     """A literal or folded block's header indicators and its content lines, shifted by the
-    difference between ``slot``'s owner column and the anchored block's owner column."""
+    difference between ``owner_column`` (of the copy's key or ``-``) and the block's own owner
+    column."""
     anchored_slot = _anchored_slot(document, layout, anchored)
     header = layout.inline_extent(anchored_slot)
     text = layout.file.text
     header_line = layout.line_of(header.start)
     content_end = layout.content_end(anchored, anchored_slot)
     last = layout.line_of(content_end) if content_end > header.end else header_line
-    shift = slot.owner_column - anchored_slot.owner_column
+    shift = owner_column - anchored_slot.owner_column
     lines = tuple(_shifted(layout.line_text(n), shift) for n in range(header_line + 1, last + 1))
-    return _Copy(text[header.start : header.end], lines)
+    indicators = text[header.start : header.end]
+    return _Copy(indicators, lines, final_break=bool(lines) and _STRIP not in indicators)
 
 
 def _shifted(line: str, shift: int) -> str:
@@ -210,18 +294,18 @@ def _shifted(line: str, shift: int) -> str:
     return line[min(-shift, spaces) :]
 
 
-def _lines_after(
-    layout: FileLayout, line: int, lines: tuple[str, ...], line_break: str
-) -> TextEdit:
-    """Insert ``lines``, each ending with ``line_break``, after ``line``. At the end of a file
-    without a final break a break comes first: the copied lines end with a break as at the anchor,
-    so a clip or keep block keeps its final line break."""
-    copied = "".join(f"{text}{line_break}" for text in lines)
+def _lines_after(layout: FileLayout, line: int, copy: _Copy, line_break: str) -> TextEdit:
+    """Insert ``copy``'s lines after ``line``, each ending with ``line_break``. At the end of a
+    file without a final break, a break comes first and the last line gets none, so the file
+    still ends without one (config-set-writeback 11.6); unless the copy's last line ends a clip
+    or keep block scalar (``final_break``), whose value needs the break, as at the anchor."""
     if layout.line_break(line):
         index = layout.line_start(line + 1)
+        copied = "".join(f"{text}{line_break}" for text in copy.lines)
         return TextEdit(index, index, copied, EditKind.LINES)
     index = layout.line_span(line).end
-    return TextEdit(index, index, line_break + copied, EditKind.LINES)
+    copied = line_break + line_break.join(copy.lines) + (line_break if copy.final_break else "")
+    return TextEdit(index, index, copied, EditKind.LINES)
 
 
 def _anchored_slot(document: ConfigDocument, layout: FileLayout, anchored: ConfigNode) -> ValueSlot:
