@@ -174,6 +174,18 @@
   would change, appear or disappear count. The search does not descend below an alias place, because outer
   aliases come first.
 - **Rationale**: one place for "reached through an alias". It runs before the no-op check, so 5.3 and 8.6 hold.
+- **Implementation note (task 3.3)**: the walk follows the layers as written. At a merged mapping (an include
+  with overrides) only the side or sides holding the next PATH key are followed (both when both write it as
+  mappings, as `deep_merge` merges it). An alias as a `$ref` value counts only for the include's included side,
+  so a key written only in the include's own overrides proceeds. Conservative leftovers, kept on purpose:
+  - Where PATH ends (its node, or the deepest existing ancestor of a new key) every side counts. A new key below
+    an include root whose `$ref` value is an alias is therefore refused, wherever the key would be placed. 5.1
+    tests the deepest existing ancestor, and the include root's value is partly reached through the alias.
+  - Below PATH, a child that changes as a whole (removed, replaced by another kind or another include, or given
+    new keys or items) counts on every side, and an include written by VALUE counts as changing everything below
+    it, because the guard does not decide where new content is written.
+  - A merged entry kept by `deep_merge` when both sides write the key as mappings keeps `via_merge`, so a PATH
+    through it is refused (see the 2.3 implementation note).
 
 ### Decision 6: Expand in memory, reload, repeat; then run the unchanged set pipeline
 - **Context**: 7.x, 8.1, 8.2, 10.1–10.4.
