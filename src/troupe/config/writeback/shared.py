@@ -10,6 +10,13 @@ there), like any other content of the file. The strict ordered read-back
 configuration that holds the change at every such place, and history records the resulting leaf
 changes at each (11.2, 11.3).
 
+Anchors work the same way (config-aliases 4.1, 4.2, 4.4, 10.2, research.md Decision 2). A change
+at an anchored node is written once, at the anchor. An alias place carries the anchored node's
+origins, so it is rebuilt from the same written locations and shows the change; a mapping with a
+merge key is rebuilt from the mapping as written and merged again (own keys first, as the loader's
+``merge_mapping``), so the change also appears in every mapping that merges the anchored node,
+unless that mapping writes the key itself.
+
 How it works. The planner records every change it plans as a semantic edit of a written location
 (:class:`WrittenChanges`): the value of an entry or item of a written mapping or list replaced,
 entries or items removed or added, a scalar-form include string converted to mapping form with
@@ -48,9 +55,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, NoReturn
 
-from troupe.config.constants import INCLUDE_PREFIX, YAML_INCLUDE_SUFFIXES
+from troupe.config.constants import INCLUDE_PREFIX, MERGE_KEY, YAML_INCLUDE_SUFFIXES
 from troupe.config.errors import ConfigLoadError, WriteRefusedError
 from troupe.config.loader import load_include
+from troupe.config.merge_keys import merged_pairs
 from troupe.config.model import (
     ConfigDocument,
     ConfigMapping,
@@ -489,7 +497,12 @@ class _Rebuild:
                 if not (isinstance(base, dict) and isinstance(over, dict)):
                     return base  # pragma: no cover - a merge always has two mappings
                 return _merge(base, over, self._mergeable)
-            content: PlainValue = self._entries(node)
+            if node.merge is not None:
+                # Merged again from the mapping as written, so a change at a merged anchored
+                # node (or in an inline source) takes effect here, below the own keys (2.1, 2.2).
+                content: PlainValue = _merge_key(self._entries(node.merge.written))
+            else:
+                content = self._entries(node)
         else:
             content = self._items(node)
         # An unmerged include root has no overrides as loaded; the changes may give its ``$ref``
@@ -536,6 +549,29 @@ class _Rebuild:
             items.append(replaced[slot] if slot in replaced else self.plain(item))
         items.extend(value for key, value in self._changes.added.get(where, []) if key is None)
         return items
+
+
+def _merge_key(written: PlainMapping) -> PlainMapping:
+    """The merged view of a mapping as written, from its plain entries: the own entries in
+    written order, and in place of the ``<<`` entry the pairs that
+    :func:`~troupe.config.merge_keys.merged_pairs` merges in from its sources (a mapping or a
+    list of mappings), as the loader's ``merge_mapping`` (config-aliases 2.1, 2.2)."""
+    own = [key for key in written if key != MERGE_KEY]
+    result: PlainMapping = {}
+    for key, value in written.items():
+        if key != MERGE_KEY:
+            result[key] = value
+            continue
+        sources = [_source(source) for source in (value if isinstance(value, list) else [value])]
+        result.update(merged_pairs(own, (source.items() for source in sources)))
+    return result
+
+
+def _source(plain: PlainValue) -> PlainMapping:
+    source = _unwrapped(plain)
+    if not isinstance(source, dict):  # pragma: no cover - the loader requires mappings
+        raise TypeError("a merge source must be a mapping")
+    return source
 
 
 def _chain(ref: IncludeRef | None) -> Iterator[IncludeRef]:

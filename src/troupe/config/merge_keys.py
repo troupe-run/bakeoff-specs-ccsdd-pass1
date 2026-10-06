@@ -10,9 +10,27 @@ This module is pure: it performs no I/O and never mutates its inputs.
 """
 
 import dataclasses
-from collections.abc import Sequence
+from collections.abc import Collection, Iterable, Sequence
 
-from troupe.config.model import ConfigMapping, MappingEntry, MergeKey, Origin
+from troupe.config.model import ConfigMapping, MergeKey, Origin
+
+
+def merged_pairs[V](
+    own: Collection[str], sources: Iterable[Iterable[tuple[str, V]]]
+) -> list[tuple[str, V]]:
+    """The ``(key, value)`` pairs a merge key brings into a mapping whose own keys are ``own``
+    (2.1, 2.2): the pairs of ``sources``, earlier sources first and each in its order, whose keys
+    are neither own keys nor given by an earlier pair. This is the single home of the merge-key
+    precedence and order rule; the loader's merged view and the writer's rebuilt plain view both
+    use it. Pure: neither input is changed."""
+    seen = set(own)
+    merged: list[tuple[str, V]] = []
+    for source in sources:
+        for key, value in source:
+            if key not in seen:
+                seen.add(key)
+                merged.append((key, value))
+    return merged
 
 
 def merge_mapping(
@@ -33,12 +51,10 @@ def merge_mapping(
     include, anchor and alias). Neither ``written`` nor ``sources`` is changed.
     """
     own = written.entries[:merge_index] + written.entries[merge_index + 1 :]
-    seen = {entry.key for entry in own}
-    merged: list[MappingEntry] = []
-    for source in sources:
-        for entry in source.entries:
-            if entry.key not in seen:
-                seen.add(entry.key)
-                merged.append(dataclasses.replace(entry, via_merge=True))
+    pairs = merged_pairs(
+        {entry.key for entry in own},
+        (((entry.key, entry) for entry in source.entries) for source in sources),
+    )
+    merged = [dataclasses.replace(entry, via_merge=True) for _, entry in pairs]
     entries = written.entries[:merge_index] + tuple(merged) + written.entries[merge_index + 1 :]
     return dataclasses.replace(written, entries=entries, merge=MergeKey(written, key_origin))

@@ -17,7 +17,7 @@ import pytest
 
 from support import MakeTheatre
 from troupe.config.loader import load_config
-from troupe.config.merge_keys import merge_mapping
+from troupe.config.merge_keys import merge_mapping, merged_pairs
 from troupe.config.model import (
     AliasRef,
     Anchor,
@@ -278,3 +278,15 @@ def test_nodes_built_without_the_new_fields_record_none(make_theatre: MakeTheatr
     for node in (scalar, mapping, sequence):
         assert node.anchor is None
         assert node.alias is None
+
+
+def test_merged_pairs_skip_own_keys_and_keys_of_earlier_sources() -> None:
+    """Req 2.1, 2.2: the merge-key rule on its own, for any value type: the pairs merged in are
+    the sources' pairs, earlier sources first and each in its order, without the mapping's own
+    keys and without a key an earlier source already gave; the inputs are not changed."""
+    own = {"t"}
+    sources = [[("model", 1), ("t", 2)], [("n", 3), ("model", 4)], []]
+    snapshot = copy.deepcopy(sources)
+    assert merged_pairs(own, sources) == [("model", 1), ("n", 3)]
+    assert merged_pairs(set(), []) == []
+    assert sources == snapshot and own == {"t"}
