@@ -99,7 +99,7 @@ def merge_problem(holder_path: ConfigPath) -> str:
     return MERGE_REFUSAL.format(key_path=holder_path.child(MERGE_KEY))
 
 
-def _merge_error(
+def merge_error(
     holder: ConfigMapping, holder_path: ConfigPath, path: ConfigPath
 ) -> WriteRefusedError:
     """The refusal (exit 3) of a set at ``path`` reaching a value ``holder`` receives from its
@@ -240,7 +240,7 @@ class _Guard:
             if entry is None:
                 return None
             if entry.via_merge:
-                raise _merge_error(holder, at, self._path)
+                raise merge_error(holder, at, self._path)
             return _Strand(entry.value, holder, entry.key)
         index = int(key)
         if index >= len(holder.items):

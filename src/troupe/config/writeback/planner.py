@@ -57,6 +57,12 @@ Pending additions, conversions and removals, and changed value slots, are groupe
 location, so one VALUE asking for one location at two places writes agreeing values once and is
 refused for conflicting ones (11.4, 11.5).
 
+A mapping with a merge key is written as written (config-aliases 9.1, 9.3): its own entries change
+in place, new keys go after its last written entry (which may be the ``<<`` entry) and own entries
+are deleted around it; the ``<<`` entry and its value are never written. A PATH through a value
+received from a merge key, a merged entry that a collection replacement changes or removes, and a
+replacement of the whole mapping are refused (exit 3) with the guard's merge-key refusal.
+
 End-of-line comments on the changed lines are moved back to their columns by the EditApplier
 (12.x). Every refusal is a :class:`WriteRefusedError` naming the file and the path (14.9).
 """
@@ -67,7 +73,7 @@ from functools import partial
 from pathlib import Path
 from typing import Final, NoReturn, TypeVar
 
-from troupe.config.constants import INCLUDE_REF_KEY
+from troupe.config.constants import INCLUDE_REF_KEY, MERGE_KEY
 from troupe.config.errors import WriteRefusedError
 from troupe.config.model import (
     CollectionStyle,
@@ -90,6 +96,7 @@ from troupe.config.overrides import (
 )
 from troupe.config.paths import ConfigPath
 from troupe.config.resolve import walk_path
+from troupe.config.writeback.aliases import merge_error
 from troupe.config.writeback.block_scalar import (
     Chomping,
     literal_fits,
@@ -190,13 +197,15 @@ def plan_set(document: ConfigDocument, request: SetRequest) -> Plan:
     Never two patches for the same file, and every patch changes its file. Raises
     :class:`WriteRefusedError` (exit 3) naming the file and PATH for every refusal: a YAML include
     root that would change (2.5), a non-string or another include over a text include (2.4), a
-    layout the planner cannot write (14.9), or a set that would change nothing.
+    layout the planner cannot write (14.9), a write through a merge key (config-aliases 9.1), or
+    a set that would change nothing.
 
     A change written into a file included at several places appears at each of them
     (requirements choices 17, 18): the intended configuration holds it at every other place
     reaching its written location, merged with that place's own overrides (11.1, 11.2). A change
     reached at one place only keeps ``request.intended``.
     """
+    _refuse_through_merge(document, request.path)
     planner = _Planner(document, request.path, in_include=request.in_include)
     target = request.target
     if isinstance(target, ReplaceTarget):
@@ -342,11 +351,18 @@ class _Planner:
         (7.1-7.3): ``deleted`` are the indices of the entries the same set deletes. A block
         collection gets one line insertion at its insertion point (11.1, 11.2, 11.6); a flow
         collection one insertion on its last entry's line (11.3).
+
+        A mapping with a merge key receives them in the mapping as written, after its last written
+        entry (which may be the ``<<`` entry), styled after its last remaining own entry; the
+        ``<<`` entry is never written (config-aliases 9.1, 9.3).
         """
         file = collection.origin.file
         layout = self._guard(file, path, lambda: self._layout(file))
         self._receivers.add(written_location(collection.origin))
-        siblings = _sibling_styles(collection, deleted)
+        collection, deleted, merge_entry = self._guard(
+            file, path, lambda: _as_written(collection, deleted)
+        )
+        siblings = _sibling_styles(collection, {*deleted, *merge_entry})
         if collection.style is CollectionStyle.FLOW:
             edit = self._guard(
                 file,
@@ -410,6 +426,7 @@ class _Planner:
         """
         separator = ", "
         if isinstance(collection, ConfigMapping):
+            # The mapping as written (``add_entries``): its last entry may be the `<<` entry.
             if collection.entries:
                 last = collection.entries[-1]
                 slot = layout.entry_slot(collection, last, path)
@@ -646,6 +663,9 @@ class _Planner:
             self.changes.replace(*where, value)
             self._replace_value(layout, slot, value, path, preferred)
             return True
+        if isinstance(node, ConfigMapping) and node.merge is not None and not _merges(node, value):
+            # Replacing the whole mapping would remove its `<<` entry (config-aliases 9.1).
+            raise merge_error(node, at, path)
         if isinstance(node, ConfigScalar) and isinstance(value, NewScalar):
             if node.style in _QUOTED_OR_PLAIN:
                 self.changes.replace(*where, value)
@@ -746,8 +766,22 @@ class _Planner:
         anew as ``value`` when the placement is the mapping itself. A mapping none of whose
         entries stays while its new keys are written at another placement becomes ``{}`` (a
         block mapping emptied of its lines would read back as null).
+
+        In a mapping with a merge key only own entries are changed, deleted or added; its ``<<``
+        entry always stays. A merged entry whose value would change or that would be removed is
+        refused (exit 3) naming the file of the ``<<`` key and PATH: merge keys are never written
+        (config-aliases 9.1, 9.3).
         """
         new = dict(value.entries)
+        merged = node.merge is not None and node.layers is None
+        for entry in node.entries:
+            if entry.via_merge and (
+                entry.key not in new
+                or not plain_equal(
+                    node_to_plain(entry.value), new_to_plain(new[entry.key]), ordered=False
+                )
+            ):
+                raise merge_error(node, at, path)
         deleted = [index for index, entry in enumerate(node.entries) if entry.key not in new]
         existing = {entry.key for entry in node.entries}
         added = [(key, item) for key, item in value.entries if key not in existing]
@@ -760,7 +794,7 @@ class _Planner:
                 # The mapping itself: the step 1 insertion below, styled with ``deleted``.
                 self.changes.add(node, added)
                 placement = None
-        if len(deleted) == len(node.entries):
+        if not merged and len(deleted) == len(node.entries):
             empty = NewMapping(entries=())
             if placement is not None:
                 if node.style is CollectionStyle.FLOW:
@@ -773,7 +807,7 @@ class _Planner:
                 self._render_flow_anew(layout, slot, value, path)
                 return
         for entry in node.entries:
-            if entry.key in new:
+            if entry.key in new and not entry.via_merge:
                 self.change_slot(
                     layout,
                     entry.value,
@@ -1048,9 +1082,17 @@ class _Planner:
         indexes: Sequence[int],
         path: ConfigPath,
     ) -> None:
-        """Delete the entries (or items) at ``indexes`` of ``collection`` (5.3, 5.4, 5.7)."""
+        """Delete the entries (or items) at ``indexes`` of ``collection`` (5.3, 5.4, 5.7).
+
+        In a mapping with a merge key they are deleted from the mapping as written, whose ``<<``
+        entry stays (config-aliases 9.1, 9.3).
+        """
         if not indexes:
             return
+        collection, written_indexes, _ = self._guard(
+            layout.file, path, lambda: _as_written(collection, indexes)
+        )
+        indexes = sorted(written_indexes)
         if collection.style is CollectionStyle.FLOW:
             edits = self._guard(
                 layout.file,
@@ -1423,6 +1465,54 @@ def _with_context(
 
 def _refuse(path: ConfigPath, file: SourceFile, problem: str) -> NoReturn:
     raise WriteRefusedError(problem, file=file.path, path=str(path))
+
+
+def _refuse_through_merge(document: ConfigDocument, path: ConfigPath) -> None:
+    """Refuse (exit 3) a PATH that reaches, at any of its segments, a value a mapping receives
+    from its merge key: such a value is written at its merge source, never in the mapping
+    (config-aliases 9.1). The guard refuses it first in the setter (9.2); this keeps the planner
+    from writing through a merge key on its own."""
+    walk = walk_path(document.root, path)
+    for index in range(walk.consumed):
+        node = walk.nodes[index]
+        if isinstance(node, ConfigMapping):
+            entry = node.get(path.segments[index])
+            if entry is not None and entry.via_merge:
+                raise merge_error(node, ConfigPath(path.segments[:index]), path)
+
+
+def _as_written(
+    collection: ConfigMapping | ConfigSequence, indexes: Collection[int]
+) -> tuple[ConfigMapping | ConfigSequence, Collection[int], tuple[int, ...]]:
+    """The collection as written in its file, ``indexes`` of its entries mapped onto it, and the
+    index of its ``<<`` entry (``()`` when it has none).
+
+    For the merged view of a mapping with a merge key that is the mapping as written (its own
+    entries and the ``<<`` entry, config-aliases 9.3); every other collection is itself. Raises
+    :class:`ValueError` when an index names an entry received from the merge key, which is written
+    elsewhere.
+    """
+    if (
+        not isinstance(collection, ConfigMapping)
+        or collection.merge is None
+        or collection.layers is not None
+    ):
+        return collection, indexes, ()
+    written = collection.merge.written
+    positions = {id(entry): index for index, entry in enumerate(written.entries)}
+    mapped: list[int] = []
+    for index in indexes:
+        entry = collection.entries[index]
+        if entry.via_merge or id(entry) not in positions:
+            raise ValueError(f"the entry {entry.key!r} comes from a merge key")
+        mapped.append(positions[id(entry)])
+    own = {id(entry) for entry in collection.entries}
+    merge_entry = tuple(
+        index
+        for index, entry in enumerate(written.entries)
+        if id(entry) not in own and entry.key == MERGE_KEY
+    )
+    return written, mapped, merge_entry
 
 
 def _sibling_styles(

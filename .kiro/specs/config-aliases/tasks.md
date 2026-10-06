@@ -106,7 +106,7 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
   - _Boundary: Guard_
   - _Requirements: 5.1, 5.2, 6.3, 8.1, 8.2, 9.2_
 
-- [ ] 3.4 Write own keys of a mapping that has a merge key
+- [x] 3.4 Write own keys of a mapping that has a merge key
   - Target resolution and the planner change an own entry of a mapping with a merge key in place, and add a new key after the mapping's last written entry (which may be the `<<` entry). They never write into the `<<` entry or its value.
   - Done when planner tests on real files compare the patched text byte for byte for a changed own key, a new key after a trailing `<<` entry, and a new key in a flow mapping with `<<`, with the merge key's bytes unchanged
   - _Depends: 3.1_ (layout of merge-key mappings), so not parallel with 3.1
@@ -198,3 +198,4 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
 - 3.1: `FileLayout.entry_slot` raises `ValueError` for an entry with `via_merge`. The guard (3.3) and target/planner (3.4) must refuse or resolve to own entries before asking the layout for a slot. An anchor on a scalar include is found as the `&name` text right before the directive in the including file. `_block_scalar_key_columns` still loops over an alias place's own entries, which is harmless because they keep the anchored node's columns.
 - 3.2: the merge-key precedence rule lives only in `merge_keys.merged_pairs`, which both `merge_mapping` (on entries) and `shared._Rebuild` (on plain values) use. Alias places needed no rebuild change, because they share the anchored node's written locations. The reach check still refuses a change at an anchor when PATH runs through a merged entry, which is conservative; the guard (3.3) refuses that PATH first.
 - 3.3: the guard walks the written layers side by side (research.md Decision 5, implementation note). An aliased `$ref` counts only for the include's included side, so override keys behind it proceed. `anchored_location` keys an include root by its `$ref` mapping (when the anchor is on the form) or its include string; 3.5 must reuse it for the 4.6 check. The refusal messages and helpers (`alias_refusal`, `merge_problem`) live in `writeback/aliases.py`; the expander (3.6) reuses `merge_problem`.
+- 3.4: the planner refuses on its own (`_refuse_through_merge`, using `aliases.merge_error`) any PATH through a merged entry, as a backstop behind the guard. A whole replacement of a mapping with `<<` is refused (9.1). A replacement that drops an own key shadowing a merged key is refused only by read-back verification, with the generic message (4.x may give the specific one). New keys take the style of the last own entry, not of `<<`.
