@@ -72,7 +72,7 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
   - Done when loader unit tests prove merge semantics, order, nested merges, merges through aliases and inline mappings, the refusals with their messages, and that no `<<` segment appears in any path of the loaded configuration
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 1.7_
 
-- [ ] 2.4 Validate that every command reads the expanded configuration
+- [x] 2.4 Validate that every command reads the expanded configuration
   - `get` and `show` print expanded values, and `show` prints no anchor, alias or merge key. `show --sources` names the file holding the anchored node for scalars reached through an alias or a merge key. Import records leaves at every alias path. A hand edit at an anchor is reconciled as `set` events at every path it changes. A hand expansion of an alias into an equal copy records nothing. `watch` reconciles an edit at an anchor.
   - Done when e2e tests through the real CLI prove each of these
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
