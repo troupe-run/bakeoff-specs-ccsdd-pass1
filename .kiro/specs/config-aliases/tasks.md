@@ -26,6 +26,11 @@ In between, `set` refuses (exit 3, no file changed) any configuration that conta
 merge key. Task 2.1 adds this temporary refusal, pinned by a test, and task 4.1 removes it together with its test.
 No commit in between can write through an alias.
 
+**Product owner approval (2026-10-06).** The plan is approved as consistent with the step 6 "Aliases" section and
+the earlier contract sections in force. This covers the design clarifications recorded with it (provenance through
+`$ref` deep-merge, refusal order, verification against the original files) and the temporary `set` refusal
+between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
+
 - [ ] 1. Foundation: provenance model, merge-key merge and alias recording
 - [ ] 1.1 Record anchors, alias places and merge keys in the model, and provide the merge-key merge
   - Every node can record the anchor written on it (name and the span of the `&name` property) and, at an alias place, the alias it stands for (name, the `*name` token's position, and the node as built at its anchor). A mapping can record the mapping as written behind its merge key. An entry can say that it came from a merge key. All new fields default to "none", so every existing construction and test is unchanged.
