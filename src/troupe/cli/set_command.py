@@ -1,7 +1,7 @@
-"""CLI ``troupe config set PATH VALUE [--reason TEXT] [--in-include]``: registration and handler.
+"""CLI ``troupe config set PATH VALUE [--reason TEXT] [--in-include] [--expand-alias]``.
 
-Requirements: config-set-writeback 1.1, 1.5, 1.6, 16.1, 16.2, 16.4; config-lineage 6.1-6.5;
-config-include-overrides 10.1-10.7.
+Registration and handler. Requirements: config-set-writeback 1.1, 1.5, 1.6, 16.1, 16.2, 16.4;
+config-lineage 6.1-6.5; config-include-overrides 10.1-10.7; config-aliases 6.1-6.4.
 
 Imports only :mod:`troupe.cli.shell` from the CLI package (never ``troupe.cli.main``, which imports
 this module), so the import chain is ``troupe.cli.shell <- set_command <- troupe.cli.main``.
@@ -31,6 +31,13 @@ written by the step 1 placement (into the included side of the deepest existing 
 conversion) instead of as an override; existing values, appends and removals do not depend on it.
 ``--in-include=TEXT`` is argparse's usage error ("ignored explicit argument"), exit 2, raised while
 parsing, so no file is read or changed and no history state is created or changed (10.6).
+
+``--expand-alias`` (config-aliases Requirement 6) is a ``store_true`` flag under the same rules as
+``--in-include``: no value, anywhere among PATH and VALUE, combinable with ``--reason`` and
+``--in-include``. With it, each alias through which the set is reached is first replaced by a copy
+of its anchored node (marked ``# expanded from *name by troupe``) and VALUE is set in the copy;
+without an alias on PATH the set runs exactly as without it (6.3). ``--expand-alias=TEXT`` is
+argparse's usage error, exit 2, before any file or history state is touched (6.2).
 """
 
 import argparse
@@ -71,7 +78,8 @@ def handle_set(args: argparse.Namespace, out: io.BytesIO) -> None:
     The set's own batch is recorded with ``cli_context(args.actor, args.reason)``: the command's
     actor and its ``--reason`` TEXT (``None`` without the option, config-lineage 6.1, 6.2).
     ``args.in_include`` (``--in-include``) is passed to :func:`set_value` as the placement choice
-    for new keys (config-include-overrides 10.1-10.5).
+    for new keys (config-include-overrides 10.1-10.5), and ``args.expand_alias``
+    (``--expand-alias``) as the request to expand the aliases on PATH (config-aliases 6.1-6.4).
 
     PATH and VALUE are parsed before the theatre is opened, so their usage errors (exit 2) create
     no history state; the theatre is opened (and imported, 1.6) in a ``with`` block so the history
@@ -86,11 +94,13 @@ def handle_set(args: argparse.Namespace, out: io.BytesIO) -> None:
             value,
             cli_context(args.actor, args.reason),
             in_include=args.in_include,
+            expand_alias=args.expand_alias,
         )
 
 
 def add_set_subparser(subparsers: "argparse._SubParsersAction[TroupeArgumentParser]") -> None:
-    """Register ``set PATH VALUE`` with ``--theatre``, ``--reason TEXT`` and ``--in-include``."""
+    """Register ``set PATH VALUE`` with ``--theatre``, ``--reason TEXT``, ``--in-include`` and
+    ``--expand-alias``."""
     parser = subparsers.add_parser(
         "set",
         parents=[theatre_option_parent()],
@@ -119,6 +129,14 @@ def add_set_subparser(subparsers: "argparse._SubParsersAction[TroupeArgumentPars
         help=(
             "write a new key into the included file holding its deepest existing parent "
             "mapping instead of as an override in the including file"
+        ),
+    )
+    parser.add_argument(
+        "--expand-alias",
+        action="store_true",
+        help=(
+            "when PATH is reached through an alias, replace each such alias by its own copy of "
+            "the anchored value (marked '# expanded from *NAME by troupe') and set VALUE there"
         ),
     )
     parser.set_defaults(handler=handle_set)

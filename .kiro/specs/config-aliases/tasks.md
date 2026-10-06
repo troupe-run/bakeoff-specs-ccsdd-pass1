@@ -173,7 +173,7 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
   - _Depends: 3.6, 3.7, 4.1_
   - _Requirements: 7.7, 8.1, 8.2, 8.6, 10.2, 10.3, 10.4_
 
-- [ ] 4.4 Accept `--expand-alias` on the command line and validate it end to end
+- [x] 4.4 Accept `--expand-alias` on the command line and validate it end to end
   - `set` accepts `--expand-alias` without a value, before, between or after PATH and VALUE, together with `--reason` and `--in-include`, and passes it to the set use case. `--expand-alias=TEXT` is a usage error (exit 2).
   - Done when byte-exact e2e tests prove:
     - a set in the copy, with the anchor and the other aliases unchanged and one `set` event with cli lineage and `--reason`;
@@ -218,3 +218,4 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
 - 3.9: `FileLayout.has_property(slot)` tells whether a slot's value has its own `&name` written there. `_replace_value` uses the compact item form only when there is no end-of-line comment and no property, so an anchored item replaced by a collection keeps `- &d` alone on its line.
 - 4.1: the temporary `set` refusal is gone. `set_value` calls `alias_sites(..., expand=False)` between `resolve_target` and the no-op check. Wiring it in exposed a guard crash when a mapping is replaced by a list, fixed with `_same_kind` (a change of collection kind removes every child). Task 4.4 must add the e2e case for 9.2 with `--expand-alias`, still refused.
 - 4.3: after each expansion round, the setter checks that the whole configuration is unchanged. If it changed, it refuses with exit 3 (`EXPANSION_CHANGES_VALUES`, naming the expanded alias). This is the safety net for a copied inner alias that binds to a redefined anchor of the same name. A stuck expansion is refused with exit 3 too (`EXPANSION_STUCK`). Expander refusals are re-raised with the user's PATH. The expander module is imported as `expander`. Task 4.4 should cover the redefined-anchor refusal end to end.
+- 4.4: an alias of an empty anchored mapping expands to `s: {}  # expanded from *d by troupe`. Setting a key in it then gives `s: {k: 1} # expanded from *d by troupe`, with one space before the comment as config-set-writeback 12.2 requires; 7.7 applies the usual comment rules to the set in the copy.
