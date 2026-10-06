@@ -1292,7 +1292,8 @@ class _Planner:
         holding the inline extent when there were none (11.4). An inline part that disappears keeps
         an end-of-line comment at its column, and takes the spaces after the ``:`` or ``-`` with it
         when no comment follows (11.5). A list item gets a compact collection unless its line has
-        an end-of-line comment (8.4).
+        an end-of-line comment (8.4) or the item keeps an anchor property (``- &d``): a collection
+        on that line would take the anchor for its first key, or not parse (config-aliases 4.3).
         """
         self._dropped.append((slot.node, False))
         extent = layout.inline_extent(slot)
@@ -1314,7 +1315,7 @@ class _Planner:
                 slot.owner_column,
                 slot.in_sequence,
                 ctx,
-                compact=comment is None,
+                compact=comment is None and not layout.has_property(slot),
                 preferred=preferred,
             ),
             layout,

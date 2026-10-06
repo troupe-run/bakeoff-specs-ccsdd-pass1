@@ -460,3 +460,100 @@ def test_anchored_mapping_merged_by_a_merge_key_replaced_by_a_scalar_is_refused(
         )
     assert caught.value.exit_code is ExitCode.WRITE_REFUSED
     assert "merge key '<<' needs a mapping" in caught.value.problem
+
+
+# --- an anchored block list item replaced by a collection (task 3.9) ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("config", "path", "value", "expected", "intended"),
+    [
+        # A mapping starts on the line after `- &d`, so `&d` stays the item's anchor.
+        ("l:\n  - &d 1\n", "l.0", "{k: 1}", "l:\n  - &d\n    k: 1\n", {"l": [{"k": 1}]}),
+        # The same with an alias of the item elsewhere: the alias sees the mapping.
+        (
+            "l:\n  - &d 1\nu: *d\n",
+            "l.0",
+            "{k: 1, j: 2}",
+            "l:\n  - &d\n    k: 1\n    j: 2\nu: *d\n",
+            {"l": [{"k": 1, "j": 2}], "u": {"k": 1, "j": 2}},
+        ),
+        # An end-of-line comment after the item keeps its column (11.4, 11.5).
+        (
+            "l:\n  - &d 1  # c\n  - *d\n",
+            "l.0",
+            "{k: 1}",
+            "l:\n  - &d    # c\n    k: 1\n  - *d\n",
+            {"l": [{"k": 1}, {"k": 1}]},
+        ),
+        # A list item at the key's column (dash offset 0).
+        (
+            "l:\n- &d 1\nu: *d\n",
+            "l.0",
+            "{k: 1}",
+            "l:\n- &d\n  k: 1\nu: *d\n",
+            {"l": [{"k": 1}], "u": {"k": 1}},
+        ),
+        # A block list cannot start after `- &d` on its line either.
+        (
+            "l:\n  - &d 1\nu: *d\n",
+            "l.0",
+            "[1, 2]",
+            "l:\n  - &d\n    - 1\n    - 2\nu: *d\n",
+            {"l": [[1, 2]], "u": [1, 2]},
+        ),
+        # An anchored flow list item replaced by a block mapping.
+        (
+            "l:\n  - &d [1]\nu: *d\n",
+            "l.0",
+            "{k: 1}",
+            "l:\n  - &d\n    k: 1\nu: *d\n",
+            {"l": [{"k": 1}], "u": {"k": 1}},
+        ),
+        # An anchored block mapping item replaced by a block list.
+        (
+            "l:\n  - &d\n    k: 1\nu: *d\n",
+            "l.0",
+            "[1]",
+            "l:\n  - &d\n    - 1\nu: *d\n",
+            {"l": [[1]], "u": [1]},
+        ),
+    ],
+)
+def test_anchored_list_item_replaced_by_a_collection_starts_it_on_the_next_line(
+    tmp_path: Path,
+    config: str,
+    path: str,
+    value: str,
+    expected: str,
+    intended: dict[str, object],
+) -> None:
+    """Req 4.3, 10.1, 10.2: an anchored block list item replaced by a block collection keeps
+    `- &d` on its line and the collection on the next lines at the item's content indentation
+    (byte for byte), so `&d` stays the item's anchor; every alias sees the new value and the
+    read-back passes."""
+    (tmp_path / ROOT).write_bytes(config.encode("utf-8"))
+    document = load_config(tmp_path / ROOT)
+    config_path = ConfigPath.parse(path)
+    request = resolve_target(document, config_path, parse_value(value, config_path))
+    plan = plan_set(document, request)
+    assert plan.intended == intended
+    assert [patch.new_text for patch in plan.patches] == [expected]
+    verify_patch(tmp_path / ROOT, document, plan.patches, replace(request, intended=plan.intended))
+
+
+@pytest.mark.parametrize(
+    ("config", "value", "expected"),
+    [
+        ("l:\n  - 1\n", "{k: 1}", "l:\n  - k: 1\n"),
+        ("l:\n  - 1\n", "[1, 2]", "l:\n  - - 1\n    - 2\n"),
+        ("a: &d 0\nl:\n  - 1\n", "{k: 1}", "a: &d 0\nl:\n  - k: 1\n"),
+    ],
+)
+def test_unanchored_list_item_replaced_by_a_collection_stays_compact(
+    tmp_path: Path, config: str, value: str, expected: str
+) -> None:
+    """Req 10.1: a list item without an anchor still gets the compact form (config-set-writeback
+    8.4), even beside an anchor elsewhere in the file."""
+    new_text = _set(tmp_path, config, "l.0", value, ReplaceTarget)
+    assert new_text == expected

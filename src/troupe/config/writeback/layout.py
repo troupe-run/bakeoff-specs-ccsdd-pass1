@@ -281,6 +281,12 @@ class FileLayout:
             node=item,
         )
 
+    def has_property(self, slot: ValueSlot) -> bool:
+        """Whether the slot's value is written with its own ``&name`` property after the slot's
+        ``:`` or ``-`` (``indicator_end`` is just after it, config-aliases 4.3)."""
+        span = self._property(slot.node)
+        return span is not None and span.end == slot.indicator_end
+
     # --- content ends, extents and body lines ------------------------------------------------
 
     def content_end(self, node: ConfigNode, slot: ValueSlot | None) -> int:
