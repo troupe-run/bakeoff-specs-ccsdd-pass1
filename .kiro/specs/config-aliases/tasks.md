@@ -186,7 +186,7 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 7.7, 8.1, 8.6, 10.3, 10.4_
 
 - [ ] 5. Validation
-- [ ] 5.1 Validate the issue #2 scenario end to end
+- [x] 5.1 Validate the issue #2 scenario end to end
   - The tests use the reporter's exact file:
     - `set coder.settings.model sonnet` exits 3, stderr names the file, `coder.settings.model`, `*d` and `--expand-alias`, and every file and the history are unchanged.
     - `set defaults.model sonnet` changes only `opus` at the anchor. `get reviewer.settings.model` prints `sonnet`, and history shows `set` events for the three paths.

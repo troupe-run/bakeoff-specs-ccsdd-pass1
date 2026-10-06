@@ -8,11 +8,14 @@ an alias used as a key, an alias inside its own anchored node and an undefined a
 with exit 4 and no history state created. Task 2.3: merge keys load (the merge-key rows
 config-foundation refused), and a bad merge value or a merge key among ``$ref`` overrides is
 refused with exit 4 and no history state created. Task 2.4: ``get``, ``show``, ``show --sources``,
-import, reconcile and ``watch`` read the expanded configuration.
+import, reconcile and ``watch`` read the expanded configuration. Task 5.1: the scenario of
+tracker issue #2 on the reporter's exact file, through ``set``, ``set --expand-alias``, ``get``
+and ``history``.
 
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
 
+import json
 import os
 import signal
 import time
@@ -582,3 +585,152 @@ def test_watch_reconciles_an_edit_at_an_anchor(tmp_path: Path) -> None:
         assert watch.stop(signal.SIGTERM) == 0
         assert watch.stdout == f"watching {theatre}\n".encode()
         assert watch.stderr == ""
+
+
+# ---- Task 5.1: Issue #2, byte for byte (the reporter's exact file) ----
+
+ISSUE_2 = "defaults: &d\n  model: opus\ncoder:\n  settings: *d\nreviewer:\n  settings: *d\n"
+"""The reporter's file of tracker issue #2."""
+
+ISSUE_2_AT_ANCHOR = ISSUE_2.replace("model: opus", "model: sonnet")
+"""The issue #2 file after ``set defaults.model sonnet``: only ``opus`` at the anchor changes."""
+
+ISSUE_2_EXPANDED = (
+    "defaults: &d\n  model: opus\n"
+    "coder:\n  settings:  # expanded from *d by troupe\n    model: sonnet\n"
+    "reviewer:\n  settings: *d\n"
+)
+"""The issue #2 file after ``set --expand-alias coder.settings.model sonnet``."""
+
+ISSUE_2_IMPORTS: list[Event] = [
+    (1, "import", "defaults.model", None, "opus"),
+    (2, "import", "coder.settings.model", None, "opus"),
+    (3, "import", "reviewer.settings.model", None, "opus"),
+]
+"""The import of the issue #2 file: one leaf at the anchor and at each alias place."""
+
+
+def _issue_2_theatre(make_theatre: MakeTheatre, config_name: str) -> Path:
+    """A fresh theatre holding the reporter's file, imported by a first ``history``."""
+    theatre = make_theatre(ISSUE_2, config_name=config_name)
+    assert _events(theatre) == ISSUE_2_IMPORTS
+    return theatre
+
+
+def _issue_2_set(theatre: Path, *args: str) -> CliResult:
+    return invoke_troupe("config", "set", *args, "--theatre", str(theatre), cwd=theatre)
+
+
+def _history_lines(theatre: Path) -> list[dict[str, Any]]:
+    result = invoke_troupe("config", "history", "--theatre", str(theatre), cwd=theatre)
+    assert (result.exit_code, result.stderr) == (0, ""), result.stderr
+    return [json.loads(line) for line in result.stdout.decode("utf-8").splitlines()]
+
+
+def _assert_one_cli_change(lines: list[dict[str, Any]]) -> None:
+    assert lines and all(line["via"] == "cli" for line in lines), lines
+    assert len({line["change"] for line in lines}) == 1, lines
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_issue_2_set_through_an_alias_is_refused_naming_the_alias_and_the_option(
+    make_theatre: MakeTheatre, run_cli: RunCli, config_name: str
+) -> None:
+    """Req 4.1, 10.1: on the reporter's file, ``set coder.settings.model sonnet`` exits 3 with
+    empty stdout; stderr names the file, ``coder.settings.model``, ``*d`` and
+    ``--expand-alias``; every file and the history are unchanged."""
+    theatre = _issue_2_theatre(make_theatre, config_name)
+    files = snapshot_tree(theatre)
+    history = invoke_troupe("config", "history", "--theatre", str(theatre), cwd=theatre).stdout
+
+    result = _issue_2_set(theatre, "coder.settings.model", "sonnet")
+
+    assert (result.exit_code, result.stdout) == (3, b"")
+    assert result.stderr == (
+        f"{theatre / '.troupe' / config_name}: coder.settings.model: value is shared through"
+        " alias '*d' (anchor '&d'); setting it here would change every place that uses the"
+        " anchor; use --expand-alias to give this place its own copy\n"
+    )
+    assert snapshot_tree(theatre) == files
+    assert (theatre / ".troupe" / config_name).read_bytes() == ISSUE_2.encode()
+    after = invoke_troupe("config", "history", "--theatre", str(theatre), cwd=theatre).stdout
+    assert after == history
+    assert _get(run_cli, theatre, "coder.settings.model").stdout == b"opus\n"
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_issue_2_set_at_the_anchor_changes_every_alias_place(
+    make_theatre: MakeTheatre, run_cli: RunCli, config_name: str
+) -> None:
+    """Req 4.5, 5.1, 10.1: ``set defaults.model sonnet`` exits 0 and changes only ``opus`` at
+    the anchor (whole file byte for byte, ``&d`` and both ``*d`` kept); ``get
+    reviewer.settings.model`` prints ``sonnet``; history records ``set`` events opus to sonnet
+    for ``defaults.model``, ``coder.settings.model`` and ``reviewer.settings.model`` in one cli
+    change."""
+    theatre = _issue_2_theatre(make_theatre, config_name)
+    files = snapshot_tree(theatre)
+
+    result = _issue_2_set(theatre, "defaults.model", "sonnet")
+
+    assert (result.exit_code, result.stderr) == (0, ""), result.stderr
+    config = f".troupe/{config_name}"
+    assert (theatre / config).read_bytes() == ISSUE_2_AT_ANCHOR.encode()
+    after = snapshot_tree(theatre)
+    assert set(after) == set(files)
+    assert {k: v for k, v in after.items() if k != config} == {
+        k: v for k, v in files.items() if k != config
+    }
+    reads = [
+        _get(run_cli, theatre, path)
+        for path in ("reviewer.settings.model", "coder.settings.model", "defaults.model")
+    ]
+    assert [(r.exit_code, r.stdout, r.stderr) for r in reads] == [(0, b"sonnet\n", "")] * 3
+    assert _events(theatre) == [
+        *ISSUE_2_IMPORTS,
+        (4, "set", "defaults.model", "opus", "sonnet"),
+        (5, "set", "coder.settings.model", "opus", "sonnet"),
+        (6, "set", "reviewer.settings.model", "opus", "sonnet"),
+    ]
+    _assert_one_cli_change(_history_lines(theatre)[3:])
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_issue_2_expand_alias_gives_coder_its_own_copy(
+    make_theatre: MakeTheatre, run_cli: RunCli, config_name: str
+) -> None:
+    """Req 7.1, 7.2, 7.6, 7.7, 10.1: on a fresh copy, ``set --expand-alias coder.settings.model
+    sonnet`` exits 0 and writes exactly ``  settings:  # expanded from *d by troupe`` /
+    ``    model: sonnet`` under ``coder``, with ``defaults`` and ``reviewer`` byte-identical;
+    ``get reviewer.settings.model`` still prints ``opus`` and ``get coder.settings.model``
+    prints ``sonnet``; history records exactly one ``set`` event (opus to sonnet at
+    ``coder.settings.model``)."""
+    theatre = _issue_2_theatre(make_theatre, config_name)
+    files = snapshot_tree(theatre)
+
+    result = _issue_2_set(theatre, "--expand-alias", "coder.settings.model", "sonnet")
+
+    assert (result.exit_code, result.stderr) == (0, ""), result.stderr
+    config = f".troupe/{config_name}"
+    written = (theatre / config).read_bytes()
+    assert written == ISSUE_2_EXPANDED.encode()
+    assert written.startswith(b"defaults: &d\n  model: opus\n")
+    assert written.endswith(b"reviewer:\n  settings: *d\n")
+    after = snapshot_tree(theatre)
+    assert set(after) == set(files)
+    assert {k: v for k, v in after.items() if k != config} == {
+        k: v for k, v in files.items() if k != config
+    }
+    reads = [
+        _get(run_cli, theatre, path)
+        for path in ("reviewer.settings.model", "coder.settings.model", "defaults.model")
+    ]
+    assert [(r.exit_code, r.stdout, r.stderr) for r in reads] == [
+        (0, b"opus\n", ""),
+        (0, b"sonnet\n", ""),
+        (0, b"opus\n", ""),
+    ]
+    assert _events(theatre) == [
+        *ISSUE_2_IMPORTS,
+        (4, "set", "coder.settings.model", "opus", "sonnet"),
+    ]
+    _assert_one_cli_change(_history_lines(theatre)[3:])
