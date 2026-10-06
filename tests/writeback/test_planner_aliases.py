@@ -213,3 +213,133 @@ def test_whole_replacement_of_a_mapping_with_a_merge_key_is_refused(
     """Req 9.1: replacing the mapping by another kind or `{}` would remove its `<<` entry."""
     error = _refused(tmp_path, BLOCK, "coder", value)
     assert "'<<'" in error.problem
+
+
+# --- removing a used anchor (4.6) -----------------------------------------------------------------
+
+SHARED = "shared:\n  defaults: &d  # anchored\n    model: opus\n  other: 1\ncoder: *d\n"
+
+
+@pytest.mark.parametrize(
+    ("config", "path", "value", "anchor", "alias_path"),
+    [
+        # A collection replacement dropping the key that holds the anchored node.
+        (SHARED, "shared", "{other: 1}", "d", "coder"),
+        # A kind change of an ancestor of the anchored node.
+        (SHARED, "shared", "5", "d", "coder"),
+        (SHARED, "shared", "{}", "d", "coder"),
+        # A list replacement dropping the anchored item.
+        ("items:\n  - 1\n  - &d {a: 1}\nuse: *d\n", "items", "[1]", "d", "use"),
+        # The remaining use is a merge key's alias.
+        (
+            "shared:\n  defaults: &d {model: opus}\n  other: 1\ncoder:\n  name: c\n  <<: *d\n",
+            "shared",
+            "{other: 1}",
+            "d",
+            "coder.<<",
+        ),
+        # An anchored include string removed while an alias to it remains.
+        (
+            "shared:\n  i: &i file:inc.yml\n  o: 1\nx: *i\n",
+            "shared",
+            "{o: 1}",
+            "i",
+            "x",
+        ),
+    ],
+)
+def test_removal_of_an_anchored_node_still_used_by_an_alias_is_refused(
+    tmp_path: Path, config: str, path: str, value: str, anchor: str, alias_path: str
+) -> None:
+    """Req 4.6: a set whose removals would remove an anchored node that an alias outside the
+    removed part still uses is refused (exit 3), naming PATH, the file and `&name`, and the
+    alias that still uses it; no patch is planned."""
+    (tmp_path / "inc.yml").write_text("k: v\n", encoding="utf-8")
+    error = _refused(tmp_path, config, path, value)
+    assert error.problem == (
+        f"anchor '&{anchor}' is still used by alias '*{anchor}' at {alias_path}"
+    )
+
+
+def test_removal_of_an_anchored_node_with_all_its_aliases_is_planned(tmp_path: Path) -> None:
+    """Req 4.6: an anchored node whose aliases are all removed with it may be removed; the plan
+    reads back."""
+    config = (
+        "shared:\n"
+        "  defaults: &d\n"
+        "    model: opus\n"
+        "  coder: *d\n"
+        "  list:\n"
+        "    - *d\n"
+        "  other: 1  # kept\n"
+        "top: 2\n"
+    )
+    new_text = _set(tmp_path, config, "shared", "{other: 1}", ReplaceTarget)
+    assert new_text == "shared:\n  other: 1  # kept\ntop: 2\n"
+
+
+@pytest.mark.parametrize(
+    ("config", "path", "value", "expected"),
+    [
+        (
+            "shared:\n  items:\n    - 1\n    - &d {a: 1}\n  use: *d\n  o: 1\n",
+            "shared",
+            "{items: [1], o: 1}",
+            "shared:\n  items:\n    - 1\n  o: 1\n",
+        ),
+        ("l:\n  - 1\n  - &d\n    a: 1\n", "l", "[1]", "l:\n  - 1\n"),
+        ("l: [1, &d {a: 1}]\n", "l", "[1]", "l: [1]\n"),
+        ("l: [&d {a: 1}, 2]\n", "l", "[{a: 1}]", "l: [&d {a: 1}]\n"),
+    ],
+)
+def test_removal_of_an_anchored_list_item_takes_its_anchor_with_it(
+    tmp_path: Path, config: str, path: str, value: str, expected: str
+) -> None:
+    """Req 4.6: an anchored list item whose aliases go with it is deleted with its `&name`
+    property (block and flow lists); the plan reads back."""
+    assert _set(tmp_path, config, path, value, ReplaceTarget) == expected
+
+
+def test_removal_of_an_alias_that_keeps_its_anchor_is_planned(tmp_path: Path) -> None:
+    """Req 4.6: removing an alias place leaves its anchored node in place, so the planner plans
+    it (in the real flow the guard decides first)."""
+    config = "defaults: &d\n  model: opus\nshared:\n  coder: *d\n  other: 1\n"
+    new_text = _set(tmp_path, config, "shared", "{other: 1}", ReplaceTarget)
+    assert new_text == "defaults: &d\n  model: opus\nshared:\n  other: 1\n"
+
+
+def test_replacing_the_anchored_node_itself_is_not_a_removal(tmp_path: Path) -> None:
+    """Req 4.3, 4.6: replacing the anchored node keeps its anchor on the new value, so the
+    alias still has its anchor and the set is planned."""
+    new_text = _set(tmp_path, SHARED, "shared.defaults", "{effort: high}", ReplaceTarget)
+    assert new_text == SHARED.replace("    model: opus\n", "    effort: high\n")
+
+
+# --- converting an anchored include (4.7) ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        "i: &i file:inc.yml\n",
+        "i: &i file:inc.yml\nx: *i\n",
+        "l:\n  - &i file:inc.yml\n",
+    ],
+)
+def test_conversion_of_an_anchored_scalar_form_include_is_refused(
+    tmp_path: Path, config: str
+) -> None:
+    """Req 4.7: a new key that would convert an anchored scalar-form include to mapping form is
+    refused (exit 3), naming PATH, the file and `&name`; no patch is planned."""
+    (tmp_path / "inc.yml").write_text("k: v\n", encoding="utf-8")
+    path = "l.0.extra" if config.startswith("l:") else "i.extra"
+    error = _refused(tmp_path, config, path, "1")
+    assert error.problem == "the include at anchor '&i' cannot be converted to mapping form"
+
+
+def test_conversion_of_an_unanchored_include_beside_an_anchor_is_planned(tmp_path: Path) -> None:
+    """Req 4.7: only an anchored include is refused; another include string still converts."""
+    (tmp_path / "inc.yml").write_text("k: v\n", encoding="utf-8")
+    config = "a: &a 1\ni: file:inc.yml\n"
+    new_text = _set(tmp_path, config, "i.extra", "1", AddKeyTarget)
+    assert new_text == "a: &a 1\ni:\n  $ref: file:inc.yml\n  extra: 1\n"

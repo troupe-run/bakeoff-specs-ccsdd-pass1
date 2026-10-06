@@ -63,11 +63,18 @@ are deleted around it; the ``<<`` entry and its value are never written. A PATH 
 received from a merge key, a merged entry that a collection replacement changes or removes, and a
 replacement of the whole mapping are refused (exit 3) with the guard's merge-key refusal.
 
+Anchors (config-aliases 4.6, 4.7; research.md Decision 8). A value replaced in its slot keeps its
+own ``&name`` property (4.3). A set whose deletions and replacements remove an anchored node that
+an alias outside the removed part still uses is refused (exit 3) naming PATH, the file of the
+anchor and the alias (:func:`~troupe.config.writeback.aliases.anchor_uses`); a new key that would
+convert an anchored scalar-form include to mapping form is refused (exit 3) too. A deleted list
+item takes its anchor property with it.
+
 End-of-line comments on the changed lines are moved back to their columns by the EditApplier
 (12.x). Every refusal is a :class:`WriteRefusedError` naming the file and the path (14.9).
 """
 
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -96,7 +103,12 @@ from troupe.config.overrides import (
 )
 from troupe.config.paths import ConfigPath
 from troupe.config.resolve import walk_path
-from troupe.config.writeback.aliases import merge_error
+from troupe.config.writeback.aliases import (
+    alias_paths,
+    anchor_uses,
+    anchored_location,
+    merge_error,
+)
 from troupe.config.writeback.block_scalar import (
     Chomping,
     literal_fits,
@@ -197,8 +209,9 @@ def plan_set(document: ConfigDocument, request: SetRequest) -> Plan:
     Never two patches for the same file, and every patch changes its file. Raises
     :class:`WriteRefusedError` (exit 3) naming the file and PATH for every refusal: a YAML include
     root that would change (2.5), a non-string or another include over a text include (2.4), a
-    layout the planner cannot write (14.9), a write through a merge key (config-aliases 9.1), or
-    a set that would change nothing.
+    layout the planner cannot write (14.9), a write through a merge key (config-aliases 9.1), the
+    removal of an anchored node still used by an alias (4.6), the conversion of an anchored
+    include to mapping form (4.7), or a set that would change nothing.
 
     A change written into a file included at several places appears at each of them
     (requirements choices 17, 18): the intended configuration holds it at every other place
@@ -253,6 +266,9 @@ class _Planner:
         # Every planned change by written location, for the intended configuration (11.2); it
         # refuses two values asked for one location (11.5).
         self.changes = WrittenChanges(path=path)
+        # Written values the set deletes (``True``) or replaces in their slot, keeping the value's
+        # own anchor property (``False``), for the used-anchor check (config-aliases 4.6).
+        self._dropped: list[tuple[ConfigNode, bool]] = []
 
     # --- entry point -----------------------------------------------------------------------------
 
@@ -319,6 +335,14 @@ class _Planner:
         entries = _nest(placement.prefix, entries)
         if placement.convert is not None:
             site = placement.convert
+            anchor = site.node.anchor
+            if anchor is not None:
+                # Where the anchor would go in mapping form is not written anywhere (4.7).
+                _refuse(
+                    path,
+                    _anchor_file(site.node),
+                    f"the include at anchor '&{anchor.name}' cannot be converted to mapping form",
+                )
             self.changes.convert(site.ref, entries)
             key = written_location(site.ref.directive)
             _merge_new(self._conversions.setdefault(key, (site, []))[1], entries)
@@ -1064,6 +1088,7 @@ class _Planner:
         self, layout: FileLayout, slot: ValueSlot, value: NewValue, path: ConfigPath
     ) -> None:
         """Replace a one-line flow collection by the flow rendering of ``value``."""
+        self._dropped.append((slot.node, False))
         extent = self._guard(layout.file, path, lambda: layout.inline_extent(slot))
         if layout.line_of(extent.start) != layout.line_of(extent.end):
             _refuse(
@@ -1089,6 +1114,11 @@ class _Planner:
         """
         if not indexes:
             return
+        for index in indexes:
+            if isinstance(collection, ConfigMapping):
+                self._dropped.append((collection.entries[index].value, True))
+            else:
+                self._dropped.append((collection.items[index], True))
         collection, written_indexes, _ = self._guard(
             layout.file, path, lambda: _as_written(collection, indexes)
         )
@@ -1121,9 +1151,19 @@ class _Planner:
             start = entry.key_origin.span.start
         else:
             slot = layout.item_slot(collection, index, path)
-            flow = collection.style is CollectionStyle.FLOW
-            # A flow item starts at its slot's indicator end; a block item at its ``-``.
-            start = slot.indicator_end if flow else slot.indicator_end - 1
+            # A flow item starts at its slot's indicator end, or at its anchor property, which
+            # the indicator end follows (config-aliases 3.1); a block item at its ``-``.
+            start = slot.indicator_end
+            node = slot.node
+            if node.alias is None and node.anchor is not None:
+                start = node.anchor.span.start
+            if collection.style is not CollectionStyle.FLOW:
+                text = layout.file.text
+                while start > 0 and text[start - 1] in _INLINE_SPACE:
+                    start -= 1
+                if not text.startswith("-", start - 1):
+                    raise ValueError(f"no '-' before the item at index {start}")
+                start -= 1
         return start, layout.content_end(slot.node, slot)
 
     def _block_deletions(
@@ -1254,6 +1294,7 @@ class _Planner:
         when no comment follows (11.5). A list item gets a compact collection unless its line has
         an end-of-line comment (8.4).
         """
+        self._dropped.append((slot.node, False))
         extent = layout.inline_extent(slot)
         empty = extent.start == extent.end
         if slot.parent_style is CollectionStyle.FLOW:
@@ -1422,6 +1463,7 @@ class _Planner:
     def patches(self) -> tuple[FilePatch, ...]:
         """One patch per changed file, in ``document.files`` order (root file first)."""
         self._flush_removals()
+        self._refuse_used_anchor_removal()
         patches: list[FilePatch] = []
         for file in self._document.files:
             key = file.real_path
@@ -1437,6 +1479,32 @@ class _Planner:
         if not patches:
             _refuse(self._path, self._document.root_file, "the change would not modify any file")
         return tuple(patches)
+
+    def _refuse_used_anchor_removal(self) -> None:
+        """Refuse (exit 3) a set whose deletions and replacements remove an anchored node that an
+        alias outside the removed part still uses: the file would no longer load (config-aliases
+        4.6, research.md Decision 8). A value replaced in its slot keeps its own anchor (4.3), so
+        only the anchored nodes below it are removed; aliases removed by the same set are no
+        longer uses."""
+        anchored: list[ConfigNode] = []
+        tokens: set[WrittenLocation] = set()
+        for node, whole in self._dropped:
+            _removed_parts(node, whole, anchored, tokens)
+        if not anchored:
+            return
+        uses = anchor_uses(self._document)
+        for node in anchored:
+            anchor = node.anchor
+            for alias in uses.get(anchored_location(node), ()):
+                token = written_location(alias.token)
+                if anchor is None or token in tokens:
+                    continue
+                at = alias_paths(self._document)[token]
+                _refuse(
+                    self._path,
+                    _anchor_file(node),
+                    f"anchor '&{anchor.name}' is still used by alias '*{alias.name}' at {at}",
+                )
 
     def _guard(self, file: SourceFile, path: ConfigPath, locate: Callable[[], _T]) -> _T:
         """Run a layout lookup; a layout it cannot interpret (``? key``) is refused (14.9)."""
@@ -1465,6 +1533,49 @@ def _with_context(
 
 def _refuse(path: ConfigPath, file: SourceFile, problem: str) -> NoReturn:
     raise WriteRefusedError(problem, file=file.path, path=str(path))
+
+
+def _anchor_file(node: ConfigNode) -> SourceFile:
+    """The file in which the anchor of ``node`` is written: for an include root, the including
+    file (the anchor is on its include string or ``$ref`` mapping)."""
+    return node.origin.file if node.include is None else node.include.directive.file
+
+
+def _removed_parts(
+    node: ConfigNode, whole: bool, anchored: list[ConfigNode], tokens: set[WrittenLocation]
+) -> None:
+    """Collect the anchored nodes and the alias tokens written in the removed ``node`` (with its
+    own anchor when ``whole``). An alias place is a leaf at its token (it also carries the
+    anchored node's ``anchor``, so ``alias`` is checked first). An include root's included
+    content and the included side of a merged mapping stay in their files; only the ``$ref``
+    mapping and the overrides, written here, are removed."""
+    if node.alias is not None:
+        tokens.add(written_location(node.alias.token))
+        return
+    if whole and node.anchor is not None:
+        anchored.append(node)
+    if node.include is not None:
+        for ref in _chain(node.include):
+            if ref.form is not None:
+                for entry in ref.form.entries:
+                    _removed_parts(entry.value, True, anchored, tokens)
+        return
+    if isinstance(node, ConfigMapping):
+        if node.layers is not None:
+            _removed_parts(node.layers.over, True, anchored, tokens)
+            return
+        written = node if node.merge is None else node.merge.written
+        for entry in written.entries:
+            _removed_parts(entry.value, True, anchored, tokens)
+    elif isinstance(node, ConfigSequence):
+        for item in node.items:
+            _removed_parts(item, True, anchored, tokens)
+
+
+def _chain(ref: IncludeRef | None) -> Iterator[IncludeRef]:
+    while ref is not None:
+        yield ref
+        ref = ref.inner
 
 
 def _refuse_through_merge(document: ConfigDocument, path: ConfigPath) -> None:

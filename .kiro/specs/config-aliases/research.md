@@ -224,6 +224,11 @@
 - **Rationale**: the read-back would also fail (undefined alias), but with a message that does not name the
   anchor. The explicit check gives the stated message.
 
+- **Implementation note (task 3.5)**: the 4.7 check refuses whenever the include root node carries an anchor. That
+  includes an include chain whose conversion happens at an inner include (for example `i: &i file:b.yml` with b.yml
+  containing `file:c.yml`), where the anchored directive itself would stay untouched. This is stricter than
+  needed, kept on purpose: the set is refused with exit 3 and nothing is written. Revisit if users need overrides
+  below anchored include chains.
 ## Choices where the contract is silent (decision records)
 All 17 choices are listed in `requirements.md` ("Choices made where the contract is silent"). The product owner
 approved them on 2026-10-06. Each record: decision / alternatives / why / revisit when.

@@ -113,7 +113,7 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
   - _Boundary: Target, Planner_
   - _Requirements: 9.1, 9.3_
 
-- [ ] 3.5 Refuse removing a used anchor and converting an anchored include
+- [x] 3.5 Refuse removing a used anchor and converting an anchored include
   - A set whose removals would remove an anchored node that an alias outside the removed part still uses is refused (exit 3), naming PATH, the file and `&name`. A set that would convert an anchored scalar-form include to mapping form is refused (exit 3), naming PATH, the file and `&name`.
   - Done when planner tests on real files show both refusals with their messages and no patch, and a removal of an anchored node whose aliases are all removed with it is still planned
   - _Depends: 3.3, 3.4_
@@ -131,6 +131,12 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
   - Done when unit tests on real files compare the expanded text byte for byte for a mapping, a list, a flow-style anchored mapping, quoted keys, an include string, a `$ref` mapping, an inner alias with an inner anchor, a list-item alias, a CRLF file and a 4-space file
   - _Requirements: 7.2, 7.4, 7.5, 7.6, 8.3_
 
+- [ ] 3.8 Replicate a replacement of an anchored node itself to its alias places
+  - Added during implementation (review of 3.5). A slot replacement of an anchored node (for example `set a 2` with `a: &d 1` and `u: *d`, or a kind change such as `set defaults 5` or `'{}'`) is planned as `a: &d 2`. But the intended configuration does not carry the replacement to the alias places, so read-back verification refuses a correct write. Replacements entry by entry (mapping over mapping) already work. The fix is in building the intended configuration: a replacement recorded at an anchored node's slot also applies at every alias place and merge use of that node. The end-of-line comment after the anchor keeps its column under config-set-writeback's comment rules (currently it drops to one space).
+  - Done when unit tests on loaded documents show the widened intended configuration and a read-back that passes for a scalar replaced at an anchor, a kind change (scalar to mapping, mapping to scalar, to `{}`), and an anchored node used through `<<: *d`. The anchor's comment column is pinned byte for byte, and existing tests still pass.
+  - _Boundary: Shared, Planner_
+  - _Requirements: 4.1, 4.3, 4.5, 10.2_
+
 - [ ] 4. Integration: the `set` command
 - [ ] 4.1 Run the guard in `set` and refuse writes through aliases and merge keys
   - `set` runs the guard after target resolution and before its no-op check. The temporary refusal of task 2.1 and its tests (tasks 2.1 and 2.3) are removed. A set through an alias, including the alias's own key and a no-op, is refused with no file changed and no event other than the import or reconcile it ran first. A set through a merge key is refused. The 4.6 and 4.7 refusals reach the CLI.
@@ -147,7 +153,7 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
     - a replacement containing an anchored node;
     - own-key writes in a mapping with `<<`;
     - the history events of each write.
-  - _Depends: 3.2, 3.4, 4.1_
+  - _Depends: 3.2, 3.4, 3.8, 4.1_
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 9.1, 9.3, 10.1, 10.2_
 
 - [ ] 4.3 Expand before setting in the set use case
@@ -199,3 +205,4 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
 - 3.2: the merge-key precedence rule lives only in `merge_keys.merged_pairs`, which both `merge_mapping` (on entries) and `shared._Rebuild` (on plain values) use. Alias places needed no rebuild change, because they share the anchored node's written locations. The reach check still refuses a change at an anchor when PATH runs through a merged entry, which is conservative; the guard (3.3) refuses that PATH first.
 - 3.3: the guard walks the written layers side by side (research.md Decision 5, implementation note). An aliased `$ref` counts only for the include's included side, so override keys behind it proceed. `anchored_location` keys an include root by its `$ref` mapping (when the anchor is on the form) or its include string; 3.5 must reuse it for the 4.6 check. The refusal messages and helpers (`alias_refusal`, `merge_problem`) live in `writeback/aliases.py`; the expander (3.6) reuses `merge_problem`.
 - 3.4: the planner refuses on its own (`_refuse_through_merge`, using `aliases.merge_error`) any PATH through a merged entry, as a backstop behind the guard. A whole replacement of a mapping with `<<` is refused (9.1). A replacement that drops an own key shadowing a merged key is refused only by read-back verification, with the generic message (4.x may give the specific one). New keys take the style of the last own entry, not of `<<`.
+- 3.5: `aliases.alias_paths` gives the first alias-place path of each `*name` token, for messages. `_entry_bounds` now removes an anchored list item together with its `&name`. The 4.7 refusal fires whenever the include root carries an anchor, including an include chain converted at an inner include (`i: &i file:b.yml` where b.yml is `file:c.yml`). That is stricter than needed, kept as a conservative choice and recorded in research.md. Review of 3.5 found that replacing an anchored node itself fails read-back; task 3.8 was added for it.

@@ -27,7 +27,8 @@ The guard runs after target resolution's own refusals and before any planner ref
 the no-op check, so a no-op through an alias is refused too (5.3).
 
 :func:`anchor_uses` indexes the aliases of the configuration by the written location of the
-anchored node they stand for (used by the planner's check for removing a used anchor, 4.6).
+anchored node they stand for, and :func:`alias_paths` gives the path of each alias (both used by
+the planner's check for removing a used anchor, 4.6).
 """
 
 from collections.abc import Iterator, Mapping
@@ -387,14 +388,26 @@ def anchor_uses(document: ConfigDocument) -> Mapping[WrittenLocation, tuple[Alia
     at their anchored node.
     """
     found: dict[WrittenLocation, list[AliasRef]] = {}
-    seen: set[WrittenLocation] = set()
-    for alias in _aliases(document.root):
-        token = written_location(alias.token)
-        if token in seen:
-            continue
-        seen.add(token)
+    for alias, _ in _written_aliases(document):
         found.setdefault(anchored_location(alias.anchored), []).append(alias)
     return {location: tuple(aliases) for location, aliases in found.items()}
+
+
+def alias_paths(document: ConfigDocument) -> Mapping[WrittenLocation, ConfigPath]:
+    """Map the written location of every alias's ``*name`` token to the path of its first alias
+    place, in document order (``<mapping>.<<`` for a merge key's alias, ``<include root>.$ref``
+    for an alias as a ``$ref`` value); the walk of :func:`anchor_uses`."""
+    return {written_location(alias.token): path for alias, path in _written_aliases(document)}
+
+
+def _written_aliases(document: ConfigDocument) -> Iterator[tuple[AliasRef, ConfigPath]]:
+    """Each written alias token once, in document order, with its first alias place's path."""
+    seen: set[WrittenLocation] = set()
+    for alias, path in _aliases(document.root, ROOT):
+        token = written_location(alias.token)
+        if token not in seen:
+            seen.add(token)
+            yield alias, path
 
 
 def anchored_location(node: ConfigNode) -> WrittenLocation:
@@ -408,23 +421,24 @@ def anchored_location(node: ConfigNode) -> WrittenLocation:
     return written_location(include.directive)
 
 
-def _aliases(node: ConfigNode) -> Iterator[AliasRef]:
-    """Every alias written in or below ``node``, in document order (see :func:`anchor_uses`)."""
+def _aliases(node: ConfigNode, path: ConfigPath) -> Iterator[tuple[AliasRef, ConfigPath]]:
+    """Every alias written in or below ``node`` (at ``path``), in document order, with the path
+    of its alias place (see :func:`anchor_uses`)."""
     if node.alias is not None:
-        yield node.alias
+        yield node.alias, path
         return
     for ref in _chain(node.include):
         if ref.form is not None:
             for entry in ref.form.entries:
-                yield from _aliases(entry.value)
+                yield from _aliases(entry.value, path.child(entry.key))
     if isinstance(node, ConfigMapping):
         if node.layers is not None:
-            yield from _aliases(node.layers.base)
-            yield from _aliases(node.layers.over)
+            yield from _aliases(node.layers.base, path)
+            yield from _aliases(node.layers.over, path)
             return
         written = node if node.merge is None else node.merge.written
         for entry in written.entries:
-            yield from _aliases(entry.value)
+            yield from _aliases(entry.value, path.child(entry.key))
     elif isinstance(node, ConfigSequence):
-        for item in node.items:
-            yield from _aliases(item)
+        for index, item in enumerate(node.items):
+            yield from _aliases(item, path.child(index))
