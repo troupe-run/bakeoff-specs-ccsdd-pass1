@@ -229,6 +229,7 @@
   containing `file:c.yml`), where the anchored directive itself would stay untouched. This is stricter than
   needed, kept on purpose: the set is refused with exit 3 and nothing is written. Revisit if users need overrides
   below anchored include chains.
+
 ## Choices where the contract is silent (decision records)
 All 17 choices are listed in `requirements.md` ("Choices made where the contract is silent"). The product owner
 approved them on 2026-10-06. Each record: decision / alternatives / why / revisit when.
