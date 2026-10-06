@@ -40,7 +40,7 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
   - _Boundary: Model, MergeKeys_
   - _Requirements: 2.1, 2.2, 2.4_
 
-- [ ] 1.2 (P) Compose each file while recording every alias occurrence
+- [x] 1.2 (P) Compose each file while recording every alias occurrence
   - Composing a file records, for every alias, its name and the span of its `*name` token, keyed by the parent node and the slot it fills (the key of a mapping value, the index of a list item, or "a key" for an alias used as a mapping key). Each record is checked against the source text, and a mismatch is a load error.
   - A reused anchor name produces no warning output. Syntax errors, several documents and undefined aliases are reported as before (exit 4, naming the file, and for an undefined alias the alias name). The loader switches its composing to this module. Anchors themselves are still refused at this point.
   - Done when unit tests on real file texts pin the recorded spans for an alias as a mapping value, as a list item, as a `<<` value, inside a list of merge sources, inside an anchored node, and as a key. A test also proves that a reused anchor name writes nothing to stderr, and the full suite still passes.
@@ -191,3 +191,4 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
 
 ## Implementation Notes
 - 1.1: the `<<` text currently has two private homes (`loader._MERGE_KEY`, `yaml_style._MERGE_KEY`). Task 2.3 must make one module its single named home and have the other import it (structure.md "one decision, one place"). `merge_mapping` requires `merge_index` to point at the plain `<<` entry of `written`.
+- 1.2: every alias used as a key in one mapping shares the slot `(id(parent), None)`, and only the first is recorded. That is enough for the alias-as-key refusal (2.2). `yaml_style.py` composes on its own, so a later task writing at anchors should check that it cannot print `ReusedAnchorWarning`.

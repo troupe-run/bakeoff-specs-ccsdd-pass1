@@ -45,10 +45,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
-from ruamel.yaml import YAML
-from ruamel.yaml.error import MarkedYAMLError, YAMLError
 from ruamel.yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
+from troupe.config.compose import compose_file
 from troupe.config.constants import INCLUDE_PREFIX, INCLUDE_REF_KEY, YAML_INCLUDE_SUFFIXES
 from troupe.config.errors import ConfigLoadError
 from troupe.config.model import (
@@ -221,32 +220,11 @@ def _detect_line_ending(text: str) -> LineEnding:
     return LineEnding.NONE
 
 
-# ruamel.yaml's ``compose`` and node attributes are typed ``Any`` upstream; the loader narrows
-# them with ``isinstance`` checks and explicit ``str``/``int`` conversions at this boundary.
+# ruamel.yaml's node attributes are typed ``Any`` upstream; the loader narrows them with
+# ``isinstance`` checks and explicit ``str``/``int`` conversions at this boundary.
 def _compose(source: SourceFile) -> Node | None:
     """Compose the single document of ``source``; ``None`` for an empty or comment-only file."""
-    try:
-        node = YAML(typ="rt").compose(source.text)
-    except MarkedYAMLError as error:
-        raise ConfigLoadError(_describe_marked_error(error), file=source.path) from error
-    except YAMLError as error:
-        first_line = str(error).splitlines()[0] if str(error) else type(error).__name__
-        raise ConfigLoadError(f"invalid YAML: {first_line}", file=source.path) from error
-    if node is None:
-        return None
-    if not isinstance(node, Node):  # pragma: no cover - ruamel always returns a Node or None
-        raise ConfigLoadError("invalid YAML: unexpected composer result", file=source.path)
-    return node
-
-
-def _describe_marked_error(error: MarkedYAMLError) -> str:
-    """Return ``invalid YAML: <context>, <problem> (line L, column C)``, 1-based positions."""
-    parts = [str(part) for part in (error.context, error.problem) if part]
-    problem = ", ".join(parts) if parts else type(error).__name__
-    mark = error.problem_mark or error.context_mark
-    if mark is None:
-        return f"invalid YAML: {problem}"
-    return f"invalid YAML: {problem} (line {int(mark.line) + 1}, column {int(mark.column) + 1})"
+    return compose_file(source).root
 
 
 class _Builder:
