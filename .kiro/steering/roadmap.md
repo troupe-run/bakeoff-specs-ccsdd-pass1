@@ -62,6 +62,7 @@ rules). The write side carries most of the risk and rules, so it gets its own sp
 - [x] config-get-show -- (step 3) `get PATH` (scalar; mapping/list → 5 mentioning `config show`), `show [PATH]` (scalar as `get`; otherwise block YAML with includes resolved, text includes as literal blocks; whole config without PATH), `--sources` end-of-line `# from <file>` provenance. Dependencies: config-foundation, config-set-writeback, config-file-sync
 - [x] config-lineage -- (step 4) actor/via/at/reason/change on every history event; `TROUPE_ACTOR` (exit 2 when invalid) and login-name default; `set --reason`; one change id per command, reconcile or import; persisted, legacy stores readable. Dependencies: config-foundation, config-set-writeback, config-file-sync, config-get-show
 - [x] config-include-overrides -- (step 5) mapping-form includes with `$ref` and deep-merged overrides, new keys under includes written as overrides in the including file (scalar-form → mapping-form conversion), list exceptions, overridden vs non-overridden existing values, exit 4 for non-YAML overrides; CR-B: `set --in-include` keeps the step 1 rule for new keys. Dependencies: config-foundation, config-set-writeback, config-get-show
+- [ ] config-aliases -- (step 6, tracker issue #2) load anchors/aliases with expanded reads everywhere; `set` at an anchor changes every alias; `set` reached through an alias → exit 3 mentioning `--expand-alias`; `set --expand-alias` replaces the alias with a commented block-style copy and sets the value in it; merge keys never written. Dependencies: config-foundation, config-set-writeback, config-get-show, config-include-overrides
 
 ## Product owner decisions (2026-10-01)
 Full records (decision, alternatives, why, revisit trigger, status) are in each spec's `research.md`.
@@ -223,3 +224,37 @@ PATH VALUE` writes a new key into the included file instead (the step 1 rule).
 ### Existing Spec Updates (CR-B)
 - [x] config-include-overrides -- add the In-include requirement, the option's effect on placement and its tests (before implementation starts). Dependencies: none
 - [x] config-set-writeback -- step-5 note: `set` accepts `--in-include` (config-include-overrides). Dependencies: config-include-overrides
+
+## Step 6 — Aliases (tracker issue #2, 2026-10-06)
+
+### Overview
+Issue troupe-run/bakeoff-specs-ccsdd-pass1#2 ("Setting one agent's model changed another agent's model") reports
+that `set coder.settings.model sonnet`, where `coder.settings: *d`, changed `defaults` and `reviewer` too. On `main`
+the reporter's file cannot be loaded at all: anchors give exit 4 (decision H). So the issue cannot be reproduced
+as written. It does define the step 6 contract section "Aliases". Anchors and aliases load, and a write at the
+anchor changes everyone. A write reached through an alias is refused with exit 3 and stderr mentions
+`--expand-alias`. `set --expand-alias PATH VALUE` replaces that alias with a block-style copy commented
+`# expanded from *<name> by troupe`, then sets the value in the copy. Merge keys are never written.
+
+### Approach Decision
+- **Chosen**: the loader expands aliases into the tree. Expanded nodes keep the anchor's origins, and each node
+  reached through an alias carries an `AliasRef` (name, alias span, holding key line). Readers need no change.
+  Before planning, the writer refuses any PATH whose walk passes through an alias. `--expand-alias` first plans the
+  replacement of the alias token with a block copy (our own emitter and scalar rules) and the comment, then runs the
+  normal `set` plan on the patched text. Both edits go into one atomic write with one read-back.
+- **Why**: this follows the step 5 pattern. The loaded tree is the contract's value for every reader, and only the
+  writer needs physical provenance, which stays attached to the nodes it describes. Expanding without provenance is
+  exactly the reported bug.
+- **Rejected alternatives**: an alias node kind that every reader resolves (drift); ruamel re-dump of the copy (not
+  byte-surgical); expanding to `<<: *d` plus an override (the contract forbids writing merge keys).
+
+### Existing Spec Updates
+- [ ] config-foundation -- Requirement 3.9 and decision H: anchors and aliases are loaded from step 6 (step-6
+  note pointing to config-aliases). Merge keys stay exit 4 (proposed default, open choice 1 in the brief).
+  Dependencies: config-aliases
+- [ ] config-set-writeback -- step-6 notes: writes at anchors change every alias. `set` accepts
+  `--expand-alias`. VALUE with an anchor or alias stays exit 2. Dependencies: config-aliases
+
+### Direct Implementation Candidates
+- (none) -- tests that pin "anchors are refused" are updated inside config-aliases' tasks, in the same change as
+  the behaviour (collaboration.md).
