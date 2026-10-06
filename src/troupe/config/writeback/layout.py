@@ -3,6 +3,12 @@
 Lines, columns, line breaks, indentation step, list dash offset, comments, value slots (the key
 ``:`` and item ``-`` positions), content ends and insertion points.
 
+Anchors, aliases and merge keys (config-aliases research.md, Decision 3 and "one node, one written
+place"): an anchored value's ``&name`` property belongs to its slot's indicator (``indicator_end``
+is after it) and is a token for comment detection. In every walk over the nodes written in a file
+an alias place is a leaf written at its ``*name`` token, and a mapping with a merge key is walked
+as written (its own entries and the ``<<`` entry, ``merge.written``), never as its merged view.
+
 All positions are character (code point) indices into ``SourceFile.text``; all columns are counted
 in code points from the start of the line. A byte order mark at the start of the file is not a
 column: columns on the first line are counted from the character after it.
@@ -50,7 +56,9 @@ class ValueSlot:
     """Where a value sits in its file: the owning key or ``-`` and the index just after ``:``/``-``.
 
     For an item of a flow sequence there is no indicator: ``owner_column`` is the column of the item
-    and ``indicator_end`` its start.
+    and ``indicator_end`` its start. When the value is written with an anchor property after the
+    ``:`` or ``-`` (``key: &name value``), ``indicator_end`` is just after the property, so every
+    replacement from it keeps the anchor (config-aliases 4.3).
     """
 
     file: SourceFile
@@ -58,7 +66,7 @@ class ValueSlot:
     parent_style: CollectionStyle  # style of the containing collection
     in_sequence: bool  # item of a sequence (True) or value of a mapping entry (False)
     owner_column: int  # key column or '-' column
-    indicator_end: int  # index just after ':' or '-'
+    indicator_end: int  # index just after ':' or '-' (and after the value's anchor property)
     node: ConfigNode
 
 
@@ -232,7 +240,13 @@ class FileLayout:
     def entry_slot(
         self, mapping: ConfigMapping, entry: MappingEntry, path: ConfigPath
     ) -> ValueSlot:
-        """The slot of ``entry``'s value: the key column and the index just after its ``:``."""
+        """The slot of ``entry``'s value: the key column and the index just after its ``:``.
+
+        On the merged view of a mapping with a merge key only its own entries have a slot here;
+        an entry received from the merge key is written elsewhere (raises :class:`ValueError`).
+        """
+        if entry.via_merge:
+            raise ValueError(f"the entry {entry.key!r} comes from a merge key")
         self._require_here(entry.key_origin.file, "key")
         return ValueSlot(
             file=self._file,
@@ -240,7 +254,7 @@ class FileLayout:
             parent_style=mapping.style,
             in_sequence=False,
             owner_column=self.column(entry.key_origin.span.start),
-            indicator_end=self._colon_end(entry),
+            indicator_end=self._property_end(entry.value, self._colon_end(entry)),
             node=entry.value,
         )
 
@@ -254,7 +268,7 @@ class FileLayout:
         if sequence.style is CollectionStyle.BLOCK:
             self._require_here(sequence.origin.file, "sequence")
             dash = self._dashes(sequence)[index]
-            owner, indicator_end = dash, dash + 1
+            owner, indicator_end = dash, self._property_end(item, dash + 1)
         else:
             owner = indicator_end = self._value_start(item)
         return ValueSlot(
@@ -289,7 +303,7 @@ class FileLayout:
         indicator end for an empty value or a block collection starting on a later line; the header
         indicators of a block scalar; for a block collection starting on the slot's line (compact
         list item) the text from its start to the line's content end without the end-of-line
-        comment and the spaces before it.
+        comment and the spaces before it; the ``*name`` token of an alias place.
         """
         node = self._local(slot.node)
         if isinstance(node, Span):
@@ -334,6 +348,7 @@ class FileLayout:
     def entries_column(self, collection: ConfigMapping | ConfigSequence) -> int:
         """Column of the first key or ``-`` (of the first item of a flow sequence); 0 when empty."""
         if isinstance(collection, ConfigMapping):
+            collection = _written_mapping(collection)
             if not collection.entries:
                 return self.column(collection.origin.span.start)
             return self.column(collection.entries[0].key_origin.span.start)
@@ -355,6 +370,8 @@ class FileLayout:
         self._require_here(collection.origin.file, "collection")
         if collection.style is not CollectionStyle.BLOCK:
             raise ValueError("insertion points exist only for block collections")
+        if isinstance(collection, ConfigMapping):
+            collection = _written_mapping(collection)
         empty = (
             not collection.entries
             if isinstance(collection, ConfigMapping)
@@ -396,10 +413,17 @@ class FileLayout:
     def _local(self, node: ConfigNode) -> ConfigNode | Span:
         """What is written in this file at the slot holding ``node``.
 
-        A mapping-form include root gives its ``$ref`` mapping as written (when written here); a
-        scalar-form include root gives its ``file:`` directive span (when here); any other node
-        gives itself (when here). Raises :class:`ValueError` otherwise.
+        An alias place gives its ``*name`` token span (when written here); a mapping-form include
+        root gives its ``$ref`` mapping as written (when written here); a scalar-form include root
+        gives its ``file:`` directive span (when here); a mapping with a merge key gives the mapping
+        as written (when here); any other node gives itself (when here). Raises
+        :class:`ValueError` otherwise.
         """
+        alias = node.alias
+        if alias is not None:
+            if self._here(alias.token.file):
+                return alias.token.span
+            raise ValueError(f"the alias is not written in {self._file.path}")
         include = node.include
         if (
             include is not None
@@ -408,7 +432,7 @@ class FileLayout:
         ):
             return include.form
         if self._here(node.origin.file):
-            return node
+            return _as_written(node)
         if include is not None and self._here(include.directive.file):
             return include.directive.span
         raise ValueError(f"the node is not written in {self._file.path}")
@@ -427,12 +451,48 @@ class FileLayout:
             index += 1
         return index + 1 if self._text.startswith(_COLON, index) else None
 
+    def _property_end(self, node: ConfigNode, indicator_end: int) -> int:
+        """``indicator_end`` moved past the anchor property written on ``node`` after it (4.3)."""
+        span = self._property(node)
+        if span is None or span.start < indicator_end:
+            return indicator_end
+        return span.end
+
+    def _property(self, node: ConfigNode) -> Span | None:
+        """The span of the ``&name`` property written in this file for ``node``, or ``None``.
+
+        An alias place has none (it also carries its anchored node's anchor). A plain node's
+        anchor lies in its own file. The anchor of an include lies in the including file: on the
+        ``$ref`` mapping as written, or before the ``file:`` directive (an anchor taken over from
+        the included file's root lies in that file and is not before the directive).
+        """
+        if node.alias is not None:
+            return None
+        include = node.include
+        if include is None:
+            anchor = node.anchor
+            here = anchor is not None and self._here(node.origin.file)
+            return anchor.span if anchor is not None and here else None
+        if include.form is not None:
+            return self._property(include.form)
+        anchor = node.anchor
+        if anchor is None or not self._here(include.directive.file):
+            return None
+        span, directive = anchor.span, include.directive.span
+        written = self._text[span.start : span.end] == f"&{anchor.name}"
+        between = self._text[span.end : directive.start]
+        if written and span.end <= directive.start and between.strip(" \t") == "":
+            return span
+        return None
+
     def _value_start(self, node: ConfigNode) -> int:
         local = self._local(node)
         return local.start if isinstance(local, Span) else local.origin.span.start
 
     def _collection_start(self, node: ConfigMapping | ConfigSequence) -> int:
         """First key of a block mapping, first ``-`` of a block sequence, else the span start."""
+        if isinstance(node, ConfigMapping):
+            node = _written_mapping(node)
         if node.style is CollectionStyle.BLOCK:
             if isinstance(node, ConfigMapping) and node.entries:
                 return node.entries[0].key_origin.span.start
@@ -453,7 +513,8 @@ class FileLayout:
         self._expect(first, _DASH)
         dashes = [first]
         for item in sequence.items[:-1]:
-            line = self.line_of(self._value_end(item, dashes[-1] + 1)) + 1
+            end = self._value_end(item, self._property_end(item, dashes[-1] + 1))
+            line = self.line_of(end) + 1
             while line < self.line_count and (self.is_blank(line) or self.is_comment_line(line)):
                 line += 1
             if line >= self.line_count:
@@ -490,10 +551,12 @@ class FileLayout:
                 return node.origin.span.start
             last = node.entries[-1]
             empty = _is_empty_null(last.value)
-            return self._value_end(last.value, self._colon_end(last) if empty else None)
+            colon_end = self._property_end(last.value, self._colon_end(last)) if empty else None
+            return self._value_end(last.value, colon_end)
         if not node.items:
             return node.origin.span.start
-        return self._value_end(node.items[-1], self._dashes(node)[-1] + 1)
+        last_item = node.items[-1]
+        return self._value_end(last_item, self._property_end(last_item, self._dashes(node)[-1] + 1))
 
     def _header_end(self, start: int) -> int:
         """Index after a block scalar's header indicators (``|``/``>``, indentation, chomping)."""
@@ -553,7 +616,8 @@ class FileLayout:
             if isinstance(node, ConfigMapping):
                 for entry in node.entries:
                     value = entry.value
-                    if _is_block_scalar(value) and self._here(value.origin.file):
+                    written_here = value.alias is None and self._here(value.origin.file)
+                    if _is_block_scalar(value) and written_here:
                         key = entry.key_origin.span.start
                         columns[value.origin.span.start] = self.column(key)
             stack.extend(_children(node))
@@ -573,6 +637,14 @@ class FileLayout:
             floors[last] = max(floors.get(last, end), end)
 
         def visit(node: ConfigNode) -> None:
+            if node.alias is not None:
+                if self._here(node.alias.token.file):
+                    alias = node.alias.token.span
+                    token(alias.start, alias.end)
+                return
+            anchor = self._property(node)
+            if anchor is not None:
+                token(anchor.start, anchor.end)
             parts = _parts(node)
             if parts is not None:
                 for part in parts:
@@ -663,13 +735,15 @@ def _block_entries_in_file(
     """Yield ``(key start, value)`` of every entry of a block mapping written in ``file``.
 
     The value is yielded only when it was also written in ``file`` (an include root's value lies in
-    the included file and is skipped). The order is not document order; see :func:`_ordered`.
+    the included file and is skipped; an alias place is written as its token and is skipped). The
+    order is not document order; see :func:`_ordered`.
     """
     stack: list[ConfigNode] = list(_written(document.root))
     while stack:
         node = stack.pop()
         if (
-            isinstance(node, ConfigMapping)
+            node.alias is None
+            and isinstance(node, ConfigMapping)
             and node.style is CollectionStyle.BLOCK
             and _in_file(node, file)
         ):
@@ -727,7 +801,8 @@ def _written(node: ConfigNode) -> tuple[ConfigNode, ...]:
     """The nodes written in files for ``node``: its written parts, recursively.
 
     A merged mapping's entries are never all written in one file, so walks over files visit its
-    two sides instead; a mapping-form include root gives its ``$ref`` mapping as well.
+    two sides instead; a mapping-form include root gives its ``$ref`` mapping as well; a mapping
+    with a merge key gives the mapping as written; an alias place is a leaf.
     """
     parts = _parts(node)
     if parts is None:
@@ -736,8 +811,13 @@ def _written(node: ConfigNode) -> tuple[ConfigNode, ...]:
 
 
 def _children(node: ConfigNode) -> tuple[ConfigNode, ...]:
-    """The written children of a node written in one file (see :func:`_written`)."""
+    """The written children of a node written in one file (see :func:`_written`).
+
+    An alias place is a leaf: its content is written at its anchor.
+    """
     values: tuple[ConfigNode, ...]
+    if node.alias is not None:
+        return ()
     if isinstance(node, ConfigMapping):
         values = tuple(entry.value for entry in node.entries)
     elif isinstance(node, ConfigSequence):
@@ -748,11 +828,31 @@ def _children(node: ConfigNode) -> tuple[ConfigNode, ...]:
 
 
 def _local_value(node: ConfigNode, file: SourceFile) -> ConfigNode | None:
-    """What ``file`` holds for an entry value: its ``$ref`` mapping, itself, or ``None``."""
+    """What ``file`` holds for an entry value: its ``$ref`` mapping, itself, or ``None``.
+
+    An alias place gives ``None``: what is written for it is its token, not a collection.
+    """
+    if node.alias is not None:
+        return None
     include = node.include
     if include is not None and include.form is not None and _in_file(include.form, file):
         return include.form
-    return node if _in_file(node, file) else None
+    return _as_written(node) if _in_file(node, file) else None
+
+
+def _as_written(node: ConfigNode) -> ConfigNode:
+    """What is written for ``node`` in its own file: see :func:`_written_mapping`."""
+    return _written_mapping(node) if isinstance(node, ConfigMapping) else node
+
+
+def _written_mapping(mapping: ConfigMapping) -> ConfigMapping:
+    """The mapping as written behind the merged view of a mapping with a merge key, else itself.
+
+    A merged mapping of a ``$ref`` include (``layers``) keeps its own treatment.
+    """
+    if mapping.merge is not None and mapping.layers is None:
+        return mapping.merge.written
+    return mapping
 
 
 def _is_empty_null(node: ConfigNode) -> bool:

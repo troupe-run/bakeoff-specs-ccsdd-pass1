@@ -10,7 +10,8 @@ uses the lookups here to reach the mappings actually written in files behind a m
 * :func:`physical_holders`: every written mapping holding a key, with the layers leading to it;
 * :func:`holder_of`: the entry holding a given written mapping in a merged parent (for pruning
   emptied nested overrides, research.md Decision 4);
-* :func:`written_parts`: what is written for a node, for walks over the files.
+* :func:`written_parts`: what is written for a node, for walks over the files (alias places
+  are leaves, merge-key mappings are walked as written).
 
 This module is pure: it performs no I/O and never mutates or rebuilds its inputs.
 """
@@ -172,13 +173,20 @@ def holder_of(parent: ConfigMapping, key: str, written: ConfigMapping) -> Holder
 def written_parts(node: ConfigNode) -> tuple[ConfigNode, ...]:
     """Return what is written in files for ``node``, for walks over the written trees.
 
-    A merged mapping gives ``(base, over)``. A bare mapping-form include gives its ``$ref``
-    mapping and the node with ``include.form`` cleared (its content). Any other node gives
+    An alias place gives ``(node,)``: it is written as its ``*name`` token, a leaf whose content
+    is written at its anchor (config-aliases research.md, "one node, one written place"). A merged
+    mapping gives ``(base, over)``. A bare mapping-form include gives its ``$ref`` mapping and the
+    node with ``include.form`` cleared (its content). A mapping with a merge key gives the mapping
+    as written (its own entries and the ``<<`` entry, ``merge.written``). Any other node gives
     ``(node,)``.
     """
+    if node.alias is not None:
+        return (node,)
     if isinstance(node, ConfigMapping) and node.layers is not None:
         return (node.layers.base, node.layers.over)
     if node.include is not None and node.include.form is not None:
         content = dataclasses.replace(node, include=dataclasses.replace(node.include, form=None))
         return (node.include.form, content)
+    if isinstance(node, ConfigMapping) and node.merge is not None:
+        return (node.merge.written,)
     return (node,)
