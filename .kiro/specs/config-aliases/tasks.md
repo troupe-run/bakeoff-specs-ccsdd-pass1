@@ -150,7 +150,7 @@ between tasks 2.1 and 4.1. The out-of-contract choices are accepted as recorded.
   - _Depends: 3.3, 3.5_
   - _Requirements: 4.6, 4.7, 5.1, 5.2, 5.3, 5.4, 9.2_
 
-- [ ] 4.2 Validate writes at anchors end to end
+- [x] 4.2 Validate writes at anchors end to end
   - A set at an anchor writes at the anchor, keeps `&name`, and records events at every alias path. An own key of a mapping with `<<` is changed or added in that mapping, and the merge key is unchanged.
   - Done when byte-exact e2e tests prove:
     - an anchored scalar and an anchored mapping value changed;
