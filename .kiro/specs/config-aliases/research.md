@@ -258,6 +258,16 @@ the earlier contract sections in force.
   line that already has a comment, refusing to copy an anchored node that holds `<<`, and refusing to remove an
   anchor that is still used.
 
+**Design clarifications after approval (2026-10-06, found during task planning; no behaviour change)**:
+- `overrides.deep_merge` must keep the included side's `anchor`, `alias` and `merge` on the merged mapping. It
+  currently drops them, so an alias place behind `$ref` overrides would lose its marker, and the 5.1/9.2 guard
+  would miss it.
+- Refusal order: target resolution's own refusals come first, then the guard, then planner refusals.
+- In the expansion loop, the widened intended configuration comes from the plan on the expanded document.
+  Verification uses the original document and patches remapped to the original files.
+- An anchored node holding `<<` is refused with the 9.2 message, extended with the alias's name. The diagram
+  edge from the expander to the loader was removed (only the setter reloads).
+
 ## Risks & Mitigations
 - **ruamel internal hook changes**. Mitigation: the version is pinned. A unit test asserts the recorded spans,
   and each record is validated against the source text (a mismatch is an internal load error, not a wrong write).

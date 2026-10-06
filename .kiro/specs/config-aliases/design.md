@@ -88,7 +88,6 @@ graph TB
     Setter --> Verify
     Expand --> Layout
     Expand --> CollectionRender
-    Expand --> Loader
     Planner --> Layout
     Planner --> Shared[shared rebuild]
     Guard --> Resolve[path walk]
@@ -132,11 +131,18 @@ tests/
 ├── test_compose.py                 # NEW: recorded alias spans (key, item, merge, nested, alias-as-key)
 ├── test_loader_aliases.py          # NEW: Req 1 (expansion, origins, AliasRef, refusals, reused names, includes)
 ├── test_loader_merge_keys.py       # NEW: Req 2 (merge, order, precedence, refusals, quoted <<)
-├── test_set_anchors.py             # NEW: Req 4 (byte-exact anchor writes, anchor kept, 4.6, 4.7)
-├── test_set_alias_refusals.py      # NEW: Req 5, 9 (exit 3 messages, no-op, merge keys never written)
+├── test_set_anchors.py             # NEW: Req 4 (byte-exact anchor writes, anchor kept)
+├── test_set_alias_refusals.py      # NEW: Req 4.6, 4.7, 5, 9.2 (exit 3 messages, no-op, merge keys never written)
 ├── test_set_expand_alias.py        # NEW: Req 6, 7, 8 (byte-exact copies, nested, list item, flow/comment refusals)
 ├── test_e2e_aliases.py             # NEW: issue #2 scenario end to end; Req 3 readers; Req 10 history
-└── writeback/test_alias_guard.py   # NEW: alias_sites cases on loaded documents
+├── test_merge_keys.py              # NEW: merge-key merge (pure)
+└── writeback/
+    ├── test_alias_guard.py         # NEW: alias_sites cases on loaded documents
+    ├── test_layout_aliases.py      # NEW: anchor properties, alias leaves, merge-key mappings in the layout
+    ├── test_shared_aliases.py      # NEW: replication through aliases and merge keys
+    ├── test_planner_aliases.py     # NEW: own keys beside `<<`, 4.6 and 4.7 refusals
+    ├── test_expand.py              # NEW: byte-exact copies and expansion refusals
+    └── test_setter_aliases.py      # NEW: expansion loop, verification on original files
 ```
 
 ### Modified Files
@@ -352,6 +358,9 @@ def merge_mapping(written: ConfigMapping, merge_index: int, sources: Sequence[Co
   merged view comes from `merge_mapping`. A `<<` key inside a `$ref` mapping with overrides → exit 4 (2.3). A
   quoted `<<` key stays ordinary (2.4).
 - Includes inside anchored nodes are built at each place as usual (1.5).
+- `overrides.deep_merge` keeps the included side's `anchor`, `alias` and `merge` on the merged mapping it builds.
+  Entries are reused, so `via_merge` stays. Otherwise an alias place or merge-key mapping behind `$ref`
+  overrides would lose its provenance, and the guard would miss it (5.1, 9.2).
 
 ### File layer (`troupe/config/writeback/`)
 
@@ -386,7 +395,8 @@ def expand_alias(document: ConfigDocument, site: AliasSite) -> dict[Path, str]  
   - the alias place's parent is block style (else 8.4, `alias '*d' cannot be expanded inside a flow collection`);
   - `layout.comment_start(line of the token)` is `None` (else 8.5, `the line of alias '*d' already has an
     end-of-line comment`);
-  - no mapping in the anchored node's written structure has `merge` (else the 9.2 message).
+  - no mapping in the anchored node's written structure has `merge` (else the 9.2 message from the guard,
+    extended with the alias's name).
 - Key line (7.1, 8.3): the text from `slot.indicator_end` to the end of the token, plus trailing spaces before
   the line break, is replaced. For a non-empty collection the replacement is `  # expanded from *d by troupe`.
   For a scalar or an empty collection it is ` <scalar or {} or []>  # expanded from *d by troupe`. For a block
@@ -426,6 +436,11 @@ def expand_alias(document: ConfigDocument, site: AliasSite) -> dict[Path, str]  
 def set_value(theatre: Theatre, path: ConfigPath, value: NewValue, context: ChangeContext, *,
               in_include: bool = False, expand_alias: bool = False) -> SetOutcome
 ```
+- `resolve_target`'s own refusals (a `$ref` segment, path not found, wrong kind) come first. The guard runs next,
+  so every planner refusal (for example an include root reached through an alias) comes after the alias refusal.
+- In the expansion case, the request and its widened intended configuration come from the plan on the
+  **expanded** document. `verify_patch` gets the original document and the final patches remapped to the
+  original `SourceFile`s, so the change is not widened to the other alias places (10.2).
 - Flow as in the sequence diagram. `texts: dict[Path, str]` accumulate per real path, and each round reloads
   with `load_config(config_file, {original texts} | texts)`. Final patches are
   `FilePatch(original_source, final_text)`, for every file whose final text differs from the original, in
