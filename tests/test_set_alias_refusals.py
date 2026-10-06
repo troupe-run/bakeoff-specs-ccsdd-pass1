@@ -2,7 +2,8 @@
 
 Temporary (tasks.md, "Safety window"): from task 2.1 the loader accepts anchors, but ``set`` only
 learns to write them in task 4.1. Until then ``set`` refuses (exit 3, no file changed) any
-configuration that contains an anchor, an alias or a merge key. Task 4.1 removes this refusal
+configuration that contains an anchor, an alias or a merge key. Since task 2.2 aliases load, so the
+refusal also covers sets at, through and below alias places. Task 4.1 removes this refusal
 together with the tests marked "temporary" below.
 
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
@@ -40,6 +41,26 @@ TEMPORARY_REFUSALS: list[tuple[str, str, dict[str, str], str, str, str, str]] = 
         ".troupe/troupe.yml",
         "anchor '&i'",
     ),
+    ("through-an-alias", "a: &x 1\nb: *x\n", {}, "b", "5", ".troupe/troupe.yml", "anchor '&x'"),
+    (
+        "below-an-alias",
+        "d: &d\n  m: 1\nc:\n  s: *d\n",
+        {},
+        "c.s.m",
+        "2",
+        ".troupe/troupe.yml",
+        "anchor '&d'",
+    ),
+    ("at-an-aliased-anchor", "a: &x 1\nb: *x\n", {}, "a", "5", ".troupe/troupe.yml", "anchor '&x'"),
+    (
+        "alias-in-an-included-file",
+        "a: 1\ninc: file:inc.yml\n",
+        {".troupe/inc.yml": "k: &k v\nl: [*k]\n"},
+        "inc.l.0",
+        "w",
+        ".troupe/inc.yml",
+        "anchor '&k'",
+    ),
 ]
 
 
@@ -74,8 +95,8 @@ def test_temporary_set_refuses_a_configuration_with_an_anchor(
     construct: str,
 ) -> None:
     """Req 1.6: temporary (removed by task 4.1) - while ``set`` cannot write anchors yet, a set on
-    a configuration that contains an anchor anywhere exits 3 naming the file holding it and PATH,
-    and changes no file and no history."""
+    a configuration that contains an anchor anywhere (also with aliases, which now load) exits 3
+    naming the file holding it and PATH, and changes no file and no history."""
     theatre = make_theatre(config, files=files)
     history = _history(theatre)
     before = snapshot_tree(theatre)

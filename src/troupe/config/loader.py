@@ -13,17 +13,26 @@ composer inserts removed (3.8).
 
 Unsupported YAML is refused with :class:`ConfigLoadError` naming the file and, where known, the
 key path (product-owner decisions H and I): non-UTF-8 bytes, syntax errors, several documents,
-duplicate keys, explicit tags, anchors on mapping keys, aliases (an undefined one is a composer
-error), plain ``<<`` merge keys, non-scalar keys and a top-level node that is not a mapping. An
-empty or comment-only file is an empty block mapping at ``Span(0, 0)``.
+duplicate keys, explicit tags, anchors on mapping keys, undefined aliases (a composer error),
+aliases used as keys or inside their own anchored node, plain ``<<`` merge keys, non-scalar keys
+and a top-level node that is not a mapping. An empty or comment-only file is an empty block mapping
+at ``Span(0, 0)``.
 
 Anchors (config-aliases 1.1, 1.5): an anchor ``&name`` on any value node is recorded as
 :class:`Anchor` (the name and the span of the property), and the node's own span is its value
 without the property (config-aliases research.md, Decision 3): the first key of a block mapping,
 the first ``-`` of a block list, the next token for scalars and flow collections, and empty at the
 property's end for an empty null. The anchor of an include string or ``$ref`` mapping is recorded
-on the included node. Until alias places are built (config-aliases task 2.2), every alias the
-composer recorded is refused, so that no alias silently loads as a plain copy.
+on the included node.
+
+Aliases (config-aliases 1.1-1.5, research.md Decision 2): at each alias the composer recorded, the
+anchored node is built again for the alias's path, an **alias place**: it and its descendants carry
+the anchored node's origins, and its root records :class:`AliasRef` (the name, the ``*name``
+token and the node built at the anchor). Aliases inside an anchored node are found again when it is
+rebuilt, includes inside it are included again, and a reused name refers to the most recent
+definition before the alias (ruamel resolves each alias to that node). Aliases are file-local: an
+alias to an anchor defined only in another file is an undefined alias. An alias used as a mapping
+key, and an alias inside its own anchored node, are refused naming the key path.
 
 Includes (4.1-4.7): any string scalar value (any style, never a key) starting with
 :data:`INCLUDE_PREFIX` is replaced by its target, ``including_file.path.parent / spec``. A target
@@ -60,6 +69,7 @@ from troupe.config.compose import AliasOccurrence, AliasSlot, ComposedFile, comp
 from troupe.config.constants import INCLUDE_PREFIX, INCLUDE_REF_KEY, YAML_INCLUDE_SUFFIXES
 from troupe.config.errors import ConfigLoadError
 from troupe.config.model import (
+    AliasRef,
     Anchor,
     CollectionStyle,
     ConfigDocument,
@@ -245,6 +255,10 @@ class _Builder:
     ``chain`` holds the YAML files from the root down to this builder's file (inclusive); a YAML
     include of any of them is a cycle. ``aliases`` are the alias occurrences recorded when this
     builder's file was composed.
+
+    ``_stack`` holds the ids of the ruamel nodes being built (an alias of one of them lies inside
+    its own anchored node), and ``_anchored`` maps the id of each anchored ruamel node to the node
+    built at its anchor (the first build, since an alias always follows its anchor).
     """
 
     def __init__(
@@ -259,8 +273,53 @@ class _Builder:
         self._chain = chain
         self._aliases = aliases
         self._tags_by_anchor: dict[int, str] | None = None
+        self._stack: list[int] = []
+        self._anchored: dict[int, ConfigNode] = {}
 
     def build(self, node: Node, path: ConfigPath) -> ConfigNode:
+        """Build ``node`` for ``path``; an anchored node built for the first time is remembered as
+        the node built at its anchor."""
+        self._stack.append(id(node))
+        try:
+            built = self._build(node, path)
+        finally:
+            self._stack.pop()
+        if node.anchor is not None:
+            self._anchored.setdefault(id(node), built)
+        return built
+
+    def _child(self, slot: AliasSlot, node: Node, path: ConfigPath) -> ConfigNode:
+        """Build the child ``node`` in ``slot``: an alias place when an alias fills the slot."""
+        occurrence = self._alias_in(slot, node, path)
+        built = self.build(node, path)
+        return built if occurrence is None else self._alias_place(built, occurrence, node)
+
+    def _alias_in(self, slot: AliasSlot, node: Node, path: ConfigPath) -> AliasOccurrence | None:
+        """Return the alias filling ``slot``, or ``None``; refuse an alias inside its own anchored
+        node (config-aliases 1.4)."""
+        occurrence = self._aliases.get(slot)
+        if occurrence is not None and id(node) in self._stack:
+            raise ConfigLoadError(
+                f"alias '*{occurrence.name}' refers to its own anchored node",
+                file=self._source.path,
+                path=_text(path),
+            )
+        return occurrence
+
+    def _alias_place(
+        self, built: ConfigNode, occurrence: AliasOccurrence, node: Node
+    ) -> ConfigNode:
+        """Return ``built`` (``node`` built again at an alias) recording the alias it stands for."""
+        anchored = self._anchored.get(id(node))
+        if anchored is None:  # pragma: no cover - ruamel resolves aliases to earlier anchors only
+            raise ConfigLoadError(
+                f"internal error: alias '*{occurrence.name}' before its anchored node was built",
+                file=self._source.path,
+            )
+        token = Origin(self._source, occurrence.span)
+        return dataclasses.replace(built, alias=AliasRef(occurrence.name, token, anchored))
+
+    def _build(self, node: Node, path: ConfigPath) -> ConfigNode:
         self._refuse_properties(node, path)
         if isinstance(node, ScalarNode):
             scalar = self._scalar(node, path)
@@ -270,8 +329,7 @@ class _Builder:
         if isinstance(node, SequenceNode):
             items: list[ConfigNode] = []
             for index, item in enumerate(node.value):
-                self._refuse_alias((id(node), index), path.child(index))
-                items.append(self.build(item, path.child(index)))
+                items.append(self._child((id(node), index), item, path.child(index)))
             return ConfigSequence(
                 items=tuple(items),
                 style=_collection_style(node),
@@ -301,14 +359,9 @@ class _Builder:
         seen_text: set[str] = set()
         seen_values: set[tuple[type, ScalarValue]] = set()
         key_alias = self._aliases.get((id(node), None))
-        if key_alias is not None:
-            # Interim (config-aliases task 2.1): task 2.2 names the key path of the alias key.
-            raise ConfigLoadError(
-                f"alias '*{key_alias.name}' used as a mapping key: aliases are not supported yet",
-                file=self._source.path,
-                path=_text(path),
-            )
         for key_node, value_node in node.value:
+            if key_alias is not None:
+                self._refuse_alias_key(key_alias, key_node, path)
             if not isinstance(key_node, ScalarNode):
                 raise ConfigLoadError(
                     "mapping key is not a scalar (complex keys are not supported)",
@@ -337,13 +390,13 @@ class _Builder:
             seen_text.add(key)
             if is_typed:
                 seen_values.add(typed)
-            self._refuse_alias((id(node), id(key_node)), key_path)
+            slot = (id(node), id(key_node))
             if is_ref_key(key):
                 # The include string stays as written in the form; it is expanded below.
-                directive = self._ref_value(value_node, key_path, path)
+                directive = self._ref_value(slot, value_node, key_path, path)
                 value: ConfigNode = directive
             else:
-                value = self.build(value_node, key_path)
+                value = self._child(slot, value_node, key_path)
             entries.append(
                 MappingEntry(
                     key=key,
@@ -363,13 +416,23 @@ class _Builder:
         assert isinstance(directive.value, str)  # checked by ``_ref_value``
         return self.include(directive, directive.value[len(INCLUDE_PREFIX) :], path, form=mapping)
 
-    def _ref_value(self, node: Node, key_path: ConfigPath, path: ConfigPath) -> ConfigScalar:
-        """Return the ``$ref`` value as written; it must be an include string (Req 2.2)."""
+    def _ref_value(
+        self, slot: AliasSlot, node: Node, key_path: ConfigPath, path: ConfigPath
+    ) -> ConfigScalar:
+        """Return the ``$ref`` value as written; it must be an include string (Req 2.2). An alias
+        of an include string is an alias place of that string (config-aliases 1.5)."""
+        occurrence = self._alias_in(slot, node, key_path)
         self._refuse_properties(node, key_path)
         if isinstance(node, ScalarNode):
             scalar = self._scalar(node, key_path)
             if isinstance(scalar.value, str) and scalar.value.startswith(INCLUDE_PREFIX):
-                return scalar
+                if node.anchor is not None:
+                    self._anchored.setdefault(id(node), scalar)
+                if occurrence is None:
+                    return scalar
+                place = self._alias_place(scalar, occurrence, node)
+                assert isinstance(place, ConfigScalar)  # ``dataclasses.replace`` keeps the type
+                return place
         raise ConfigLoadError(
             f"`{INCLUDE_REF_KEY}` must be an include string ({INCLUDE_PREFIX}...)",
             file=self._source.path,
@@ -470,19 +533,23 @@ class _Builder:
         cycle.append(str(target_path))
         raise ConfigLoadError(f"include cycle: {' -> '.join(cycle)}", file=target_path)
 
-    def _refuse_alias(self, slot: AliasSlot, path: ConfigPath) -> None:
-        """Refuse an alias in ``slot`` (interim, config-aliases task 2.1).
+    def _refuse_alias_key(
+        self, occurrence: AliasOccurrence, key_node: Node, path: ConfigPath
+    ) -> None:
+        """Refuse ``key_node`` when it is an alias used as a key of the mapping at ``path``
+        (config-aliases 1.4), naming the key path (the mapping's path for a non-scalar key).
 
-        Task 2.2 replaces this by building the alias place. Until then an alias would otherwise
-        load as a plain copy of its anchored node, which writers could not tell from the anchor.
+        ``occurrence`` is the first alias recorded as a key of that mapping. Keys never carry
+        anchors (refused), so a key node that is an anchored node is one reached through an alias.
         """
-        occurrence = self._aliases.get(slot)
-        if occurrence is not None:
-            raise ConfigLoadError(
-                f"alias '*{occurrence.name}': aliases are not supported yet",
-                file=self._source.path,
-                path=_text(path),
-            )
+        if id(key_node) not in self._anchored and id(key_node) not in self._stack:
+            return
+        key_path = path.child(str(key_node.value)) if isinstance(key_node, ScalarNode) else path
+        raise ConfigLoadError(
+            f"alias '*{occurrence.name}' used as a mapping key is not supported",
+            file=self._source.path,
+            path=_text(key_path),
+        )
 
     def _refuse_properties(self, node: Node, path: ConfigPath, *, key: bool = False) -> None:
         """Refuse an explicit tag written on ``node`` itself (3.7), and an anchor on a mapping key

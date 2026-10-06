@@ -264,14 +264,13 @@ def test_cli_reports_an_undefined_alias_in_an_included_file(
 def test_cli_writes_no_reused_anchor_warning_to_stderr(
     make_theatre: MakeTheatre, run_cli: RunCli
 ) -> None:
-    """Req 1.2: a reused anchor name writes no warning to stderr; the only line on stderr is the
-    load error (aliases are still refused until task 2.2)."""
+    """Req 1.2: a reused anchor name writes no warning to stderr; each alias reads the most
+    recent definition before it."""
     theatre = make_theatre("a: &x 1\nb: *x\nc: &x 2\nd: *x\n")
 
-    result = run_cli("config", "get", "b", cwd=theatre)
+    results = [run_cli("config", "get", path, cwd=theatre) for path in ("b", "d")]
 
-    assert result.exit_code == 4
-    assert result.stdout == b""
-    assert "duplicate anchor" not in result.stderr
-    assert "Warning" not in result.stderr
-    assert result.stderr.count("\n") == 1
+    assert [(r.exit_code, r.stdout, r.stderr) for r in results] == [
+        (0, b"1\n", ""),
+        (0, b"2\n", ""),
+    ]

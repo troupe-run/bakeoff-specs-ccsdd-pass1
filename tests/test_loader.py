@@ -462,7 +462,6 @@ REFUSALS: list[tuple[str, str | bytes, str | None, str]] = [
     ("tag-on-block-sequence", "a: !!seq\n- 1\n", "a", "explicit tag"),
     ("tag-on-flow-item", "a: [1, !!int 2]\n", "a.1", "explicit tag"),
     ("tag-on-root", "!!map\na: 1\n", None, "explicit tag"),
-    ("anchor-then-alias", "a: &x 1\nb: *x\n", "b", "aliases are not supported yet"),
     ("anchor-on-key", "a:\n  &k b: 1\n", "a.b", "anchor on a mapping key is not supported"),
     ("anchor-after-tag", "a: !!str &x 5\n", "a", "explicit tag"),
     ("undefined-alias", "a: *x\n", None, "line 1"),
