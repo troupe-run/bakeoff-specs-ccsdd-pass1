@@ -246,6 +246,18 @@ Design-level consequences recorded here (no new requirement):
 - An anchored node that contains a merge key cannot be copied without writing `<<`, so `--expand-alias` on it is
   refused with the 9.2 message (it falls under 9.1).
 
+**Product owner review of the design (2026-10-06)**: approved as consistent with the step 6 "Aliases" section and
+the earlier contract sections in force.
+- *Confirmed as the contract's meaning*: a set at an anchor is written at the anchor and so appears at every alias.
+  A set reached through an alias (including the alias's own key and a no-op) exits 3 before any write, and stderr
+  mentions `--expand-alias`. `--expand-alias` replaces that one alias with a block-style copy commented
+  `  # expanded from *<name> by troupe` on the key's line, then sets the value in the copy, with the anchor and the
+  other aliases unchanged. Merge keys are never written. Every refusal comes before any write and names the file
+  and PATH. The issue #2 end-to-end test pins the reporter's scenario byte for byte.
+- *Out of contract, our choice, accepted*: reading merge keys, nested aliases, an alias in a flow collection, a key
+  line that already has a comment, refusing to copy an anchored node that holds `<<`, and refusing to remove an
+  anchor that is still used.
+
 ## Risks & Mitigations
 - **ruamel internal hook changes**. Mitigation: the version is pinned. A unit test asserts the recorded spans,
   and each record is validated against the source text (a mismatch is an internal load error, not a wrong write).
