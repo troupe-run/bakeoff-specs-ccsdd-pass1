@@ -13,6 +13,7 @@ import os
 import secrets
 import stat
 from pathlib import Path
+from typing import Final
 
 from troupe.config.errors import WriteRefusedError
 from troupe.config.model import SourceFile
@@ -21,13 +22,20 @@ _TEMP_INFIX = ".troupe-tmp-"
 _CREATE_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_CLOEXEC", 0)
 _MAX_NAME_ATTEMPTS = 16
 
+REMOTE_NEVER_WRITTEN: Final = "internal error: remote content is never written"
+"""The refusal of a write into a remote source (config-remote-schema 1.6, 6.1)."""
+
 
 def write_atomically(file: SourceFile, text: str) -> None:
     """Replace the content of ``file.real_path`` with ``text`` encoded as UTF-8, atomically.
 
     Raises :class:`WriteRefusedError` (``file=file.path``) when the file cannot be written; the
-    target then keeps its previous content and no temporary file remains.
+    target then keeps its previous content and no temporary file remains. A remote source
+    (``file.url`` set) is never written: it is refused naming its URL before anything is touched
+    (config-remote-schema, a backstop that no ``set`` reaches).
     """
+    if file.url is not None:
+        raise WriteRefusedError(REMOTE_NEVER_WRITTEN, file=file.url)
     try:
         data = text.encode("utf-8")
     except UnicodeEncodeError as error:

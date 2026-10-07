@@ -61,6 +61,13 @@ EXPANSION_STUCK: Final = "alias '*{name}' is still an alias after its expansion"
 """The problem of an expansion round that leaves its alias place an alias (a backstop that stops
 the expansion loop)."""
 
+REMOTE_SETS_REFUSED: Final = (
+    "the configuration has a remote include ({url}); set does not change configurations with "
+    "remote includes yet"
+)
+"""The temporary refusal (exit 3) of every set on a configuration that has a remote source, so that
+no write can reach remote content before the remote write guard exists (config-remote-schema)."""
+
 
 @dataclass(frozen=True)
 class SetOutcome:
@@ -93,6 +100,7 @@ def set_value(
     :class:`ConfigLoadError` when the changes cannot be recorded (every written file restored).
     """
     document = theatre.document
+    _refuse_remote(document, path)
     request = resolve_target(document, path, value, in_include=in_include)
     # Before the no-op check, so a no-op through an alias is refused too (config-aliases 5.3).
     expanded, request, texts = _expanded(
@@ -120,6 +128,18 @@ def set_value(
             raise _naming_unrestored(error, unrestored) from error
         raise
     return SetOutcome(written=tuple(patch.file.path for patch in patches), changes=changes)
+
+
+def _refuse_remote(document: ConfigDocument, path: ConfigPath) -> None:
+    """Refuse (exit 3, before anything is planned) a set on a configuration with a remote source,
+    naming the root file, PATH and the first remote include's URL."""
+    for file in document.files:
+        if file.url is not None:
+            raise WriteRefusedError(
+                REMOTE_SETS_REFUSED.format(url=file.url),
+                file=document.root_file.path,
+                path=str(path),
+            )
 
 
 def _expanded(

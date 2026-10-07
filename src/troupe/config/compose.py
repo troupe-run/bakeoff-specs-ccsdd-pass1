@@ -90,13 +90,13 @@ def compose_file(source: SourceFile) -> ComposedFile:
             warnings.simplefilter("ignore", ReusedAnchorWarning)
             node = yaml.compose(source.text)
     except MarkedYAMLError as error:
-        raise ConfigLoadError(_describe_marked_error(error), file=source.path) from error
+        raise ConfigLoadError(_describe_marked_error(error), file=source.shown) from error
     except YAMLError as error:
         first_line = str(error).splitlines()[0] if str(error) else type(error).__name__
-        raise ConfigLoadError(f"invalid YAML: {first_line}", file=source.path) from error
+        raise ConfigLoadError(f"invalid YAML: {first_line}", file=source.shown) from error
     composer = yaml.composer
     if not isinstance(composer, _RecordingComposer):  # pragma: no cover - set just above
-        raise ConfigLoadError("invalid YAML: unexpected composer", file=source.path)
+        raise ConfigLoadError("invalid YAML: unexpected composer", file=source.shown)
     aliases = dict(composer.recorded)
     for occurrence in aliases.values():
         written = source.text[occurrence.span.start : occurrence.span.end]
@@ -104,12 +104,12 @@ def compose_file(source: SourceFile) -> ComposedFile:
             raise ConfigLoadError(
                 f"internal error: alias '*{occurrence.name}' recorded at characters "
                 f"{occurrence.span.start}-{occurrence.span.end}, where the file reads {written!r}",
-                file=source.path,
+                file=source.shown,
             )
     if node is None:
         return ComposedFile(root=None, aliases=aliases)
     if not isinstance(node, Node):  # pragma: no cover - ruamel always returns a Node or None
-        raise ConfigLoadError("invalid YAML: unexpected composer result", file=source.path)
+        raise ConfigLoadError("invalid YAML: unexpected composer result", file=source.shown)
     return ComposedFile(root=node, aliases=aliases)
 
 

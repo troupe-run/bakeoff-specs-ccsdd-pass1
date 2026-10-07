@@ -88,7 +88,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - _Boundary: Loader, Setter, Verify, Expand, Shared, Planner_
   - _Requirements: 10.2, 10.3_
 
-- [ ] 2.4 Load remote includes, with a temporary refusal of writes
+- [x] 2.4 Load remote includes, with a temporary refusal of writes
   - The loader recognises remote prefixes from here on. A remote include in scalar or `$ref` form is fetched once per load (cached by URL, or read from the overrides by URL when given), decoded strictly as UTF-8, and read as YAML or text by the rule of 1.1. It becomes a source with that URL, listed with the files.
   - Remote YAML may hold remote includes, and a URL cycle is refused. A `file:` include in remote content is refused naming the URL and key path.
   - A fetch or decoding failure is a load error naming the including file (by display name), the key path and the URL. Every loader and compose error names sources by display name.

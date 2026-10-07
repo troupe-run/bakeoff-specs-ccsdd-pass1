@@ -66,6 +66,15 @@ parsed. A YAML target already on the include chain from the root is a
 cycle. Every produced node carries an :class:`IncludeRef`. Each file is read at most once; a file
 included several times (a diamond) is shared and listed once in ``ConfigDocument.files``.
 
+Remote includes (config-remote-schema 1.1-1.6, 2.1, 2.2): an include string starting with one of
+:data:`REMOTE_INCLUDE_PREFIXES` (recognised by :mod:`troupe.config.includes`) is a URL. It is
+fetched (:mod:`troupe.config.fetch`) at most once per load, or taken from the overrides under the
+URL, decoded strictly as UTF-8 and read as YAML or text by
+:func:`~troupe.config.includes.include_is_yaml`. It becomes a :class:`SourceFile` with ``url`` set,
+listed with the files; cycles and caches compare :attr:`SourceFile.key`. Remote YAML may hold remote
+includes but no ``file:`` include. A failed fetch names the including file, the key path and the
+URL; every error names its source by :attr:`SourceFile.shown` (a remote source by its URL).
+
 Mapping-form includes (config-include-overrides Requirement 1): a mapping with a key whose text is
 :data:`INCLUDE_REF_KEY` (any key style) is an include of that key's value, which is kept as written
 (never expanded) and must be an include string. The mapping as written is ``IncludeRef.form``; its
@@ -96,9 +105,12 @@ from troupe.config.constants import (
     INCLUDE_REF_KEY,
     LITERAL_TAG,
     MERGE_KEY,
+    REMOTE_INCLUDE_PREFIXES,
     YAML_INCLUDE_SUFFIXES,
 )
 from troupe.config.errors import ConfigLoadError
+from troupe.config.fetch import FetchError, fetch_remote
+from troupe.config.includes import include_is_yaml, is_include_string, is_remote_include
 from troupe.config.merge_keys import merge_mapping
 from troupe.config.model import (
     AliasRef,
@@ -141,6 +153,14 @@ _MERGE_VALUE_NEEDED: Final = (
 )
 """Start of the refusal of a merge key whose value cannot be merged (config-aliases 2.3)."""
 
+_INCLUDE_FORMS: Final = ", ".join(
+    f"{prefix}..." for prefix in (INCLUDE_PREFIX, *REMOTE_INCLUDE_PREFIXES)
+)
+"""The include string forms named by a refusal of a ``$ref`` value that is not one."""
+
+LOCAL_INCLUDE_IN_REMOTE: Final = "local includes are not allowed in remote content: {string}"
+"""The refusal of a ``file:`` include written in remote content (config-remote-schema 1.4)."""
+
 
 @dataclass(frozen=True)
 class _Tag:
@@ -152,9 +172,9 @@ class _Tag:
     after_anchor: bool
 
 
-type SourceTexts = Mapping[Path, str] | Mapping[Path | str, str]
+type SourceTexts = Mapping[Path, str] | Mapping[str, str] | Mapping[Path | str, str]
 """Sources' texts by identity (:attr:`SourceFile.key`: a local file's real path, a remote
-source's URL). Either key type is accepted, as a mapping is invariant in its keys."""
+source's URL). Any of these key types is accepted, as a mapping is invariant in its keys."""
 
 
 def load_config(
@@ -186,7 +206,7 @@ def load_config(
         if not isinstance(node, ConfigMapping):
             kind = "a list" if isinstance(node, ConfigSequence) else "a scalar"
             raise ConfigLoadError(
-                f"the top-level node is {kind}; expected a mapping", file=root_file.path
+                f"the top-level node is {kind}; expected a mapping", file=root_file.shown
             )
         root = node
     if schema is not None:
@@ -218,7 +238,13 @@ def load_include(
         value=string, style=ScalarStyle.PLAIN, origin=Origin(including, Span(0, 0))
     )
     builder = _Builder(including, loader, (including,), {}, schema)
-    return builder.include(directive, string.removeprefix(INCLUDE_PREFIX), path)
+    return builder.include(directive, _spec(string), path)
+
+
+def _spec(string: str) -> str:
+    """The spec of the include string ``string``: the text after ``file:``, or the whole URL of a
+    remote include."""
+    return string if is_remote_include(string) else string.removeprefix(INCLUDE_PREFIX)
 
 
 def _by_key(overrides: SourceTexts | None) -> dict[Path | str, str]:
@@ -264,7 +290,7 @@ class _Loader:
         if not target.is_file():
             raise ConfigLoadError(
                 f"include target {target} does not exist or is not a regular file",
-                file=including.path,
+                file=including.shown,
                 path=_text(key_path),
             )
         try:
@@ -272,18 +298,54 @@ class _Loader:
         except OSError as error:
             raise ConfigLoadError(
                 f"cannot read include target {target}: {_reason(error)}",
-                file=including.path,
+                file=including.shown,
                 path=_text(key_path),
             ) from error
         return self._remember(target, real_path, _decode(data, target))
 
-    def _remember(self, path: Path, real_path: Path, text: str) -> SourceFile:
+    def read_remote(self, url: str, including: SourceFile, key_path: ConfigPath) -> SourceFile:
+        """Return the remote source of ``url``: already read during this load, given in the
+        overrides (keyed by the URL), or fetched once and decoded strictly as UTF-8
+        (config-remote-schema 1.6, 10.3). A failed fetch or a body that is not UTF-8 names the
+        including file, the key path and the URL (2.1)."""
+        cached = self._sources.get(url)
+        if cached is not None:
+            return cached
+        override = self._overrides.get(url)
+        if override is not None:
+            return self._remember(Path(url), Path(url), override, url=url)
+        try:
+            data = fetch_remote(url)
+        except FetchError as error:
+            raise _fetch_failure(url, error.reason, including, key_path) from error
+        try:
+            text = data.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            reason = f"the content is not valid UTF-8 (invalid byte at offset {error.start})"
+            raise _fetch_failure(url, reason, including, key_path) from error
+        return self._remember(Path(url), Path(url), text, url=url)
+
+    def _remember(
+        self, path: Path, real_path: Path, text: str, *, url: str | None = None
+    ) -> SourceFile:
         source = SourceFile(
-            path=path, real_path=real_path, text=text, line_ending=_detect_line_ending(text)
+            path=path,
+            real_path=real_path,
+            text=text,
+            line_ending=_detect_line_ending(text),
+            url=url,
         )
         self._sources[source.key] = source
         self.files.append(source)
         return source
+
+
+def _fetch_failure(
+    url: str, reason: str, including: SourceFile, key_path: ConfigPath
+) -> ConfigLoadError:
+    return ConfigLoadError(
+        f"cannot fetch include {url}: {reason}", file=including.shown, path=_text(key_path)
+    )
 
 
 def _reason(error: OSError) -> str:
@@ -378,7 +440,7 @@ class _Builder:
         if occurrence is not None and id(node) in self._stack:
             raise ConfigLoadError(
                 f"alias '*{occurrence.name}' refers to its own anchored node",
-                file=self._source.path,
+                file=self._source.shown,
                 path=_text(path),
             )
         return occurrence
@@ -391,7 +453,7 @@ class _Builder:
         if anchored is None:  # pragma: no cover - ruamel resolves aliases to earlier anchors only
             raise ConfigLoadError(
                 f"internal error: alias '*{occurrence.name}' before its anchored node was built",
-                file=self._source.path,
+                file=self._source.shown,
             )
         token = Origin(self._source, occurrence.span)
         return dataclasses.replace(built, alias=AliasRef(occurrence.name, token, anchored))
@@ -402,7 +464,7 @@ class _Builder:
             scalar = self._scalar(node, path, literal)
             if self._is_include(scalar, path):
                 assert isinstance(scalar.value, str)  # checked by ``_is_include``
-                return self.include(scalar, scalar.value[len(INCLUDE_PREFIX) :], path)
+                return self.include(scalar, _spec(scalar.value), path)
             return scalar
         if isinstance(node, SequenceNode):
             items: list[ConfigNode] = []
@@ -417,7 +479,9 @@ class _Builder:
         if isinstance(node, MappingNode):
             return self._build_mapping(node, path)
         raise ConfigLoadError(  # pragma: no cover - the composer produces only these node kinds
-            f"unsupported YAML node {type(node).__name__}", file=self._source.path, path=_text(path)
+            f"unsupported YAML node {type(node).__name__}",
+            file=self._source.shown,
+            path=_text(path),
         )
 
     def _is_include(self, scalar: ConfigScalar, path: ConfigPath) -> bool:
@@ -426,8 +490,7 @@ class _Builder:
         schema at its own path (4.4). The decision comes before any read (4.6)."""
         return (
             scalar.literal is None
-            and isinstance(scalar.value, str)
-            and scalar.value.startswith(INCLUDE_PREFIX)
+            and is_include_string(scalar.value)
             and not uri_format_at(self._schema, path)
         )
 
@@ -458,7 +521,7 @@ class _Builder:
             if not isinstance(key_node, ScalarNode):
                 raise ConfigLoadError(
                     "mapping key is not a scalar (complex keys are not supported)",
-                    file=self._source.path,
+                    file=self._source.shown,
                     path=_text(path),
                 )
             key_style = self._scalar_style(key_node, path)
@@ -472,7 +535,7 @@ class _Builder:
             is_typed = key_style is ScalarStyle.PLAIN and not isinstance(key_value, str)
             if key in seen_text or (is_typed and typed in seen_values):
                 raise ConfigLoadError(
-                    "duplicate key in mapping", file=self._source.path, path=_text(key_path)
+                    "duplicate key in mapping", file=self._source.shown, path=_text(key_path)
                 )
             seen_text.add(key)
             if is_typed:
@@ -505,7 +568,7 @@ class _Builder:
         if directive is None:
             return mapping
         assert isinstance(directive.value, str)  # checked by ``_ref_value``
-        return self.include(directive, directive.value[len(INCLUDE_PREFIX) :], path, form=mapping)
+        return self.include(directive, _spec(directive.value), path, form=mapping)
 
     def _merged_view(
         self, written: ConfigMapping, merge_at: int, path: ConfigPath, *, form: bool
@@ -519,7 +582,7 @@ class _Builder:
             raise ConfigLoadError(
                 f"merge key '{MERGE_KEY}' is not supported among the overrides of a "
                 "mapping-form include",
-                file=self._source.path,
+                file=self._source.shown,
                 path=_text(key_path),
             )
         sources = self._merge_sources(entry.value, key_path)
@@ -552,7 +615,7 @@ class _Builder:
 
     def _bad_merge_value(self, found: str, key_path: ConfigPath) -> ConfigLoadError:
         return ConfigLoadError(
-            f"{_MERGE_VALUE_NEEDED}; {found}", file=self._source.path, path=_text(key_path)
+            f"{_MERGE_VALUE_NEEDED}; {found}", file=self._source.shown, path=_text(key_path)
         )
 
     def _ref_value(
@@ -565,14 +628,14 @@ class _Builder:
         literal = self._refuse_properties(node, key_path)
         if literal is not None:
             raise ConfigLoadError(
-                f"`{INCLUDE_REF_KEY}` must be an include string ({INCLUDE_PREFIX}...), "
+                f"`{INCLUDE_REF_KEY}` must be an include string ({_INCLUDE_FORMS}), "
                 f"not a '{LITERAL_TAG}' string",
-                file=self._source.path,
+                file=self._source.shown,
                 path=_text(path),
             )
         if isinstance(node, ScalarNode):
             scalar = self._scalar(node, key_path, None)
-            if isinstance(scalar.value, str) and scalar.value.startswith(INCLUDE_PREFIX):
+            if is_include_string(scalar.value):
                 if node.anchor is not None:
                     self._anchored.setdefault(id(node), scalar)
                 if occurrence is None:
@@ -581,8 +644,8 @@ class _Builder:
                 assert isinstance(place, ConfigScalar)  # ``dataclasses.replace`` keeps the type
                 return place
         raise ConfigLoadError(
-            f"`{INCLUDE_REF_KEY}` must be an include string ({INCLUDE_PREFIX}...)",
-            file=self._source.path,
+            f"`{INCLUDE_REF_KEY}` must be an include string ({_INCLUDE_FORMS})",
+            file=self._source.shown,
             path=_text(path),
         )
 
@@ -618,16 +681,32 @@ class _Builder:
     ) -> ConfigNode:
         """Return :meth:`include`'s result before the include's own anchor is recorded."""
         has_overrides = form is not None and bool(override_entries(form))
-        target_path = self._source.path.parent / spec
-        if not target_path.name.endswith(YAML_INCLUDE_SUFFIXES):
+        string = directive.value
+        assert isinstance(string, str)  # an include string, checked by the callers
+        remote = is_remote_include(string)
+        if not remote and self._source.url is not None:
+            raise ConfigLoadError(
+                LOCAL_INCLUDE_IN_REMOTE.format(string=string),
+                file=self._source.shown,
+                path=_text(path),
+            )
+        target_path = Path(string) if remote else self._source.path.parent / spec
+        # What messages name: the URL of a remote target, else the target path as opened.
+        shown: Path | str = string if remote else target_path
+        if not include_is_yaml(string):
             if has_overrides:
+                suffixes = "/".join(YAML_INCLUDE_SUFFIXES)
+                what = (
+                    f"the URL path of {shown} does not end in {suffixes}"
+                    if remote
+                    else f"{shown} is not a {suffixes} file"
+                )
                 raise ConfigLoadError(
-                    f"overrides apply only to YAML includes; {target_path} is not a "
-                    f"{'/'.join(YAML_INCLUDE_SUFFIXES)} file",
-                    file=self._source.path,
+                    f"overrides apply only to YAML includes; {what}",
+                    file=self._source.shown,
                     path=_text(path),
                 )
-            target = self._loader.read_include(target_path, self._source, path)
+            target = self._read(string, target_path, path)
             ref = IncludeRef(IncludeKind.TEXT, spec, target, directive.origin, form)
             return ConfigScalar(
                 value=target.text,
@@ -635,8 +714,8 @@ class _Builder:
                 origin=Origin(target, Span(0, len(target.text))),
                 include=ref,
             )
-        self._refuse_cycle(target_path)
-        target = self._loader.read_include(target_path, self._source, path)
+        self._refuse_cycle(string if remote else target_path.resolve(), shown)
+        target = self._read(string, target_path, path)
         ref = IncludeRef(IncludeKind.YAML, spec, target, directive.origin, form)
         composed = _compose(target)
         embedded: ConfigNode | None = None
@@ -652,8 +731,8 @@ class _Builder:
                 else:
                     kind = "a list" if isinstance(embedded, ConfigSequence) else "a scalar"
                 raise ConfigLoadError(
-                    f"overrides need a mapping; the included file {target_path} holds {kind}",
-                    file=self._source.path,
+                    f"overrides need a mapping; the included file {shown} holds {kind}",
+                    file=self._source.shown,
                     path=_text(path),
                 )
             # ``embedded`` carries an include only when the target's root is itself a mapping-form
@@ -672,15 +751,23 @@ class _Builder:
             embedded, include=dataclasses.replace(ref, inner=embedded.include)
         )
 
-    def _refuse_cycle(self, target_path: Path) -> None:
-        """Refuse a YAML include of a file already on the chain, listing the cycle (4.6)."""
-        real_path = target_path.resolve()
+    def _read(self, string: str, target_path: Path, path: ConfigPath) -> SourceFile:
+        """Read the target of the include string ``string``: fetched when remote
+        (config-remote-schema 1.1), else the local file ``target_path``."""
+        if is_remote_include(string):
+            return self._loader.read_remote(string, self._source, path)
+        return self._loader.read_include(target_path, self._source, path)
+
+    def _refuse_cycle(self, key: Path | str, shown: Path | str) -> None:
+        """Refuse a YAML include of a source already on the chain (by :attr:`SourceFile.key`:
+        the real path, or the URL of remote content), listing the cycle (4.6;
+        config-remote-schema 1.5)."""
         keys = [source.key for source in self._chain]
-        if real_path not in keys:
+        if key not in keys:
             return
-        cycle = [str(source.path) for source in self._chain[keys.index(real_path) :]]
-        cycle.append(str(target_path))
-        raise ConfigLoadError(f"include cycle: {' -> '.join(cycle)}", file=target_path)
+        cycle = [str(source.shown) for source in self._chain[keys.index(key) :]]
+        cycle.append(str(shown))
+        raise ConfigLoadError(f"include cycle: {' -> '.join(cycle)}", file=shown)
 
     def _refuse_alias_key(
         self, occurrence: AliasOccurrence, key_node: Node, path: ConfigPath
@@ -696,7 +783,7 @@ class _Builder:
         key_path = path.child(str(key_node.value)) if isinstance(key_node, ScalarNode) else path
         raise ConfigLoadError(
             f"alias '*{occurrence.name}' used as a mapping key is not supported",
-            file=self._source.path,
+            file=self._source.shown,
             path=_text(key_path),
         )
 
@@ -715,13 +802,13 @@ class _Builder:
             if literal is None:
                 raise ConfigLoadError(
                     f"explicit tag '{tag.text}' is not supported",
-                    file=self._source.path,
+                    file=self._source.shown,
                     path=_text(path),
                 )
         if key and node.anchor is not None:
             raise ConfigLoadError(
                 "anchor on a mapping key is not supported",
-                file=self._source.path,
+                file=self._source.shown,
                 path=_text(path),
             )
         return literal
@@ -742,7 +829,7 @@ class _Builder:
             where = f"must follow the anchor (write '&{node.anchor} {LITERAL_TAG}')"
         if where is not None:
             raise ConfigLoadError(
-                f"explicit tag '{LITERAL_TAG}' {where}", file=self._source.path, path=_text(path)
+                f"explicit tag '{LITERAL_TAG}' {where}", file=self._source.shown, path=_text(path)
             )
         return tag.span
 
@@ -805,7 +892,7 @@ class _Builder:
             raise ConfigLoadError(
                 f"internal error: anchor '&{name}' expected at characters "
                 f"{span.start}-{span.end}, where the file reads {written!r}",
-                file=self._source.path,
+                file=self._source.shown,
             )
         return Anchor(name, span)
 
@@ -828,7 +915,9 @@ class _Builder:
         style = _SCALAR_STYLES.get(node.style)
         if style is None:  # pragma: no cover - ruamel reports only the five YAML styles
             raise ConfigLoadError(
-                f"unsupported scalar style {node.style!r}", file=self._source.path, path=_text(path)
+                f"unsupported scalar style {node.style!r}",
+                file=self._source.shown,
+                path=_text(path),
             )
         return style
 
