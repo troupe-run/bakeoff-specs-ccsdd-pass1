@@ -56,9 +56,14 @@
   - `Draft202012Validator.check_schema` raises `SchemaError` for an invalid schema. `iter_errors` yields every
     failure with `absolute_path`. `best_match` picks the most relevant one. `format` is an annotation unless a
     `FormatChecker` is passed.
-  - A `$ref` to `https://…` is **not** retrieved by default. Validation raises
-    `jsonschema.exceptions._WrappedReferencingError`, which is a `referencing.exceptions.Unresolvable`. A missing
-    local `#/$defs/x` raises the same. Both are raised lazily, when validation meets the `$ref`.
+  - A `$ref` to an unresolvable host raises `jsonschema.exceptions._WrappedReferencingError`, which is a
+    `referencing.exceptions.Unresolvable`. A missing local `#/$defs/x` raises the same. Both are raised lazily,
+    when validation meets the `$ref`.
+  - *Corrected during task 1.3*: without an explicit registry, jsonschema 4.26 falls back to its deprecated
+    resolver and **does** fetch a reachable `https://…` `$ref` over HTTP (only a DeprecationWarning is issued;
+    proven against a local HTTP server). The validator is therefore built with an empty
+    `referencing.Registry()`, so nothing is retrieved and a remote `$ref` is unresolvable (exit 4, Req 5.3).
+    Every validation must go through `schema.validate()` to keep that registry.
   - jsonschema ships no `py.typed`, but `referencing` does. The typeshed stubs `types-jsonschema` cover jsonschema.
 - **Implications**: runtime dependency `jsonschema`, dev dependency `types-jsonschema`. Catch `Unresolvable` from
   the typed `referencing` package. "Unresolvable `$ref`" means met during validation (5.3).

@@ -53,7 +53,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - Done when unit tests (in `tests/test_includes.py`) show `key`, `shown` and the include string for local and remote references, and an error message that names a URL, and the full existing suite still passes
   - _Requirements: 10.2_
 
-- [ ] 1.3 Read the schema, find `format: uri`, and validate a configuration
+- [x] 1.3 Read the schema, find `format: uri`, and validate a configuration
   - Reading returns nothing when the schema file is absent. It is a load error naming the schema file when the file is not a regular file, cannot be read, is not UTF-8 or JSON, is not an object or boolean, has a `$schema` other than 2020-12, or is not a valid 2020-12 schema.
   - The walker follows `properties`, then `items` for a digit-only segment, then `additionalProperties`, each only when it is an object schema. A path has the format only when the final subschema's `format` is exactly `uri`.
   - Validation turns a node tree into its plain JSON value. It uses the 2020-12 validator without format assertion and reports the best-matching failure as a schema-violation error naming the schema file and the dotted key path (none at the root). An unresolvable `$ref`, local or remote, is a load error naming the schema file, and nothing is retrieved.
@@ -178,3 +178,6 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - Step-7 notes: config-foundation Requirement 4 (remote includes), 3.7 and decision I (`!literal`), and the schema exit-4 case. config-set-writeback decision D and 2.7–2.8 (`!literal` unless `--include`), and the set flags. config-file-sync (the watch set gains the schema file; URLs are re-fetched, not polled). config-get-show (`--sources` label of a remote scalar). Tick the step 7 checkboxes in `.kiro/steering/roadmap.md`.
   - Done when every requirement ID of this spec appears in a test docstring in the files listed above, no test there names an ID that does not exist, and the full suite, mypy and ruff pass
   - _Requirements: 10.1, 10.2_
+
+## Implementation Notes
+- 1.3: jsonschema 4.26 fetches remote `$ref`s unless a registry is passed; always validate through `schema.validate()` (empty `referencing.Registry()`).
