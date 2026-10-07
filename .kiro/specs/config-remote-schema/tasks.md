@@ -38,7 +38,7 @@ fix has not been re-reviewed.
 **Fast-track approval (2026-10-07).** The product owner was not available. The plan is approved under `-y`
 together with the design decisions it depends on (research.md Decisions 1–7, choices 1–22).
 
-- [ ] 1. Foundation: dependencies, recognition, model, fetcher and schema
+- [x] 1. Foundation: dependencies, recognition, model, fetcher and schema
 - [x] 1.1 Add the dependencies, the step 7 constants and the include recognition module
   - Add `jsonschema` (runtime, `>=4.23,<5`) and `types-jsonschema` (dev) with uv, so the lock file changes and `mypy --strict` sees typed jsonschema.
   - One home for the step 7 names: the remote include prefixes, the `!literal` tag, the schema file name, the 2020-12 dialect URI and the 10-second fetch timeout.
@@ -68,7 +68,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - _Depends: 1.1_
   - _Requirements: 1.6, 2.1, 10.4_
 
-- [ ] 2. Core: literals, the schema and remote includes in the loader
+- [x] 2. Core: literals, the schema and remote includes in the loader
 - [x] 2.1 Load `!literal` scalars and narrow the explicit-tag refusal
   - A scalar tagged exactly `!literal` loads as its text, in any style and without plain-scalar typing (empty is `""`). It records the tag's span, and its value span excludes the tag, as for anchors (`&a !literal x` loads). It is never an include. `!literal` on a mapping or a list, `!literal` written before an anchor, any other tag, and a `$ref` value tagged `!literal` stay load errors (exit 4) naming the file, the key path and the tag.
   - Existing tests change in this task: in `tests/test_loader.py` (`REFUSALS`, ~:455), `tests/test_loader_aliases.py` (`TAGGED_ANCHORS`, ~:316) and `tests/test_e2e_locate_load.py` (~:210), every other tag stays refused. Docstrings that say "every explicit tag" are narrowed, and `!literal` acceptance rows move to the new file.
@@ -104,7 +104,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - Done when tests prove the `--sources` label of a remote scalar, a watcher that reloads (and re-fetches) on a schema-file edit and never puts a URL in its watch set, and a watcher that reports a failing fetch and keeps running with nothing recorded
   - _Requirements: 2.2, 3.1, 3.2, 3.4, 3.5_
 
-- [ ] 3. File layer: marks, rendering, the remote guard and the read-back
+- [x] 3. File layer: marks, rendering, the remote guard and the read-back
 - [x] 3.1 Mark include strings in VALUE
   - Each string in VALUE (scalar, or nested in flow mappings and lists, never keys) that is an include string is marked by its own path: no mark when the schema gives that path `format: uri`, otherwise an include with `--include` and a literal without.
   - A mapping with a `$ref` key without `--include` is refused (exit 3) naming PATH and mentioning `--include`.
@@ -144,7 +144,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - _Depends: 3.1, 3.2, 3.4_
   - _Requirements: 8.1, 8.7, 9.1, 9.2, 9.3, 9.5, 9.6, 10.2_
 
-- [ ] 4. Validation: end-to-end through the CLI and a local server
+- [x] 4. Validation: end-to-end through the CLI and a local server
 - [x] 4.1 (P) Validate reading remote content, literals and the schema end to end
   - `get`, `show` and `show --sources` over remote YAML and text includes, both forms, remote in remote, for `troupe.yml` and `troupe.yaml`. `!literal` and `format: uri` strings print as strings, and the server log shows no request for them.
   - Fetch failures (404, refused connection, bad UTF-8, bad YAML, `file:` in remote content, a cycle) and schema failures exit 4, name the file, key path and URL or the schema file, and create no history state.
@@ -173,8 +173,8 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - _Boundary: test_set_literals_
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8, 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 10.2_
 
-- [ ] 5. Spec notes and traceability
-- [ ] 5.1 Point earlier specs at step 7 and check traceability
+- [x] 5. Spec notes and traceability
+- [x] 5.1 Point earlier specs at step 7 and check traceability
   - Step-7 notes: config-foundation Requirement 4 (remote includes), 3.7 and decision I (`!literal`), and the schema exit-4 case. config-set-writeback decision D and 2.7–2.8 (`!literal` unless `--include`), and the set flags. config-file-sync (the watch set gains the schema file; URLs are re-fetched, not polled). config-get-show (`--sources` label of a remote scalar). Tick the step 7 checkboxes in `.kiro/steering/roadmap.md`.
   - Done when every requirement ID of this spec appears in a test docstring in the files listed above, no test there names an ID that does not exist, and the full suite, mypy and ruff pass
   - _Requirements: 10.1, 10.2_
@@ -183,3 +183,4 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
 - 1.3: jsonschema 4.26 fetches remote `$ref`s unless a registry is passed; always validate through `schema.validate()` (empty `referencing.Registry()`).
 - 2.3: `shared.written_location` and `layout.py` (two `real_path` comparisons) still use `real_path`; task 3.3 must switch them to `SourceFile.key` (a URL as `Path` collapses `//` and `.` segments) and update test annotations of `WrittenLocation`.
 - 3.2: unit tests that reload include-like VALUEs should use hosts that never leave the machine (`.invalid` or the `remote_server` fixture), so a tagging regression fails locally instead of fetching; existing `https://x` fixtures are to be swept before final validation.
+- 5.1: the sweep of the 3.2 note was settled as not needed: the remaining `https://x`-style VALUEs in `tests/writeback/test_value_marks.py` and `tests/test_loader_literals.py` use single-label hosts (`x`, `old`, `n`), which no resolver sends to the internet; every end-to-end test uses the local server or `.invalid`.
