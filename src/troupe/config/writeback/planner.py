@@ -13,7 +13,11 @@ decision":
   file's whole content replaced by the text-include content rule (2.2, 2.3), or is refused when
   VALUE is not a string (2.4);
 * an existing literal or folded block changed to a string it can still hold is rewritten in place
-  (9.4, 9.5, 10.x);
+  (9.4, 9.5, 10.x), unless the block is tagged ``!literal`` or the string is marked ``LITERAL``:
+  the block is then replaced whole (config-remote-schema 8.3, 8.4);
+* a ``LITERAL`` string is written tagged ``!literal`` on its line, never as a block scalar, and a
+  replaced ``!literal`` scalar loses its tag with the rest of its inline extent, while an anchor
+  before the tag stays (config-remote-schema 8.1, 8.3, 8.4);
 * an existing plain, quoted or empty scalar changed to a scalar is replaced in its slot in the
   chosen quote style (6.1-6.3); a multi-line string becomes a literal block in a block collection
   (9.1, 9.2) and a double-quoted scalar in a flow collection or where a literal block cannot hold
@@ -150,7 +154,13 @@ from troupe.config.writeback.target import (
     place_new_keys,
     text_include_value,
 )
-from troupe.config.writeback.value import NewMapping, NewScalar, NewSequence, NewValue
+from troupe.config.writeback.value import (
+    NewMapping,
+    NewScalar,
+    NewSequence,
+    NewValue,
+    ScalarMark,
+)
 
 _QUOTED_OR_PLAIN: Final = frozenset(
     {ScalarStyle.PLAIN, ScalarStyle.SINGLE_QUOTED, ScalarStyle.DOUBLE_QUOTED}
@@ -695,7 +705,10 @@ class _Planner:
                 self.changes.replace(*where, value)
                 self._replace_scalar(layout, slot, node, value, path)
                 return True
-            if isinstance(value.value, str):
+            # A `!literal` block scalar is replaced whole, tag included, and a literal-marked
+            # string is never a block scalar (config-remote-schema 8.3, 8.4).
+            in_place = node.literal is None and value.mark is not ScalarMark.LITERAL
+            if in_place and isinstance(value.value, str):
                 if self._rewrite_block(layout, slot, node, value.value, path):
                     self.changes.replace(*where, value)
                     return True

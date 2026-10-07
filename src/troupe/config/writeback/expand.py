@@ -29,6 +29,10 @@ by ``  <comment>`` when the copy has no inline part, where the comment is
   so an indentation indicator stays valid. The anchor's header comment is not copied (7.6);
 * an include string's directive token as written (7.4).
 
+A scalar written with the ``!literal`` tag is copied with it (``!literal`` and one space before
+the text above; a block scalar's header indicators start at the tag), so the copy still loads as
+a string and never as an include (config-remote-schema 10.2).
+
 A non-empty mapping or list (7.2, 8.3) has no inline part: its copy is written in block style on
 the lines after the key's line (or the list item's line), under the column rules of
 ``collection_render.render_block_value`` with the file's indentation step, dash offset and line
@@ -49,6 +53,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from troupe.config.constants import LITERAL_TAG
 from troupe.config.errors import WriteRefusedError
 from troupe.config.model import (
     CollectionStyle,
@@ -243,16 +248,22 @@ class _Copier:
 
     def _scalar(self, node: ConfigScalar, owner_column: int) -> _Copy:
         if node.style in _BLOCK_STYLES:
+            # The header indicators start at a `!literal` tag, so the copy keeps it.
             return _block_scalar_copy(self.document, self.layout, owner_column, node)
         source = _source(node.origin)
         if _single_line(source):
-            return _Copy(source, ())
+            if node.literal is None:
+                return _Copy(source, ())
+            # A copy keeps the tag, so it still loads as a string (config-remote-schema 10.2).
+            return _Copy(LITERAL_TAG + (" " + source if source else ""), ())
         if not isinstance(node.value, str):  # pragma: no cover - multi-line plain is a string
             raise ValueError(f"multi-line scalar {source!r} is not a string")
         preferred = quote_style_of(node.style)
         rendered = render_scalar(
             NewScalar(node.value, None), Context.BLOCK_VALUE, preferred, self.ctx.path
         )
+        if node.literal is not None:
+            rendered = LITERAL_TAG + " " + rendered
         return _Copy(rendered, ())
 
 

@@ -6,7 +6,8 @@ mapping is written one indentation step right of its key, a nested list with its
 the file's dash offset from its key, and a collection that is a list item compactly: its first entry
 follows ``- `` and its further entries are two columns right of the ``-``. A multi-line string is a
 literal block whose content is one step right of its key (or ``-``), or double-quoted when a literal
-block cannot hold it (9.7). An empty collection is ``{}``/``[]`` inline.
+block cannot hold it (9.7) or the string is marked ``LITERAL`` (tagged ``!literal`` on its line,
+config-remote-schema 8.3). An empty collection is ``{}``/``[]`` inline.
 
 Flow style (8.5, 8.6, 9.3): ``{k: v, k2: v2}`` and ``[a, b]``; multi-line strings are double-quoted.
 
@@ -26,7 +27,13 @@ from troupe.config.constants import INCLUDE_REF_KEY
 from troupe.config.paths import ConfigPath
 from troupe.config.writeback.block_scalar import literal_fits, render_literal
 from troupe.config.writeback.scalar_render import Context, QuoteStyle, render_key, render_scalar
-from troupe.config.writeback.value import NewMapping, NewScalar, NewSequence, NewValue
+from troupe.config.writeback.value import (
+    NewMapping,
+    NewScalar,
+    NewSequence,
+    NewValue,
+    ScalarMark,
+)
 
 _COMPACT_INDENT: Final = 2
 """Further entries of a list-item collection start this many columns right of its ``-`` (8.4)."""
@@ -173,7 +180,9 @@ def _block_scalar(
     value: NewScalar, owner_column: int, ctx: RenderContext, preferred: QuoteStyle | None
 ) -> tuple[str, str]:
     text = value.value
-    if isinstance(text, str) and "\n" in text and literal_fits(text):
+    # A literal-marked string stays on its line, tagged (config-remote-schema 8.3).
+    tagged = value.mark is ScalarMark.LITERAL
+    if isinstance(text, str) and "\n" in text and not tagged and literal_fits(text):
         return render_literal(text, owner_column + ctx.step, ctx.line_break)
     return render_scalar(value, Context.BLOCK_VALUE, preferred, ctx.path), ""
 

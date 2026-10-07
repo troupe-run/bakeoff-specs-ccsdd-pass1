@@ -5,7 +5,9 @@ Lines, columns, line breaks, indentation step, list dash offset, comments, value
 
 Anchors, aliases and merge keys (config-aliases research.md, Decision 3 and "one node, one written
 place"): an anchored value's ``&name`` property belongs to its slot's indicator (``indicator_end``
-is after it) and is a token for comment detection. In every walk over the nodes written in a file
+is after it) and is a token for comment detection. A ``!literal`` tag (written after any anchor)
+belongs to its scalar: the scalar's inline extent starts at the tag, and the tag is a token for
+comment detection (config-remote-schema 8.4). In every walk over the nodes written in a file
 an alias place is a leaf written at its ``*name`` token, and a mapping with a merge key is walked
 as written (its own entries and the ``<<`` entry, ``merge.written``), never as its merged view.
 
@@ -20,6 +22,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Final
 
+from troupe.config.constants import LITERAL_TAG
 from troupe.config.model import (
     CollectionStyle,
     ConfigDocument,
@@ -307,7 +310,9 @@ class FileLayout:
 
         The span of a non-empty flow scalar, directive or flow collection; the empty span at the
         indicator end for an empty value or a block collection starting on a later line; the header
-        indicators of a block scalar; for a block collection starting on the slot's line (compact
+        indicators of a block scalar; for a scalar with a ``!literal`` tag written here, from the
+        tag on (so a replacement removes the tag, while an anchor before it stays,
+        config-remote-schema 8.4); for a block collection starting on the slot's line (compact
         list item) the text from its start to the line's content end without the end-of-line
         comment and the spaces before it; the ``*name`` token of an alias place.
         """
@@ -317,9 +322,13 @@ class FileLayout:
         span = node.origin.span
         if _is_empty_null(node):
             return Span(slot.indicator_end, slot.indicator_end)
+        # A `!literal` scalar's extent starts at its tag (config-remote-schema 8.4).
+        start = self._written_start(node)
         if _is_block_scalar(node):
-            return Span(span.start, self._header_end(span.start))
-        if isinstance(node, ConfigScalar) or node.style is CollectionStyle.FLOW:
+            return Span(start, self._header_end(span.start))
+        if isinstance(node, ConfigScalar):
+            return Span(start, span.end)
+        if node.style is CollectionStyle.FLOW:
             return span
         start = self._collection_start(node)
         line = self.line_of(start)
@@ -493,7 +502,19 @@ class FileLayout:
 
     def _value_start(self, node: ConfigNode) -> int:
         local = self._local(node)
-        return local.start if isinstance(local, Span) else local.origin.span.start
+        return local.start if isinstance(local, Span) else self._written_start(local)
+
+    def _written_start(self, node: ConfigNode) -> int:
+        """Start of ``node`` as written here: its ``!literal`` tag when it has one written in this
+        file (the node's own span excludes the tag), else its span start."""
+        tag = self._literal_tag(node)
+        return node.origin.span.start if tag is None else tag.start
+
+    def _literal_tag(self, node: ConfigNode) -> Span | None:
+        """The span of the ``!literal`` tag written in this file on scalar ``node``, or ``None``."""
+        if not isinstance(node, ConfigScalar) or node.literal is None:
+            return None
+        return node.literal if self._here(node.origin.file) else None
 
     def _collection_start(self, node: ConfigMapping | ConfigSequence) -> int:
         """First key of a block mapping, first ``-`` of a block sequence, else the span start."""
@@ -608,6 +629,11 @@ class FileLayout:
             index = header
             while index > 0 and self._text[index - 1] in _INLINE_SPACE:
                 index -= 1
+            if self._text.endswith(LITERAL_TAG, 0, index):
+                # ``- !literal |2``: the tag stands between the ``-`` and the header.
+                index -= len(LITERAL_TAG)
+                while index > 0 and self._text[index - 1] in _INLINE_SPACE:
+                    index -= 1
             if index == 0 or self._text[index - 1] != _DASH:
                 return None
             owner = self.column(index - 1)
@@ -667,6 +693,9 @@ class FileLayout:
                 return
             span = node.origin.span
             if isinstance(node, ConfigScalar):
+                tag = self._literal_tag(node)
+                if tag is not None:
+                    token(tag.start, tag.end)
                 if _is_empty_null(node):
                     return
                 if _is_block_scalar(node):

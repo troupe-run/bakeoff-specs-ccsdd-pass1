@@ -114,7 +114,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - _Depends: 1.3, 2.2_
   - _Requirements: 8.1, 8.2, 8.5, 8.6, 9.3, 9.5_
 
-- [ ] 3.2 Write tagged strings and replace existing `!literal` scalars whole
+- [x] 3.2 Write tagged strings and replace existing `!literal` scalars whole
   - A literal-marked string is written as `!literal`, one space, and the string in the style chosen as before (double-quoted when it has a line break), in block values, flow values and list items. It never takes a block-scalar path.
   - The inline extent of a `!literal` scalar starts at its tag, so a replacement removes the tag and keeps an anchor written before it. An existing `!literal` block scalar is replaced as a whole, and the tag counts as a token for comment placement.
   - A string written as a text include's content is written as text, untagged. An alias expansion copies a `!literal` scalar with its tag (config-aliases 7.4).
@@ -182,3 +182,4 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
 ## Implementation Notes
 - 1.3: jsonschema 4.26 fetches remote `$ref`s unless a registry is passed; always validate through `schema.validate()` (empty `referencing.Registry()`).
 - 2.3: `shared.written_location` and `layout.py` (two `real_path` comparisons) still use `real_path`; task 3.3 must switch them to `SourceFile.key` (a URL as `Path` collapses `//` and `.` segments) and update test annotations of `WrittenLocation`.
+- 3.2: unit tests that reload include-like VALUEs should use hosts that never leave the machine (`.invalid` or the `remote_server` fixture), so a tagging regression fails locally instead of fetching; existing `https://x` fixtures are to be swept before final validation.
