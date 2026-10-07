@@ -46,7 +46,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - Done when unit tests prove each prefix and its case sensitivity, the YAML/text decision for URLs with queries, fragments and upper-case suffixes, and that `file:` suffix rules are unchanged
   - _Requirements: 1.1, 1.2_
 
-- [ ] 1.2 Give the model remote identity, literal properties, include strings and a schema source
+- [x] 1.2 Give the model remote identity, literal properties, include strings and a schema source
   - A source file can carry a URL, and has an identity (`key`, which is the URL or the real path) and a display name (`shown`, which is the URL or the path as opened). A scalar can record its `!literal` property span. An include reference gives its whole include string. A document can carry the schema it was checked against. All new fields default to "none", so existing constructions are unchanged.
   - Errors accept a URL as their file. A schema-violation error keeps its failing key path and detail.
   - The six places that rebuild `"file:" + spec` (compare, shared, planner) use the include reference's string instead, with no change in behaviour.

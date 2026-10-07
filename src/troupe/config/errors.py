@@ -4,7 +4,8 @@ Every failure the CLI reports is a :class:`TroupeError` subclass carrying the of
 ``file``, the key ``path`` and the ``problem``. The exit code is a class attribute, so the CLI
 never decides exit codes itself. Files are given as the path that was opened (theatre argument
 joined with ``.troupe/...`` and include specs, not resolved) so users recognise them; for a
-value written in an included file, the included file is named.
+value written in an included file, the included file is named. A remote source is named by its
+URL, so ``file`` may also be a string.
 """
 
 from enum import IntEnum
@@ -22,7 +23,7 @@ class ExitCode(IntEnum):
     PATH = 5
 
 
-def format_message(*, file: Path | None, path: str | None, problem: str) -> str:
+def format_message(*, file: Path | str | None, path: str | None, problem: str) -> str:
     """Return ``<file>: <path>: <problem>``, omitting whichever of file and path is not set."""
     parts: list[str] = []
     if file is not None:
@@ -38,7 +39,9 @@ class TroupeError(Exception):
 
     exit_code: ClassVar[ExitCode]
 
-    def __init__(self, problem: str, *, file: Path | None = None, path: str | None = None) -> None:
+    def __init__(
+        self, problem: str, *, file: Path | str | None = None, path: str | None = None
+    ) -> None:
         super().__init__(problem)
         self.problem = problem
         self.file = file
@@ -64,6 +67,21 @@ class ConfigLoadError(TroupeError):
     """The configuration or the history store cannot be located, read or loaded."""
 
     exit_code = ExitCode.LOAD
+
+
+class SchemaViolationError(ConfigLoadError):
+    """The configuration does not match its JSON Schema; ``file`` names the schema file.
+
+    ``key_path`` is the dotted key path of the failing value (``None`` at the root) and ``detail``
+    the validator's message, kept apart so a caller can re-word the error.
+    """
+
+    def __init__(self, detail: str, *, file: Path | str, key_path: str | None) -> None:
+        super().__init__(
+            f"the configuration does not match the schema: {detail}", file=file, path=key_path
+        )
+        self.key_path = key_path
+        self.detail = detail
 
 
 class PathError(TroupeError):

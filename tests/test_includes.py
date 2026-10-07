@@ -3,10 +3,32 @@
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
 
+from pathlib import Path
+
 import pytest
 
 from troupe.config import constants
+from troupe.config.errors import (
+    ConfigLoadError,
+    SchemaViolationError,
+    TroupeError,
+    WriteRefusedError,
+)
 from troupe.config.includes import include_is_yaml, is_include_string, is_remote_include
+from troupe.config.model import (
+    CollectionStyle,
+    ConfigDocument,
+    ConfigMapping,
+    ConfigScalar,
+    IncludeKind,
+    IncludeRef,
+    LineEnding,
+    Origin,
+    ScalarStyle,
+    SchemaSource,
+    SourceFile,
+    Span,
+)
 from troupe.config.scalars import ScalarValue
 
 
@@ -128,3 +150,114 @@ def test_remote_yaml_is_decided_by_the_url_path_suffix(url: str, expected: bool)
 def test_file_includes_keep_the_name_suffix_rule(text: str, expected: bool) -> None:
     """Req 1.2: a `file:` target is YAML by its name's suffix, exactly as before step 7."""
     assert include_is_yaml(text) is expected
+
+
+URL = "https://example.test/shared/base.yml?v=1"
+
+
+def _local(tmp_path: Path) -> SourceFile:
+    real = tmp_path / "inc.yaml"
+    return SourceFile(
+        path=Path("theatre/.troupe/../inc.yaml"),
+        real_path=real,
+        text="a: 1\n",
+        line_ending=LineEnding.LF,
+    )
+
+
+def _remote() -> SourceFile:
+    return SourceFile(
+        path=Path(URL), real_path=Path(URL), text="a: 1\n", line_ending=LineEnding.LF, url=URL
+    )
+
+
+def _including() -> SourceFile:
+    path = Path("theatre/.troupe/troupe.yaml")
+    return SourceFile(path=path, real_path=path, text="x: 1\n", line_ending=LineEnding.LF)
+
+
+def test_a_local_source_is_identified_by_its_real_path_and_shown_as_opened(tmp_path: Path) -> None:
+    """Req 10.2: a local source keeps no URL, its key is the real path, it is shown as opened."""
+    source = _local(tmp_path)
+    assert source.url is None
+    assert source.key == tmp_path / "inc.yaml"
+    assert source.shown == Path("theatre/.troupe/../inc.yaml")
+
+
+def test_a_remote_source_is_identified_and_shown_by_its_url() -> None:
+    """Req 10.2: a remote source's key and shown name are its URL, not the stand-in path."""
+    source = _remote()
+    assert source.key == URL
+    assert source.shown == URL
+    assert isinstance(source.shown, str)
+
+
+def test_include_string_is_file_prefix_and_spec_for_a_local_include(tmp_path: Path) -> None:
+    """Req 10.2: a local include's whole string is `file:` + spec, as rebuilt before step 7."""
+    directive = Origin(_including(), Span(3, 15))
+    ref = IncludeRef(IncludeKind.YAML, "../inc.yaml", _local(tmp_path), directive)
+    assert ref.string == "file:../inc.yaml"
+
+
+def test_include_string_is_the_url_for_a_remote_include() -> None:
+    """Req 10.2: a remote include's whole string is its URL (the spec), with no `file:` prefix."""
+    directive = Origin(_including(), Span(3, 40))
+    ref = IncludeRef(IncludeKind.YAML, URL, _remote(), directive)
+    assert ref.string == URL
+
+
+def test_new_model_fields_default_to_none(tmp_path: Path) -> None:
+    """Req 10.2: existing constructions are unchanged; literal, schema and url default to none."""
+    root_file = _including()
+    scalar = ConfigScalar(1, ScalarStyle.PLAIN, Origin(root_file, Span(3, 4)))
+    root = ConfigMapping((), CollectionStyle.BLOCK, Origin(root_file, Span(0, 0)))
+    document = ConfigDocument(root_file, root, (root_file,))
+    assert scalar.literal is None
+    assert document.schema is None
+    assert root_file.url is None
+
+
+def test_a_scalar_and_a_document_carry_a_literal_span_and_a_schema() -> None:
+    """Req 10.2: a scalar records its `!literal` span; a document the schema it was checked by."""
+    root_file = _including()
+    scalar = ConfigScalar(
+        "file:x", ScalarStyle.PLAIN, Origin(root_file, Span(12, 18)), literal=Span(3, 11)
+    )
+    schema = SchemaSource(Path("theatre/.troupe/troupe.schema.json"), "{}", {})
+    root = ConfigMapping((), CollectionStyle.BLOCK, Origin(root_file, Span(0, 0)))
+    document = ConfigDocument(root_file, root, (root_file,), schema=schema)
+    assert scalar.literal == Span(3, 11)
+    assert document.schema is schema
+
+
+@pytest.mark.parametrize("error_type", [ConfigLoadError, WriteRefusedError])
+def test_an_error_names_a_url_as_its_file(error_type: type[TroupeError]) -> None:
+    """Req 10.2: errors accept a URL as their file and name it in the message."""
+    error = error_type("cannot be loaded", file=URL, path="a.b")
+    assert error.file == URL
+    assert str(error) == f"{URL}: a.b: cannot be loaded"
+
+
+def test_a_schema_violation_keeps_its_key_path_and_detail() -> None:
+    """Req 10.2: a schema violation is a load error (exit 4) keeping key path and detail."""
+    schema = Path("theatre/.troupe/troupe.schema.json")
+    error = SchemaViolationError("'x' is not of type 'integer'", file=schema, key_path="a.0.b")
+    assert isinstance(error, ConfigLoadError)
+    assert error.exit_code == 4
+    assert error.key_path == "a.0.b"
+    assert error.detail == "'x' is not of type 'integer'"
+    assert str(error) == (
+        f"{schema}: a.0.b: the configuration does not match the schema: "
+        "'x' is not of type 'integer'"
+    )
+
+
+def test_a_schema_violation_at_the_root_has_no_key_path() -> None:
+    """Req 10.2: a failure at the root names only the schema file and the problem."""
+    schema = Path("troupe.schema.json")
+    error = SchemaViolationError("'a' is a required property", file=schema, key_path=None)
+    assert error.key_path is None
+    assert str(error) == (
+        "troupe.schema.json: the configuration does not match the schema: "
+        "'a' is a required property"
+    )

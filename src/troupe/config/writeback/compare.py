@@ -73,7 +73,7 @@ type TextContent = Callable[[str, IncludeDirective], PlainValue]
 def node_to_plain(node: ConfigNode) -> PlainValue:
     """Return the ordered plain tree of a loaded node.
 
-    An include root becomes ``IncludeDirective(INCLUDE_PREFIX + include.spec, <expanded content>)``
+    An include root becomes ``IncludeDirective(include.string, <expanded content>)``
     (a text include's content is the target's exact text). A YAML include whose whole content is
     another ``file:`` string carries only the outer include, so it is one YAML directive whose
     content is the inner include's value. The directive's ``overrides`` are the plain trees of the
@@ -88,7 +88,7 @@ def node_to_plain(node: ConfigNode) -> PlainValue:
         written = {
             entry.key: node_to_plain(entry.value) for entry in override_entries(include.form)
         }
-    return IncludeDirective(INCLUDE_PREFIX + include.spec, plain, include.kind, overrides=written)
+    return IncludeDirective(include.string, plain, include.kind, overrides=written)
 
 
 def root_plain(document: ConfigDocument) -> PlainMapping:

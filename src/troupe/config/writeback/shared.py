@@ -520,7 +520,7 @@ class _Rebuild:
         if include is None:
             return content
         overrides = self._overrides(include)
-        return IncludeDirective(INCLUDE_PREFIX + include.spec, content, include.kind, overrides)
+        return IncludeDirective(include.string, content, include.kind, overrides)
 
     def _content(self, node: ConfigNode) -> PlainValue:
         if isinstance(node, ConfigScalar):

@@ -332,7 +332,7 @@ def test_indirect_cycle_names_every_file_in_the_cycle(make_theatre: MakeTheatre)
     with pytest.raises(ConfigLoadError) as info:
         load_config(_config(theatre))
     assert info.value.exit_code is ExitCode.LOAD
-    assert info.value.file is not None
+    assert isinstance(info.value.file, Path)
     assert info.value.file.resolve() == one.resolve()
     assert "cycle" in info.value.problem
     assert str(one) in info.value.problem

@@ -720,7 +720,7 @@ class _Planner:
         if include is None:  # pragma: no cover - only called for include roots
             raise ValueError("not an include root")
         target = include.target
-        directive = f"file:{include.spec}"
+        directive = include.string
         if include.kind is not IncludeKind.TEXT:
             _refuse(
                 at,

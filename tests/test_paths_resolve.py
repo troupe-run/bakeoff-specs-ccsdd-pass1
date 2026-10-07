@@ -247,7 +247,7 @@ def test_resolve_not_found_names_deepest_file_and_path(
     error = info.value
     assert error.exit_code is ExitCode.PATH
     assert error.path == text
-    assert error.file is not None
+    assert isinstance(error.file, Path)
     assert error.file.name == deepest_file
     expected_file = next(f.path for f in walk_document.files if f.path.name == deepest_file)
     assert error.file == expected_file

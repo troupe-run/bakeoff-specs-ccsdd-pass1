@@ -67,8 +67,16 @@ origin. A mapping with ``merge`` never has a ``<<`` entry in ``entries``; entrie
 ``via_merge`` come from ``merge.written``'s ``<<`` value. All these fields are ``None``/``False``
 on nodes without anchors, aliases or merge keys.
 
-Invariants: keys within one mapping are unique; no node has an explicit tag; anchors only on
-values; values are built-ins only.
+Literals and remote sources
+---------------------------
+A scalar written with the ``!literal`` tag records the property's span in ``literal``; its
+``origin.span`` excludes the property, as for an anchor. A remote source is a ``SourceFile`` with
+``url`` set; it is identified by ``key`` (the URL, else the real path) and named in messages by
+``shown`` (the URL, else the path as opened). ``IncludeRef.string`` is the whole include string.
+A document checked against a JSON Schema carries it in ``schema``.
+
+Invariants: keys within one mapping are unique; ``!literal`` is the only tag, and only on scalars;
+anchors only on values; values are built-ins only.
 """
 
 from dataclasses import dataclass
@@ -76,7 +84,11 @@ from enum import Enum
 from pathlib import Path
 from typing import TypeAlias
 
+from troupe.config.constants import INCLUDE_PREFIX
 from troupe.config.scalars import ScalarValue
+
+type JsonValue = bool | int | float | str | list[JsonValue] | dict[str, JsonValue] | None
+"""A plain JSON value."""
 
 
 class LineEnding(Enum):
@@ -96,6 +108,21 @@ class SourceFile:
     real_path: Path  # Path.resolve() of path; identity for cycles and overrides
     text: str  # exact decoded content
     line_ending: LineEnding
+    url: str | None = None
+    """The remote include's URL for a remote source, ``None`` for a local file. For a remote
+    source ``path`` and ``real_path`` are ``Path(url)``, a stand-in that is never opened or
+    shown."""
+
+    @property
+    def key(self) -> Path | str:
+        """The source's identity (caches, overrides, written locations): the URL or the real
+        path."""
+        return self.url if self.url is not None else self.real_path
+
+    @property
+    def shown(self) -> Path | str:
+        """What messages and labels name: the URL or the path as opened."""
+        return self.url if self.url is not None else self.path
 
 
 @dataclass(frozen=True)
@@ -152,7 +179,7 @@ class IncludeRef:
     """Provenance of a node that replaced a ``file:`` include directive."""
 
     kind: IncludeKind  # YAML or TEXT
-    spec: str  # text after "file:" exactly as written
+    spec: str  # text after "file:" exactly as written; the whole URL for a remote include
     target: SourceFile  # the included file
     directive: Origin  # span of the "file:..." scalar in the including file (or the `$ref` value)
     form: "ConfigMapping | None" = None
@@ -164,6 +191,13 @@ class IncludeRef:
     node is the target root's content, not a merge), that inner include, whose directive is the
     target file's root; ``None`` otherwise. With overrides the inner include is kept on the merged
     mapping's included side (``layers.base.include``) instead."""
+
+    @property
+    def string(self) -> str:
+        """The whole include string: ``file:`` + spec, or the URL (spec) for a remote target."""
+        if self.target.url is not None:
+            return self.spec
+        return INCLUDE_PREFIX + self.spec
 
 
 class ScalarStyle(Enum):
@@ -193,6 +227,7 @@ class ConfigScalar:
     include: IncludeRef | None = None
     anchor: Anchor | None = None
     alias: AliasRef | None = None
+    literal: Span | None = None  # the ``!literal`` property, in the node's own file
 
 
 @dataclass(frozen=True)
@@ -261,9 +296,19 @@ class ConfigDocument:
     root_file: SourceFile
     root: ConfigMapping  # empty root file: empty BLOCK mapping at Origin(root_file, Span(0, 0))
     files: tuple[SourceFile, ...]  # every file read (root, YAML and text include targets), in order
+    schema: "SchemaSource | None" = None  # the schema the configuration was checked against
 
     def include_kind(self, node: ConfigNode) -> IncludeKind:
         """Return the kind of include that produced ``node``; ``NONE`` if it is not an include."""
         if node.include is None:
             return IncludeKind.NONE
         return node.include.kind
+
+
+@dataclass(frozen=True)
+class SchemaSource:
+    """The configuration's JSON Schema file, as read and checked."""
+
+    path: Path  # ``<dir>/.troupe/troupe.schema.json`` as opened
+    text: str  # exact decoded content (watch baseline)
+    contents: JsonValue  # parsed JSON, checked as a 2020-12 schema
