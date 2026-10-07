@@ -153,7 +153,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - _Boundary: test_e2e_remote_
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 2.1, 2.2, 2.3, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 4.1, 4.2, 4.4, 4.6, 5.2, 5.3, 5.6_
 
-- [ ] 4.2 (P) Validate the read-only rules for remote content end to end
+- [x] 4.2 (P) Validate the read-only rules for remote content end to end
   - Setting a remote value, replacing a collection that holds remote values, `--in-include` below a remote include, replacing a remote include root, an alias in remote content, and remote in remote each exit 3. stderr holds the include string as written in the local file and its line, every file is byte-identical, and no event is recorded.
   - An overridden remote value changes in the local override. A new key below a scalar-form remote include converts it to mapping form with the URL unchanged. Each change is recorded as events, with `--reason`.
   - Done when these e2e tests pass in `tests/test_set_remote.py`
