@@ -166,7 +166,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - _Boundary: test_set_schema_
   - _Requirements: 7.1, 7.2, 5.2, 10.1_
 
-- [ ] 4.4 (P) Validate writing include-like VALUEs and `--include` end to end
+- [x] 4.4 (P) Validate writing include-like VALUEs and `--include` end to end
   - `set hook https://x` writes `hook: !literal https://x`. Nested flow VALUEs are tagged per string, and a schema `format: uri` path is written plain. An existing `!literal` is replaced with its tag, and an equal VALUE is a no-op. `--expand-alias` over an alias of a `!literal` anchor keeps the tag in the copy. A VALUE with a tag exits 2, and a `$ref` VALUE without `--include` exits 3.
   - `--include` with a local and with a remote VALUE writes and reads back the include (one `set` event per leaf). An unreachable remote VALUE exits 3 with no file changed, and `--include` without an include string behaves as without it.
   - Done when these e2e tests pass in `tests/test_set_literals.py`, comparing whole files byte for byte
