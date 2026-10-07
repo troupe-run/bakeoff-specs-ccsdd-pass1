@@ -129,7 +129,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - _Boundary: RemoteGuard, Planner, Expand, Atomic, Setter_
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6_
 
-- [ ] 3.4 Read back by source identity and refuse sets the schema rejects
+- [x] 3.4 Read back by source identity and refuse sets the schema rejects
   - Read-back and the alias-expansion reloads override every loaded source by identity (keyed since 2.3), so remote content is reused and only includes the set newly writes are fetched.
   - A schema violation found by the read-back becomes a refusal (exit 3) naming the schema file, PATH, the failing key path and the detail. A new remote include that cannot be fetched keeps the existing read-back refusal, which names PATH and the URL.
   - Done when tests prove that a set below a remote include sends no second request, that a set making the configuration invalid is refused with that message and nothing recorded, and that an unfetchable new include is refused naming the URL

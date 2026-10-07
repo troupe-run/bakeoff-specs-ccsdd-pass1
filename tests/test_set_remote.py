@@ -14,12 +14,16 @@ from pathlib import Path
 import pytest
 
 from remote_support import RemoteServer
-from set_support import run_set, snapshot_tree
-from support import MakeTheatre
+from set_support import run_config, run_set, snapshot_tree
+from support import CLI_CONTEXT, MakeTheatre
 from troupe.config.errors import ExitCode, WriteRefusedError
 from troupe.config.model import LineEnding, SourceFile
+from troupe.config.paths import ConfigPath
+from troupe.config.theatre import open_theatre
 from troupe.config.writeback.atomic import write_atomically
 from troupe.config.writeback.remote_guard import REMOTE_READ_ONLY
+from troupe.config.writeback.setter import set_value
+from troupe.config.writeback.value import mark_include_strings, parse_value
 
 CONFIG_NAMES = ["troupe.yml", "troupe.yaml"]
 
@@ -175,3 +179,74 @@ def test_write_atomically_never_writes_a_remote_source(
     assert caught.value.file == url
     assert caught.value.problem == "internal error: remote content is never written"
     assert list(tmp_path.rglob("*")) == []
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+@pytest.mark.parametrize(
+    ("root", "args", "expected"),
+    [
+        pytest.param(
+            "local: 1\ns: {url}\n",
+            ("s.new", "1"),
+            "local: 1\ns:\n  $ref: {url}\n  new: 1\n",
+            id="new-key-below-remote",
+        ),
+        pytest.param(
+            "local: 1\ns: {url}\n", ("local", "2"), "local: 2\ns: {url}\n", id="local-value"
+        ),
+        pytest.param(
+            "base: &b\n  k: 1\nuse: *b\ns: {url}\n",
+            ("use.k", "2", "--expand-alias"),
+            "base: &b\n  k: 1\nuse:  # expanded from *b by troupe\n  k: 2\ns: {url}\n",
+            id="alias-expansion-reload",
+        ),
+    ],
+)
+def test_set_reuses_fetched_remote_content(
+    make_theatre: MakeTheatre,
+    remote_server: RemoteServer,
+    config_name: str,
+    root: str,
+    args: tuple[str, ...],
+    expected: str,
+) -> None:
+    """Req 10.3: a set (with its read-back and any alias-expansion reload) reuses the remote
+    content fetched when the configuration was loaded: the URL is requested exactly once."""
+    url = remote_server.route("/s.yml", "a: 1\n")
+    theatre = make_theatre(root.format(url=url), config_name=config_name)
+
+    result = run_config("set", *args, "--theatre", str(theatre), cwd=theatre)
+
+    assert result.exit_code == ExitCode.OK, result.stderr
+    assert (theatre / ".troupe" / config_name).read_text() == expected.format(url=url)
+    assert remote_server.paths() == ["/s.yml"]
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_set_of_an_unfetchable_new_remote_include_is_refused_naming_the_url(
+    make_theatre: MakeTheatre, remote_server: RemoteServer, config_name: str
+) -> None:
+    """Req 9.4, 10.3: an include VALUE whose URL cannot be fetched on read-back is refused (exit
+    3) naming the root file, PATH and the URL; the new URL is requested once, the loaded remote
+    content is not requested again, and no file is changed."""
+    loaded = remote_server.route("/s.yml", "a: 1\n")
+    missing = remote_server.url("/missing.yml")
+    theatre = make_theatre(f"local: 1\ns: {loaded}\n", config_name=config_name)
+    before = snapshot_tree(theatre)
+    path = ConfigPath.parse("team")
+
+    with open_theatre(theatre) as opened:
+        value = mark_include_strings(
+            parse_value(missing, path), path, opened.document.schema, include=True
+        )
+        with pytest.raises(WriteRefusedError) as caught:
+            set_value(opened, path, value, CLI_CONTEXT)
+
+    error = caught.value
+    assert error.exit_code is ExitCode.WRITE_REFUSED
+    assert error.file == theatre / ".troupe" / config_name
+    assert error.path == "team"
+    assert error.problem.startswith("written value cannot be read back: ")
+    assert missing in error.problem
+    assert remote_server.paths() == ["/s.yml", "/missing.yml"]
+    assert snapshot_tree(theatre) == before
