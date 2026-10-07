@@ -110,9 +110,9 @@ class _Copy:
     break even at the end of a file without one (or its value would change)."""
 
 
-def expand_alias(document: ConfigDocument, site: AliasSite) -> dict[Path, str]:
-    """Return ``{real_path: new text}`` of the file holding ``site``'s alias, with the alias
-    replaced by a copy of its anchored node and marked with :data:`EXPANDED_COMMENT`.
+def expand_alias(document: ConfigDocument, site: AliasSite) -> dict[Path | str, str]:
+    """Return ``{key: new text}`` (``SourceFile.key``) of the file holding ``site``'s alias, with
+    the alias replaced by a copy of its anchored node and marked with :data:`EXPANDED_COMMENT`.
 
     Raises :class:`WriteRefusedError` (exit 3) naming the alias's file and ``site.path`` for an
     alias inside a flow collection (8.4), a line that already has a comment (8.5), and an anchored
@@ -158,7 +158,7 @@ def expand_alias(document: ConfigDocument, site: AliasSite) -> dict[Path, str]:
     edits = [TextEdit(slot.indicator_end, end, inline, EditKind.INLINE)]
     if copy.lines:
         edits.append(_lines_after(layout, last, copy, ctx.line_break))
-    return {file.real_path: apply_edits(layout, edits)}
+    return {file.key: apply_edits(layout, edits)}
 
 
 def _slot(

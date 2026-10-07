@@ -39,8 +39,8 @@ def verify_patch(
     """
     if not patches:  # pragma: no cover - plan_patch never returns an empty plan
         raise ValueError("verify_patch needs at least one patch")
-    overrides = {file.real_path: file.text for file in document.files}
-    overrides.update((patch.file.real_path, patch.new_text) for patch in patches)
+    overrides: dict[Path | str, str] = {file.key: file.text for file in document.files}
+    overrides.update((patch.file.key, patch.new_text) for patch in patches)
     first = patches[0].file.path
     path = str(request.path)
     try:

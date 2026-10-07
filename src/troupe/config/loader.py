@@ -152,14 +152,20 @@ class _Tag:
     after_anchor: bool
 
 
+type SourceTexts = Mapping[Path, str] | Mapping[Path | str, str]
+"""Sources' texts by identity (:attr:`SourceFile.key`: a local file's real path, a remote
+source's URL). Either key type is accepted, as a mapping is invariant in its keys."""
+
+
 def load_config(
     config_file: Path,
-    overrides: Mapping[Path, str] | None = None,
+    overrides: SourceTexts | None = None,
 ) -> ConfigDocument:
     """Load ``config_file`` into a :class:`ConfigDocument`, or raise :class:`ConfigLoadError`.
 
-    ``overrides`` maps a file's real path (``Path.resolve()``) to text that is used instead of the
-    file's content on disk; an overridden file is never read from disk.
+    ``overrides`` maps a source's identity (:attr:`SourceFile.key`: a file's real path,
+    ``Path.resolve()``) to text that is used instead of the file's content on disk; an overridden
+    file is never read from disk.
 
     The schema next to ``config_file`` is read first (config-remote-schema 5.1, 5.3, 5.4): a string
     whose path it gives ``format: uri`` is a literal (4.4), and the expanded configuration is
@@ -167,7 +173,7 @@ def load_config(
     only ever read (5.6).
     """
     schema = read_schema(config_file.parent)
-    loader = _Loader({} if overrides is None else dict(overrides))
+    loader = _Loader(_by_key(overrides))
     root_file = loader.read_source(config_file)
     composed = _compose(root_file)
     if composed.root is None:
@@ -190,40 +196,45 @@ def load_config(
 
 def load_include(
     including: SourceFile,
-    spec: str,
-    overrides: Mapping[Path, str],
+    string: str,
+    overrides: SourceTexts,
     *,
     path: ConfigPath = ROOT,
     schema: SchemaSource | None = None,
 ) -> ConfigNode:
-    """Load the include string ``file:<spec>`` as if written in ``including`` at ``path``, or
-    raise :class:`ConfigLoadError`.
+    """Load the include string ``string`` (``file:<spec>``, as written) as if written in
+    ``including`` at ``path``, or raise :class:`ConfigLoadError`.
 
     The target is resolved relative to ``including``'s directory and loaded with the same rules as
     in a document (nested includes, mapping forms, cycle detection along the chain starting at
-    ``including``); ``overrides`` gives files' texts by real path, as for :func:`load_config`. Its
+    ``including``); ``overrides`` gives sources' texts by identity, as for :func:`load_config`. Its
     content is built at ``path`` with ``schema``, so its literals are decided as they are when the
     configuration loads (config-remote-schema 4.4). The result is the include root node (its
     ``include`` set). Used by writers that need the content of an include a set is about to write
     (config-include-overrides 11.2).
     """
-    loader = _Loader(dict(overrides))
+    loader = _Loader(_by_key(overrides))
     directive = ConfigScalar(
-        value=INCLUDE_PREFIX + spec, style=ScalarStyle.PLAIN, origin=Origin(including, Span(0, 0))
+        value=string, style=ScalarStyle.PLAIN, origin=Origin(including, Span(0, 0))
     )
     builder = _Builder(including, loader, (including,), {}, schema)
-    return builder.include(directive, spec, path)
+    return builder.include(directive, string.removeprefix(INCLUDE_PREFIX), path)
+
+
+def _by_key(overrides: SourceTexts | None) -> dict[Path | str, str]:
+    return {} if overrides is None else {key: text for key, text in overrides.items()}
 
 
 class _Loader:
     """Reads source files (from disk or overrides) and remembers every file read, in order.
 
-    Each real path is read at most once; later requests share the first :class:`SourceFile`.
+    Each source (by :attr:`SourceFile.key`) is read at most once; later requests share the first
+    :class:`SourceFile`.
     """
 
-    def __init__(self, overrides: Mapping[Path, str]) -> None:
+    def __init__(self, overrides: Mapping[Path | str, str]) -> None:
         self._overrides = overrides
-        self._sources: dict[Path, SourceFile] = {}
+        self._sources: dict[Path | str, SourceFile] = {}
         self.files: list[SourceFile] = []
 
     def read_source(self, path: Path) -> SourceFile:
@@ -270,7 +281,7 @@ class _Loader:
         source = SourceFile(
             path=path, real_path=real_path, text=text, line_ending=_detect_line_ending(text)
         )
-        self._sources[real_path] = source
+        self._sources[source.key] = source
         self.files.append(source)
         return source
 
@@ -664,10 +675,10 @@ class _Builder:
     def _refuse_cycle(self, target_path: Path) -> None:
         """Refuse a YAML include of a file already on the chain, listing the cycle (4.6)."""
         real_path = target_path.resolve()
-        real_paths = [source.real_path for source in self._chain]
-        if real_path not in real_paths:
+        keys = [source.key for source in self._chain]
+        if real_path not in keys:
             return
-        cycle = [str(source.path) for source in self._chain[real_paths.index(real_path) :]]
+        cycle = [str(source.path) for source in self._chain[keys.index(real_path) :]]
         cycle.append(str(target_path))
         raise ConfigLoadError(f"include cycle: {' -> '.join(cycle)}", file=target_path)
 

@@ -82,7 +82,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - Done when loader tests prove literals by schema in the root and in an included file, validation of includes, aliases, merge keys and text includes as their expanded values, the exit-4 cases with their messages, and an unchanged load without a schema file
   - _Requirements: 4.4, 4.6, 5.1, 5.2, 5.3, 5.4, 5.6_
 
-- [ ] 2.3 Key loading overrides and written texts by source identity
+- [x] 2.3 Key loading overrides and written texts by source identity
   - Integration task, no behaviour change: the overrides accepted by loading, the texts of the setter, read-back, alias-expansion and shared-file rebuild, and the planner's layouts are keyed by source identity (`key`), so `mypy --strict` accepts URL keys. The included-content helper takes the whole include string instead of the text after `file:`.
   - Done when the full existing suite, mypy and ruff pass unchanged, and a loader test (in `tests/test_loader_schema.py`) shows that overrides keyed by identity replace a file's text as before
   - _Boundary: Loader, Setter, Verify, Expand, Shared, Planner_
@@ -181,3 +181,4 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
 
 ## Implementation Notes
 - 1.3: jsonschema 4.26 fetches remote `$ref`s unless a registry is passed; always validate through `schema.validate()` (empty `referencing.Registry()`).
+- 2.3: `shared.written_location` and `layout.py` (two `real_path` comparisons) still use `real_path`; task 3.3 must switch them to `SourceFile.key` (a URL as `Path` collapses `//` and `.` segments) and update test annotations of `WrittenLocation`.

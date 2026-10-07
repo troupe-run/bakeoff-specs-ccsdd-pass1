@@ -54,13 +54,14 @@ document and the plan's edits, so the read-back still proves the written texts.
 """
 
 import dataclasses
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, NoReturn
 
-from troupe.config.constants import INCLUDE_PREFIX, MERGE_KEY, YAML_INCLUDE_SUFFIXES
+from troupe.config.constants import MERGE_KEY
 from troupe.config.errors import ConfigLoadError, WriteRefusedError
+from troupe.config.includes import include_is_yaml
 from troupe.config.loader import load_include
 from troupe.config.merge_keys import merged_pairs
 from troupe.config.model import (
@@ -98,9 +99,9 @@ type WrittenCollection = ConfigMapping | ConfigSequence
 """A written mapping or list (never a merged mapping)."""
 
 
-type _Location = WrittenLocation | Path
-"""A written collection or include string (:data:`WrittenLocation`), or a text file (its real
-path)."""
+type _Location = WrittenLocation | Path | str
+"""A written collection or include string (:data:`WrittenLocation`), or a text file (its
+identity, :attr:`~troupe.config.model.SourceFile.key`)."""
 
 
 def written_location(origin: Origin) -> WrittenLocation:
@@ -161,8 +162,8 @@ class WrittenChanges:
     """New entries (``None`` key: list items) after the last entry of written collections."""
     converted: dict[WrittenLocation, PlainMapping] = field(default_factory=dict)
     """Overrides of scalar-form include strings converted to mapping form."""
-    texts: dict[Path, str] = field(default_factory=dict)
-    """New contents of text-include target files."""
+    texts: dict[Path | str, str] = field(default_factory=dict)
+    """New contents of text-include target files, by source identity (``SourceFile.key``)."""
     files: dict[_Location, Path] = field(default_factory=dict)
     """Every changed location with the path of its file as opened (for messages)."""
     claimed: dict[_Slot, PlainValue] = field(default_factory=dict)
@@ -230,11 +231,11 @@ class WrittenChanges:
     def text(self, target: SourceFile, content: str) -> None:
         """The text-include target file ``target`` gets ``content`` (another content asked for
         it at another place is refused, 11.5)."""
-        previous = self.texts.get(target.real_path)
+        previous = self.texts.get(target.key)
         if previous is not None and previous != content:
             self._conflict(target.path)
-        self.texts[target.real_path] = content
-        self.files[target.real_path] = target.path
+        self.texts[target.key] = content
+        self.files[target.key] = target.path
 
     def _at(self, origin: Origin) -> WrittenLocation:
         where = written_location(origin)
@@ -319,7 +320,7 @@ def with_other_places(
             )
     root = document.root
     before = _root_content(rebuilt_plain(root, WrittenChanges()))
-    texts = {file.real_path: file.text for file in document.files}
+    texts: dict[Path | str, str] = {file.key: file.text for file in document.files}
     loading = _Loading(texts, path, document.schema)
     after = _root_content(rebuilt_plain(root, changes, loading))
     grafted = _graft(intended, before, after, path.segments)
@@ -424,7 +425,7 @@ def _layer_locations(node: ConfigNode, found: set[_Location]) -> None:
     for ref in _chain(node.include):
         found.add(written_location(ref.directive))
         if ref.kind is IncludeKind.TEXT:
-            found.add(ref.target.real_path)
+            found.add(ref.target.key)
         if ref.form is not None:
             found.add(written_location(ref.form.origin))
     if isinstance(node, ConfigMapping) and node.layers is not None:
@@ -447,12 +448,12 @@ class _Loading:
     string and place (the place's path decides the content's literals by ``schema``)."""
 
     def __init__(
-        self, texts: dict[Path, str], path: ConfigPath, schema: SchemaSource | None = None
+        self, texts: Mapping[Path | str, str], path: ConfigPath, schema: SchemaSource | None = None
     ) -> None:
         self._texts = texts
         self._path = path
         self._schema = schema
-        self._loaded: dict[tuple[Path, str, ConfigPath], PlainValue] = {}
+        self._loaded: dict[tuple[Path | str, str, ConfigPath], PlainValue] = {}
 
     def content(self, include: _NewInclude, at: ConfigPath) -> PlainValue:
         """The content of ``include``, merged at the place ``at``, with its VALUE overrides
@@ -460,11 +461,12 @@ class _Loading:
         including = include.including
         if including is None:  # pragma: no cover - every new include is marked
             raise ValueError("a new include without its file")
-        spec = include.text[len(INCLUDE_PREFIX) :]
-        key = (including.real_path, spec, at)
+        key = (including.key, include.text, at)
         if key not in self._loaded:
             try:
-                node = load_include(including, spec, self._texts, path=at, schema=self._schema)
+                node = load_include(
+                    including, include.text, self._texts, path=at, schema=self._schema
+                )
             except ConfigLoadError as error:
                 raise WriteRefusedError(
                     f"written value cannot be read back: {error}",
@@ -479,19 +481,15 @@ class _Loading:
 
     def mergeable(self, plain: PlainValue, at: ConfigPath) -> PlainValue:
         """``plain`` (the value at ``at``) unwrapped to its content, a new YAML include loaded."""
-        if isinstance(plain, _NewInclude) and plain.content is None and _is_yaml(plain):
+        if isinstance(plain, _NewInclude) and plain.content is None and include_is_yaml(plain.text):
             return self.content(plain, at)
         return _unwrapped(plain)
-
-
-def _is_yaml(include: IncludeDirective) -> bool:
-    return include.text.endswith(YAML_INCLUDE_SUFFIXES)
 
 
 def _may_be_mapping(plain: PlainValue) -> bool:
     if isinstance(plain, IncludeDirective):
         if plain.content is None:
-            return isinstance(plain, _NewInclude) and _is_yaml(plain)
+            return isinstance(plain, _NewInclude) and include_is_yaml(plain.text)
         return isinstance(plain.content, dict)
     return isinstance(plain, dict)
 
@@ -532,8 +530,8 @@ class _Rebuild:
     def _content(self, node: ConfigNode, path: ConfigPath) -> PlainValue:
         if isinstance(node, ConfigScalar):
             for ref in _chain(node.include):
-                if ref.kind is IncludeKind.TEXT and ref.target.real_path in self._changes.texts:
-                    return self._changes.texts[ref.target.real_path]
+                if ref.kind is IncludeKind.TEXT and ref.target.key in self._changes.texts:
+                    return self._changes.texts[ref.target.key]
             return node.value
         if isinstance(node, ConfigMapping):
             layers = node.layers

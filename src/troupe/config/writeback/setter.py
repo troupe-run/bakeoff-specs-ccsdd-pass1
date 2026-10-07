@@ -105,7 +105,7 @@ def set_value(
         texts_after = texts
     else:
         plan = plan_set(expanded, request)
-        texts_after = texts | {patch.file.real_path: patch.new_text for patch in plan.patches}
+        texts_after = texts | {patch.file.key: patch.new_text for patch in plan.patches}
         # A change written into a file included at several places appears at each (4.8, 11.2).
         request = replace(request, intended=plan.intended)
     patches = _final_patches(document, texts_after)
@@ -124,20 +124,21 @@ def set_value(
 
 def _expanded(
     config_file: Path, document: ConfigDocument, request: SetRequest, *, expand: bool
-) -> tuple[ConfigDocument, SetRequest, dict[Path, str]]:
+) -> tuple[ConfigDocument, SetRequest, dict[Path | str, str]]:
     """Run the guard and, with ``expand``, expand every alias it meets, one per round.
 
-    Returns the expanded document, the request resolved on it and the expanded texts by real
-    path (empty when nothing was expanded). Each round expands the first alias the guard meets,
-    reloads the configuration from the original texts overridden by the expanded ones and resolves
-    the request again, so nested aliases are expanded outermost first (8.1, 8.2). An expander
+    Returns the expanded document, the request resolved on it and the expanded texts by source
+    identity (``SourceFile.key``; empty when nothing was expanded). Each round expands the first
+    alias the guard meets, reloads the configuration from the original texts overridden by the
+    expanded ones and resolves the request again, so nested aliases are expanded outermost first
+    (8.1, 8.2). An expander
     refusal is re-raised naming PATH, keeping its problem and file (8.4, 8.5, 9.2). A round that
     changes the configuration (:data:`EXPANSION_CHANGES_VALUES`, 7.5, 10.2) or leaves its alias
     place an alias (:data:`EXPANSION_STUCK`) is refused (exit 3) naming the alias's file and PATH.
     """
-    original = {file.real_path: file.text for file in document.files}
+    original: dict[Path | str, str] = {file.key: file.text for file in document.files}
     path, current = request.path, request.current
-    texts: dict[Path, str] = {}
+    texts: dict[Path | str, str] = {}
     expanded_at: set[ConfigPath] = set()
     sites = alias_sites(document, request, expand=expand)
     while sites:
@@ -169,18 +170,18 @@ def _alias_refusal(problem: str, alias: AliasRef, path: ConfigPath) -> WriteRefu
     )
 
 
-def _final_patches(document: ConfigDocument, texts: dict[Path, str]) -> tuple[FilePatch, ...]:
+def _final_patches(document: ConfigDocument, texts: dict[Path | str, str]) -> tuple[FilePatch, ...]:
     """One patch per file of ``document`` whose final text differs from its text, in
     ``document.files`` order, each on the original :class:`SourceFile` (so a restore writes the
     original text back)."""
-    files = {file.real_path for file in document.files}
+    files = {file.key for file in document.files}
     unknown = set(texts) - files
     if unknown:  # pragma: no cover - expansions and plans only patch loaded files
-        raise ValueError(f"patches for files not in the configuration: {sorted(unknown)}")
+        raise ValueError(f"patches for files not in the configuration: {sorted(map(str, unknown))}")
     return tuple(
-        FilePatch(file, texts[file.real_path])
+        FilePatch(file, texts[file.key])
         for file in document.files
-        if file.real_path in texts and texts[file.real_path] != file.text
+        if file.key in texts and texts[file.key] != file.text
     )
 
 

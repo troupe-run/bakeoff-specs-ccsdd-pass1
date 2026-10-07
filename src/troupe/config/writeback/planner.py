@@ -245,11 +245,11 @@ class _Planner:
         self._path = path
         # `set --in-include`: new keys of a collection replacement use the step 1 rule (10.3).
         self._in_include = in_include
-        # Keyed by ``SourceFile.real_path``.
-        self._layouts: dict[Path, FileLayout] = {}
-        self._edits: dict[Path, list[TextEdit]] = {}
-        self._whole: dict[Path, tuple[SourceFile, str]] = {}
-        # Keyed by written location (file real path + span), not by loaded object: a file
+        # Keyed by source identity (``SourceFile.key``).
+        self._layouts: dict[Path | str, FileLayout] = {}
+        self._edits: dict[Path | str, list[TextEdit]] = {}
+        self._whole: dict[Path | str, tuple[SourceFile, str]] = {}
+        # Keyed by written location (file identity + span), not by loaded object: a file
         # included at several places is loaded once per place (11.4).
         # Layered-merge removals and the collections receiving new entries.
         self._removals: dict[WrittenLocation, _Removal] = {}
@@ -1436,14 +1436,14 @@ class _Planner:
     # --- bookkeeping -----------------------------------------------------------------------------
 
     def _layout(self, file: SourceFile) -> FileLayout:
-        layout = self._layouts.get(file.real_path)
+        layout = self._layouts.get(file.key)
         if layout is None:
             layout = FileLayout.build(file, self._document)
-            self._layouts[file.real_path] = layout
+            self._layouts[file.key] = layout
         return layout
 
     def _add(self, layout: FileLayout, edits: list[TextEdit]) -> None:
-        key = layout.file.real_path
+        key = layout.file.key
         if key in self._whole:
             _refuse(self._path, layout.file, "the file would be changed in two ways")
         self._edits.setdefault(key, []).extend(edits)
@@ -1454,7 +1454,7 @@ class _Planner:
         A target included at several places may be given the same new content at each of them;
         different contents, or a whole replacement besides edits, are refused.
         """
-        key = file.real_path
+        key = file.key
         if key in self._whole and self._whole[key][1] == text:
             return
         if key in self._whole or self._edits.get(key):
@@ -1467,7 +1467,7 @@ class _Planner:
         self._refuse_used_anchor_removal()
         patches: list[FilePatch] = []
         for file in self._document.files:
-            key = file.real_path
+            key = file.key
             if key in self._whole:
                 new_text = self._whole[key][1]
             elif self._edits.get(key):

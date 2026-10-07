@@ -1,4 +1,5 @@
-"""Reading and enforcing the schema when the configuration loads (config-remote-schema; task 2.2).
+"""Reading and enforcing the schema when the configuration loads (config-remote-schema; tasks 2.2,
+2.3).
 
 Every test writes a real theatre with a real ``troupe.schema.json`` next to the root configuration
 file and loads it with ``load_config`` (or runs the real CLI). A string whose own path the schema
@@ -377,16 +378,57 @@ def test_load_include_decides_literals_at_the_given_path_with_the_schema(
         make_theatre, "x: 1\n", schema, {".troupe/t.yml": "v: file:z.md\n", ".troupe/z.md": "z"}
     )
     document = load_config(theatre / ".troupe" / "troupe.yml")
-    texts = {file.real_path: file.text for file in document.files}
+    texts: dict[Path | str, str] = {file.key: file.text for file in document.files}
 
     literal = load_include(
-        document.root_file, "t.yml", texts, path=ConfigPath(("x",)), schema=document.schema
+        document.root_file, "file:t.yml", texts, path=ConfigPath(("x",)), schema=document.schema
     )
-    included = load_include(document.root_file, "t.yml", texts)
+    included = load_include(document.root_file, "file:t.yml", texts)
 
     assert isinstance(literal, ConfigMapping) and isinstance(included, ConfigMapping)
     assert _value(literal, "v") == "file:z.md"
     assert _value(included, "v") == "z"
+
+
+def test_load_include_takes_the_whole_include_string(make_theatre: MakeTheatre) -> None:
+    """Req 10.2: the helper takes the include string as written (``file:`` and all), and the
+    texts it is given, keyed by source identity, replace the files' contents."""
+    theatre = _theatre(make_theatre, "x: 1\n", None, {".troupe/t.yml": "v: on disk\n"})
+    document = load_config(theatre / ".troupe" / "troupe.yml")
+    target = (theatre / ".troupe" / "t.yml").resolve()
+    texts: dict[Path | str, str] = {target: "v: overridden\n"}
+
+    node = load_include(document.root_file, "file:t.yml", texts)
+
+    assert isinstance(node, ConfigMapping)
+    assert _value(node, "v") == "overridden"
+    assert node.include is not None and node.include.string == "file:t.yml"
+
+
+# --- 10.2, 10.3: overrides keyed by source identity ----------------------------------------------
+
+
+def test_overrides_keyed_by_source_identity_replace_a_files_text(
+    make_theatre: MakeTheatre,
+) -> None:
+    """Req 10.2, 10.3: ``load_config`` takes texts keyed by each source's ``key`` (its real path
+    for a local file): an overridden file is never read from disk, here in the root file and in
+    an included file, and the loaded sources carry the overriding texts."""
+    theatre = _theatre(make_theatre, "a: file:inc.yml\n", None, {".troupe/inc.yml": "v: disk\n"})
+    config = theatre / ".troupe" / "troupe.yml"
+    document = load_config(config)
+    overrides: dict[Path | str, str] = {file.key: file.text for file in document.files}
+    included = (theatre / ".troupe" / "inc.yml").resolve()
+    overrides[included] = "v: overridden\n"
+    overrides[config.resolve()] = "a: file:inc.yml\nb: 2\n"
+    (theatre / ".troupe" / "inc.yml").unlink()
+
+    after = load_config(config, overrides)
+
+    assert _scalar_at(after, "a", "v").value == "overridden"
+    assert _scalar_at(after, "b").value == 2
+    assert [file.key for file in after.files] == [config.resolve(), included]
+    assert [file.text for file in after.files] == [overrides[config.resolve()], "v: overridden\n"]
 
 
 def _value(mapping: ConfigMapping, key: str) -> object:
