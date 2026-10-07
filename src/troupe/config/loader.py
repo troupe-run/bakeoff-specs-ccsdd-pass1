@@ -12,11 +12,13 @@ scalars are strings. Folded (``>``) values have the U+0007 fold markers that the
 composer inserts removed (3.8).
 
 Unsupported YAML is refused with :class:`ConfigLoadError` naming the file and, where known, the
-key path (product-owner decisions H and I): non-UTF-8 bytes, syntax errors, several documents,
-duplicate keys, explicit tags, anchors on mapping keys, undefined aliases (a composer error),
-aliases used as keys or inside their own anchored node, merge keys whose value cannot be merged
-and merge keys among ``$ref`` overrides (config-aliases 2.3), non-scalar keys and a top-level node
-that is not a mapping. An empty or comment-only file is an empty block mapping at ``Span(0, 0)``.
+key path (product-owner decision I; decision H as narrowed by config-aliases 1.3, 1.4 and 2.3):
+non-UTF-8 bytes, syntax errors, several documents, duplicate keys, explicit tags, anchors on
+mapping keys, undefined aliases (a composer error), aliases used as keys or inside their own
+anchored node, merge keys whose value cannot be merged, includes as merge sources and merge keys
+among ``$ref`` overrides, non-scalar keys and a top-level node that is not a mapping. Anchors,
+aliases and merge keys themselves load (step 6). An empty or comment-only file is an empty block
+mapping at ``Span(0, 0)``.
 
 Anchors (config-aliases 1.1, 1.5): an anchor ``&name`` on any value node is recorded as
 :class:`Anchor` (the name and the span of the property), and the node's own span is its value

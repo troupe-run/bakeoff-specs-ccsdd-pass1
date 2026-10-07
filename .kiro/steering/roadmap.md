@@ -62,7 +62,7 @@ rules). The write side carries most of the risk and rules, so it gets its own sp
 - [x] config-get-show -- (step 3) `get PATH` (scalar; mapping/list → 5 mentioning `config show`), `show [PATH]` (scalar as `get`; otherwise block YAML with includes resolved, text includes as literal blocks; whole config without PATH), `--sources` end-of-line `# from <file>` provenance. Dependencies: config-foundation, config-set-writeback, config-file-sync
 - [x] config-lineage -- (step 4) actor/via/at/reason/change on every history event; `TROUPE_ACTOR` (exit 2 when invalid) and login-name default; `set --reason`; one change id per command, reconcile or import; persisted, legacy stores readable. Dependencies: config-foundation, config-set-writeback, config-file-sync, config-get-show
 - [x] config-include-overrides -- (step 5) mapping-form includes with `$ref` and deep-merged overrides, new keys under includes written as overrides in the including file (scalar-form → mapping-form conversion), list exceptions, overridden vs non-overridden existing values, exit 4 for non-YAML overrides; CR-B: `set --in-include` keeps the step 1 rule for new keys. Dependencies: config-foundation, config-set-writeback, config-get-show
-- [ ] config-aliases -- (step 6, tracker issue #2) load anchors/aliases with expanded reads everywhere; `set` at an anchor changes every alias; merge keys load; `set` reached through an alias → exit 3 mentioning `--expand-alias`; `set --expand-alias` replaces the alias with a commented block-style copy and sets the value in it; merge keys never written. Dependencies: config-foundation, config-set-writeback, config-get-show, config-include-overrides
+- [x] config-aliases -- (step 6, tracker issue #2) load anchors/aliases with expanded reads everywhere; `set` at an anchor changes every alias; merge keys load; `set` reached through an alias → exit 3 mentioning `--expand-alias`; `set --expand-alias` replaces the alias with a commented block-style copy and sets the value in it; merge keys never written. Dependencies: config-foundation, config-set-writeback, config-get-show, config-include-overrides
 
 ## Product owner decisions (2026-10-01)
 Full records (decision, alternatives, why, revisit trigger, status) are in each spec's `research.md`.
@@ -249,10 +249,10 @@ anchor changes everyone. A write reached through an alias is refused with exit 3
   byte-surgical); expanding to `<<: *d` plus an override (the contract forbids writing merge keys).
 
 ### Existing Spec Updates
-- [ ] config-foundation -- Requirement 3.9 and decision H: anchors and aliases are loaded from step 6 (step-6
+- [x] config-foundation -- Requirement 3.9 and decision H: anchors and aliases are loaded from step 6 (step-6
   note pointing to config-aliases). Merge keys are loaded too, but never written (requirements choice 1;
   the brief had proposed keeping them exit 4). Dependencies: config-aliases
-- [ ] config-set-writeback -- step-6 notes: writes at anchors change every alias. `set` accepts
+- [x] config-set-writeback -- step-6 notes: writes at anchors change every alias. `set` accepts
   `--expand-alias`. VALUE with an anchor or alias stays exit 2. Dependencies: config-aliases
 
 ### Direct Implementation Candidates

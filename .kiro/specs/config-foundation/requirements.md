@@ -42,6 +42,8 @@ Approach Decision). The CLI uses a standard argument parser, with usage errors m
   mapping.
 - **Out**: `set` and all write-back rules (config-set-writeback); anchors/aliases/merge keys; multi-document
   files; concurrency.
+  *Note (step 6): anchors, aliases and merge keys are out only until step 6; they now load (spec config-aliases,
+  requirements 1 and 2).*
 
 ### Boundary Candidates
 - File location and loading (the only reader of the user's files)
@@ -95,6 +97,11 @@ Approach Decision). The CLI uses a standard argument parser, with usage errors m
 > over the included YAML content (spec config-include-overrides, requirement 1). A non-YAML target with
 > overrides, a YAML target whose content is not a mapping with overrides, and a `$ref` that is not an include
 > string are further exit-4 cases (config-include-overrides requirement 2).
+>
+> **Note (step 6):** the contract's "Out of contract" list no longer holds anchors, aliases and merge keys.
+> They load, and every command works on the expanded configuration (spec config-aliases, requirements 1–3);
+> `set` writes at an anchor or refuses a write reached through an alias or a merge key (config-aliases
+> requirements 4, 5 and 9).
 
 ## Introduction
 This specification covers the read side of the troupe configuration subsystem (contract step 1): the
@@ -114,7 +121,8 @@ and is owned by config-get-show.)*
   `set` command; exit codes 2, 4 and 5 and their messages; the shared definition of exit code 3.
 - **Out of scope**: `troupe config set`, VALUE parsing, every rule about how values are written back into files,
   deciding which leaves a `set` changed or removed (all owned by config-set-writeback); support for anchors,
-  aliases and merge keys (they are refused, 3.9); multi-document files; TAB characters before end-of-line comments; keys containing `.`;
+  aliases and merge keys (they are refused, 3.9; *until step 6: they now load, see spec config-aliases,
+  requirements 1 and 2*); multi-document files; TAB characters before end-of-line comments; keys containing `.`;
   digit-only mapping keys; concurrent invocations; Windows.
 - **Adjacent expectations**: config-set-writeback relies on this feature to (a) load the configuration with the
   exact file and position of every value, (b) resolve paths with the same rules as `show`, (c) append `set` and
@@ -139,7 +147,9 @@ and is owned by config-get-show.)*
   - G, PO delegated (safest assumption kept): malformed PATH syntax (empty PATH, empty segment, leading or
     trailing dot) is a usage error, exit 2 (1.5).
   - H, PO left to our choice: anchors, aliases and merge keys are load failures, exit 4 naming the file and the
-    key path where known (3.9).
+    key path where known (3.9). *(Superseded by step 6 (spec config-aliases, requirements 1 and 2) for loading
+    anchors, aliases and merge keys; the load refusals that remain are listed in the step 6 note on 3.9, and
+    writes are governed by config-aliases.)*
   - I, PO delegated (safest assumption kept): duplicate keys, explicit tags and files that are not valid UTF-8 are
     load failures, exit 4 naming the file and the key path where known (3.2, 3.3, 3.7).
 
@@ -178,6 +188,7 @@ and is owned by config-get-show.)*
 7. If a configuration file gives a value an explicit tag (for example `!!str 5` or `!custom x`), then the troupe CLI shall exit with code 4 and write a stderr message that names the file and the key path of the tagged value.
 8. When a configuration value is written as a folded block scalar (`>`, with any chomping or indentation indicator), the troupe CLI shall use the value defined by YAML 1.2 line folding (for example `>\n  a\n  b\n` is `a b` followed by a newline) everywhere the value appears, including `show` output, history events and leaves, and shall not add any character that does not belong to the folded value.
 9. If a configuration file uses an anchor (`&name`), an alias (`*name`) or a merge key (`<<`), then the troupe CLI shall exit with code 4 and write a stderr message that names the file and, where it is known, the key path at which the anchor, alias or merge key appears.
+   *Note (step 6): anchors and aliases now load, and so do merge keys (spec config-aliases, requirements 1 and 2). Exit 4 under config-aliases remains for an anchor on a mapping key, an alias used as a mapping key, an alias inside its own anchored node, an alias with no anchor of that name before it in the same file (1.3, 1.4), a merge key whose value is not a mapping, an alias of a mapping or a list of those, a merge key among the overrides of a mapping-form include, and an include as a merge source (2.3).*
 
 ### Requirement 4: File includes
 **Objective:** As a developer, I want to split my configuration across files with `file:` includes, so that large or shared settings can live in their own files.

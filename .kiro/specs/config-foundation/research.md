@@ -168,7 +168,7 @@
 | Empty / comment-only root file | Empty configuration, zero leaves | It is a valid YAML document with no settings | — |
 | Empty YAML include target | Null scalar in place of the include | "As if written in place": `key:` with nothing is null | — |
 | Explicit tags (`!!str 5`, `!foo x`) | Exit 4 naming file and key path — PO delegated: safest assumption (I) | Not described by the contract; guessing a type risks wrong writes | A contract step adds tags |
-| Anchors / aliases / merge keys | Exit 4 naming file and key path where known (anchor by the `&` property, merge key by a plain `<<` key, undefined alias by the composer error) — PO: our choice (H) | Out of contract; refusing protects the byte-surgical writer | Step 6 |
+| Anchors / aliases / merge keys | Exit 4 naming file and key path where known (anchor by the `&` property, merge key by a plain `<<` key, undefined alias by the composer error) — PO: our choice (H) | Out of contract; refusing protects the byte-surgical writer | Step 6 (*revisited: superseded by spec config-aliases, see decision H*) |
 | Complex (non-scalar) mapping keys | Exit 4 | Cannot be addressed by a dotted path | — |
 | Mapping keys | The key scalar's text as written (`"a b"` → `a b`, `true` → `true`) | Paths are textual | — |
 | Include suffix match | Case-sensitive `.yml` / `.yaml` | Contract text; avoids guessing | — |
@@ -262,6 +262,10 @@ make us revisit it, and its status.
   values elsewhere); ignore them (wrong values).
 - **Why**: Out of contract until step 6; surgical writes through aliases could change values at other paths.
 - **Revisit when**: contract step 6.
+- **Revisited (step 6)**: superseded by spec config-aliases (requirements 1 and 2) for anchors, aliases and merge
+  keys on load: they load, and every command works on the expanded configuration. Writes at anchors and the
+  refusal of writes reached through an alias or a merge key are governed by config-aliases (requirements 4–10).
+  The load refusals that remain are listed in the step 6 note on requirement 3.9.
 - **Spec impact**: new 3.9; design Loader refusals; tasks 3.2, 6.1.
 
 ### I. Duplicate keys, explicit tags and non-UTF-8 files are load failures

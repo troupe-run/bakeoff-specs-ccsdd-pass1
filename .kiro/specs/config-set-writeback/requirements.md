@@ -41,6 +41,8 @@ intended one. If it does not, the write is refused (exit 3) rather than risk cor
   anchors/aliases; TAB-before-comment files; concurrent writers.
   *Note (step 5): that change is specified by spec config-include-overrides (requirements 4–7), and
   `set --in-include` keeps this spec's new-key rule on request (config-include-overrides requirement 10).*
+  *Note (step 6): anchors, aliases and merge keys are out only until step 6; writes at anchors and through
+  aliases and merge keys are specified by spec config-aliases (requirements 4–10).*
 
 ### Constraints
 - Byte-surgical: after a successful `set`, only the required bytes differ in any file.
@@ -78,6 +80,11 @@ intended one. If it does not, the write is refused (exit 3) rather than risk cor
 > ancestor comes from no include, and on request with `set --in-include` (config-include-overrides
 > requirement 10, CR-B). Rule 1 is refined for values below a mapping-form include (config-include-overrides
 > requirement 7), and rule 4 applies to a mapping-form include as to a scalar-form one (7.5).
+>
+> **Note (step 6):** the contract's "Out of contract" list no longer holds anchors, aliases and merge keys in
+> the configuration files (spec config-aliases). A value defined at an anchor is changed at the anchor; a value
+> reached through an alias or a merge key is refused with exit 3 unless the alias is expanded with
+> `--expand-alias` (config-aliases requirements 4–9). Anchors and aliases in VALUE stay refused (1.3).
 
 ## Introduction
 This specification covers the write side of the troupe configuration subsystem (contract step 1, section
@@ -95,7 +102,8 @@ shared error conventions are provided by config-foundation and are used unchange
   events.
 - **Out of scope**: how the configuration is located, loaded and included, how PATH is parsed and resolved,
   how the history is stored, imported and printed, `show` and `history` output (all config-foundation);
-  step 5's change to where new keys are written; anchors, aliases and merge keys; multi-document files; TAB
+  step 5's change to where new keys are written; anchors, aliases and merge keys (*until step 6; see spec
+  config-aliases*); multi-document files; TAB
   characters before end-of-line comments; keys containing `.`; digit-only mapping keys; concurrent
   invocations; Windows.
 - **Adjacent expectations**: `set` relies on config-foundation to load the configuration with the exact file,
@@ -143,6 +151,7 @@ shared error conventions are provided by config-foundation and are used unchange
 1. When a developer runs `uv run troupe config set PATH VALUE [--theatre DIR]` from the repository root and the set succeeds, the troupe CLI shall change the configuration value at PATH to VALUE, write nothing to stdout and exit with code 0.
    *Note (step 4): `set` also accepts `--reason TEXT` (or `--reason=TEXT`, before, between or after the positional arguments); TEXT is recorded exactly as the `reason` of the set's own events, and `--reason` without TEXT is a usage error (exit 2) under 1.5 (spec config-lineage, requirement 6).*
    *Note (step 5): `set` also accepts `--in-include` (no value; before, between or after the positional arguments, together with `--reason`), which writes a new key below an include by 3.1–3.2 instead of as an override; `--in-include=TEXT` is a usage error (exit 2) under 1.5 (spec config-include-overrides, requirement 10, CR-B).*
+   *Note (step 6): `set` also accepts `--expand-alias` (no value; before, between or after the positional arguments, together with `--reason` and `--in-include`), which expands the aliases on PATH into copies before setting VALUE; `--expand-alias=TEXT` is a usage error (exit 2) under 1.5 (spec config-aliases, requirements 6–8).*
 2. The troupe CLI shall interpret VALUE as a single YAML 1.2 core-schema flow node, so that `0.2` is a float, `true` a boolean, `null` null, `abc` and `"0.2"` strings, `{a: 1}` a mapping, `[a, b]` a list and `"line one\nline two\n"` the two-line string `line one⏎line two⏎`.
 3. If VALUE is not valid YAML, is empty or contains only whitespace or comments, contains more than one document, contains a block-style node (block mapping, block list, literal or folded scalar), or uses a tag, an anchor or an alias, then the troupe CLI shall exit with code 2 and write a stderr message that names PATH and states that VALUE is not a single flow node.
 4. If a mapping inside VALUE has two equal keys, an empty key or a key that is not a scalar, then the troupe CLI shall exit with code 2 and write a stderr message that names PATH and the offending key.
@@ -155,6 +164,7 @@ shared error conventions are provided by config-foundation and are used unchange
 #### Acceptance Criteria
 1. When PATH resolves to an existing value, the troupe CLI shall write the change into the file that contains that value, including a file reached through YAML includes, and shall leave the including files unchanged.
    *Note (step 5): below a mapping-form include, an overridden value is changed in the override in the including file and a value that is not overridden in the file it comes from, and a mapping replaced at or below such an include is merged across the files that write it (spec config-include-overrides, requirements 7.1–7.4).*
+   *Note (step 6): a value defined at an anchor is changed at the anchor, and so everywhere the anchor is used; a value reached through an alias or a merge key is refused with exit 3 unless the alias is expanded with `--expand-alias`, and a value received from a merge key is always refused (spec config-aliases, requirements 4, 5 and 9).*
 2. When PATH resolves to a text include and VALUE is a string, the troupe CLI shall replace the text-include target file's whole content with VALUE exactly and leave the file containing the `file:` directive unchanged.
 3. While the text-include target file uses CRLF for every line break, when its content is replaced, the troupe CLI shall write each line break of VALUE that is not already CRLF as CRLF.
 4. If PATH resolves to a text include and VALUE is not a string, then the troupe CLI shall exit with code 3, name PATH and the text-include target file, and change no file.

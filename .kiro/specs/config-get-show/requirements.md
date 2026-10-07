@@ -94,6 +94,8 @@ Terms used below:
   user's formatting in `show` output (comments, quoting, flow style, blank lines and number spellings are not
   carried over, because the contract asks for block style with includes resolved); other output formats such as
   JSON; history in `show` output; anchors, aliases and merge keys (still refused, step 6); Windows.
+  *Note (step 6): anchors, aliases and merge keys now load, and `get` and `show` print the expanded
+  configuration (spec config-aliases, requirements 1–3).*
 - **Adjacent expectations**:
   - config-foundation: the configuration and its includes are loaded, PATH is parsed and resolved, and errors are
     reported exactly as in step 1. Each scalar's source file is the file the step 1 loader read it from.

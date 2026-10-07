@@ -81,6 +81,8 @@ Terms used below:
   other than its readiness line and error messages; a hand edit made to a file at the same moment a `set` writes
   that same file (concurrent writers to one file stay out of contract, as in step 1); anchors, aliases and merge
   keys (still refused, step 6); Windows.
+  *Note (step 6): anchors, aliases and merge keys now load and are reconciled and watched as any other file
+  (spec config-aliases, requirements 1–3).*
 - **Adjacent expectations**:
   - config-foundation: the configuration is loaded, and load failures are reported (exit 4), exactly as in step 1.
     A theatre that has never been imported is still imported by the first command, `history` included.

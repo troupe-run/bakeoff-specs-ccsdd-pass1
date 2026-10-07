@@ -83,6 +83,9 @@ Rejected alternatives:
   (Requirement 4 Includes), config-set-writeback (rule 2 / Requirement 3) and config-get-show (provenance).
 - **Out**: a syntax to delete an included key through an override; overriding list items; `$ref` to anything other
   than `file:` include strings; merge keys/anchors (still exit 4, until step 6); Windows; concurrent writers.
+  *Note (step 6): anchors, aliases and merge keys now load, also on and inside includes; a merge key among the
+  overrides of a mapping-form include and an include as a merge source stay exit 4 (spec config-aliases,
+  requirements 1.5 and 2.3).*
 
 ### Boundary Candidates
 - Loader: `$ref` recognition, validation and the deep merge into a layered model (core/file layer).
@@ -216,7 +219,8 @@ Terms used below:
     replace).
   - Overriding a single list item, or merging lists.
   - `$ref` values other than include strings (they are refused, 2.2).
-  - Anchors, aliases and merge keys (still exit 4, config-foundation decision H).
+  - Anchors, aliases and merge keys (still exit 4, config-foundation decision H). *Note (step 6): they now load;
+    see spec config-aliases (requirements 1, 2, 4 and 9).*
 - **Adjacent expectations**:
   - config-foundation keeps owning the scalar-form include rules (Requirement 4), path addressing and the error
     format. Its Requirement 4 gains a step-5 note pointing here.
