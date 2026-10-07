@@ -441,4 +441,4 @@ def _old_lines(layout: FileLayout, lines: Sequence[int], line_break: str) -> lis
 
 
 def _refuse(layout: FileLayout, slot: ValueSlot, problem: str) -> NoReturn:
-    raise WriteRefusedError(problem, file=layout.file.path, path=str(slot.path))
+    raise WriteRefusedError(problem, file=layout.file.shown, path=str(slot.path))

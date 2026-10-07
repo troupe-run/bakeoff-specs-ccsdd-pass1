@@ -461,11 +461,11 @@ def test_anchor_uses_index_each_anchored_node_with_its_aliases(
     uses = anchor_uses(document)
     text = document.root_file.text
 
-    def written(location: tuple[Path, int, int]) -> str:
+    def written(location: tuple[Path | str, int, int]) -> str:
         assert location[0] == document.root_file.real_path
         return text[location[1] : location[2]]
 
-    def tokens(location: tuple[Path, int, int]) -> list[tuple[str, int]]:
+    def tokens(location: tuple[Path | str, int, int]) -> list[tuple[str, int]]:
         return [
             (text[ref.token.span.start : ref.token.span.end], ref.token.span.start)
             for ref in uses[location]

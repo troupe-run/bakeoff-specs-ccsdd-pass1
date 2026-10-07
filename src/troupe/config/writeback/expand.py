@@ -71,6 +71,7 @@ from troupe.config.writeback.aliases import AliasSite, merge_problem
 from troupe.config.writeback.collection_render import RenderContext
 from troupe.config.writeback.edits import EditKind, TextEdit, apply_edits
 from troupe.config.writeback.layout import FileLayout, ValueSlot
+from troupe.config.writeback.remote_guard import remote_refusal
 from troupe.config.writeback.scalar_render import (
     Context,
     quote_style_of,
@@ -121,16 +122,20 @@ def expand_alias(document: ConfigDocument, site: AliasSite) -> dict[Path | str, 
 
     Raises :class:`WriteRefusedError` (exit 3) naming the alias's file and ``site.path`` for an
     alias inside a flow collection (8.4), a line that already has a comment (8.5), and an anchored
-    node holding a merge key (9.1).
+    node holding a merge key (9.1); and, naming the local include line, an alias written in
+    remote content (config-remote-schema 6.1).
     """
     alias = site.place.alias
     if alias is None:
         raise ValueError("an alias site is an alias place")
     file = alias.token.file
+    if file.url is not None:
+        # Remote content is read-only (config-remote-schema 6.1, 6.2).
+        raise remote_refusal(document, file, site.path)
     layout = FileLayout.build(file, document)
 
     def refuse(problem: str) -> WriteRefusedError:
-        return WriteRefusedError(problem, file=file.path, path=str(site.path))
+        return WriteRefusedError(problem, file=file.shown, path=str(site.path))
 
     if site.parent.style is CollectionStyle.FLOW:
         raise refuse(FLOW_REFUSAL.format(name=alias.name))

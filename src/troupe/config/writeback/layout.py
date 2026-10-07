@@ -419,11 +419,11 @@ class FileLayout:
         return self._line_starts[line + 1] if line + 1 < self.line_count else len(self._text)
 
     def _here(self, file: SourceFile) -> bool:
-        return file.real_path == self._file.real_path
+        return file.key == self._file.key
 
     def _require_here(self, file: SourceFile, what: str) -> None:
         if not self._here(file):
-            raise ValueError(f"the {what} is not written in {self._file.path}")
+            raise ValueError(f"the {what} is not written in {self._file.shown}")
 
     def _local(self, node: ConfigNode) -> ConfigNode | Span:
         """What is written in this file at the slot holding ``node``.
@@ -438,7 +438,7 @@ class FileLayout:
         if alias is not None:
             if self._here(alias.token.file):
                 return alias.token.span
-            raise ValueError(f"the alias is not written in {self._file.path}")
+            raise ValueError(f"the alias is not written in {self._file.shown}")
         include = node.include
         if (
             include is not None
@@ -450,13 +450,13 @@ class FileLayout:
             return _as_written(node)
         if include is not None and self._here(include.directive.file):
             return include.directive.span
-        raise ValueError(f"the node is not written in {self._file.path}")
+        raise ValueError(f"the node is not written in {self._file.shown}")
 
     def _colon_end(self, entry: MappingEntry) -> int:
         """Index just after the ``:`` following ``entry``'s key (spaces may come between)."""
         colon_end = self._find_colon_end(entry)
         if colon_end is None:
-            raise ValueError(f"no ':' after key {entry.key!r} in {self._file.path}")
+            raise ValueError(f"no ':' after key {entry.key!r} in {self._file.shown}")
         return colon_end
 
     def _find_colon_end(self, entry: MappingEntry) -> int | None:
@@ -557,7 +557,7 @@ class FileLayout:
 
     def _expect(self, index: int, char: str) -> None:
         if not self._text.startswith(char, index):
-            raise ValueError(f"expected {char!r} at index {index} of {self._file.path}")
+            raise ValueError(f"expected {char!r} at index {index} of {self._file.shown}")
 
     def _value_end(self, node: ConfigNode, indicator_end: int | None) -> int:
         """Content end of ``node``; ``indicator_end`` locates an empty null value."""
@@ -761,7 +761,7 @@ def _column(text: str, line_starts: tuple[int, ...], index: int) -> int:
 
 
 def _in_file(node: ConfigNode, file: SourceFile) -> bool:
-    return node.origin.file.real_path == file.real_path
+    return node.origin.file.key == file.key
 
 
 def _block_entries_in_file(

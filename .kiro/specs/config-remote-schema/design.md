@@ -127,7 +127,7 @@ src/troupe/config/
     ├── scalar_render.py  # "!literal " prefix for LITERAL marks; line break -> double-quoted (8.3)
     ├── layout.py         # inline extent of a !literal scalar starts at its tag (8.4)
     ├── shared.py         # include strings via IncludeRef.string; new includes keyed by SourceFile.key
-    ├── planner.py        # remote guard in _layout/_replace_file; tagged strings never block scalars
+    ├── planner.py        # remote guard in _add/_replace_file; tagged strings never block scalars
     ├── expand.py         # remote guard; copies keep !literal
     ├── verify.py         # overrides by key; SchemaViolationError -> exit 3 (7.1)
     ├── atomic.py         # backstop: never write a remote source
@@ -399,9 +399,17 @@ def remote_refusal(document: ConfigDocument, source: SourceFile, path: ConfigPat
   token for comment floors.
 
 #### Planner, Shared, Expand
-- `_Planner._layout(file)` and `_replace_file(file, …)` raise `remote_refusal(document, file, PATH)` for a source
-  with `url` (6.1). Every edit (changed values, additions, removals, conversions, `--in-include` placements,
-  text-include rewrites) passes one of them. The include-root rule message uses `include.string` (6.5).
+- `_Planner._add(layout, edits)` (with at least one edit) and `_replace_file(file, …)` raise
+  `remote_refusal(document, file, PATH)` for a source with `url` (6.1). Every edit (changed values, additions,
+  removals, conversions, `--in-include` placements, text-include rewrites) passes one of them. The guard is not in
+  `_layout(file)` (implementation decision, task 3.3): `_merge_layered` takes the layout of every kept entry's
+  file, also when the entry is unchanged, so a guard there would refuse a mapping replacement that changes only the
+  local override next to unchanged remote entries (6.3; research.md Decision 5, "nothing is refused that would not
+  have been written"). The include-root rule message uses `include.string` (6.5). Every writer message names a
+  source by `SourceFile.shown`.
+- The alias guard and the merge-key guard (`aliases.alias_refusal`, `aliases.merge_error`) raise `remote_refusal`
+  when the alias token or the `<<` key lies in a remote source (6.1), so the message names the local include
+  line and never suggests `--expand-alias`.
 - A `LITERAL` string never takes the literal-block path, and an existing `!literal` block scalar is replaced as a
   whole, never rewritten in place (8.3, 8.4).
 - `shared._Loading` keys new includes by `(including.key, string)`, calls `load_include` with the whole string,

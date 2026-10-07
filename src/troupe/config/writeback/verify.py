@@ -41,7 +41,7 @@ def verify_patch(
         raise ValueError("verify_patch needs at least one patch")
     overrides: dict[Path | str, str] = {file.key: file.text for file in document.files}
     overrides.update((patch.file.key, patch.new_text) for patch in patches)
-    first = patches[0].file.path
+    first = patches[0].file.shown
     path = str(request.path)
     try:
         after = load_config(config_file, overrides)
@@ -51,7 +51,7 @@ def verify_patch(
         ) from error
     if not plain_equal(root_plain(after), request.intended, ordered=True):
         problem = "written configuration differs from the intended configuration"
-        others = [str(patch.file.path) for patch in patches[1:]]
+        others = [str(patch.file.shown) for patch in patches[1:]]
         if others:
             problem += f" (also patched: {', '.join(others)})"
         raise WriteRefusedError(problem, file=first, path=path)

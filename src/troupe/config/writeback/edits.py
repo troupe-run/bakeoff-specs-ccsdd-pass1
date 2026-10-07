@@ -79,11 +79,11 @@ def _check(layout: FileLayout, ordered: Sequence[TextEdit]) -> None:
         if not 0 <= edit.start <= edit.end <= length:
             raise WriteRefusedError(
                 f"internal error: edit [{edit.start}, {edit.end}) lies outside the text",
-                file=layout.file.path,
+                file=layout.file.shown,
             )
         if edit.start < previous_end:
             raise WriteRefusedError(
-                f"internal error: overlapping edits at index {edit.start}", file=layout.file.path
+                f"internal error: overlapping edits at index {edit.start}", file=layout.file.shown
             )
         previous_end = edit.end
 

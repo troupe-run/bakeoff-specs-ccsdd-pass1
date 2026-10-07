@@ -132,6 +132,7 @@ from troupe.config.writeback.collection_render import (
 from troupe.config.writeback.compare import PlainMapping, new_to_plain, node_to_plain, plain_equal
 from troupe.config.writeback.edits import EditKind, TextEdit, apply_edits
 from troupe.config.writeback.layout import FileLayout, ValueSlot
+from troupe.config.writeback.remote_guard import remote_refusal
 from troupe.config.writeback.scalar_render import (
     Context,
     QuoteStyle,
@@ -221,7 +222,8 @@ def plan_set(document: ConfigDocument, request: SetRequest) -> Plan:
     root that would change (2.5), a non-string or another include over a text include (2.4), a
     layout the planner cannot write (14.9), a write through a merge key (config-aliases 9.1), the
     removal of an anchored node still used by an alias (4.6), the conversion of an anchored
-    include to mapping form (4.7), or a set that would change nothing.
+    include to mapping form (4.7), an edit into remote content, named at its local include line
+    (config-remote-schema 6.1, 6.2), or a set that would change nothing.
 
     A change written into a file included at several places appears at each of them
     (requirements choices 17, 18): the intended configuration holds it at every other place
@@ -500,7 +502,7 @@ class _Planner:
         start = collection.origin.span.start
         bracket = "{" if isinstance(collection, ConfigMapping) else "["
         if not layout.file.text.startswith(bracket, start):
-            raise ValueError(f"expected {bracket!r} at index {start} of {layout.file.path}")
+            raise ValueError(f"expected {bracket!r} at index {start} of {layout.file.shown}")
         return start + 1
 
     # --- conversion to mapping form --------------------------------------------------------------
@@ -699,7 +701,7 @@ class _Planner:
             return True
         if isinstance(node, ConfigMapping) and node.merge is not None and not _merges(node, value):
             # Replacing the whole mapping would remove its `<<` entry (config-aliases 9.1).
-            raise merge_error(node, at, path)
+            raise merge_error(self._document, node, at, path)
         if isinstance(node, ConfigScalar) and isinstance(value, NewScalar):
             if node.style in _QUOTED_OR_PLAIN:
                 self.changes.replace(*where, value)
@@ -818,7 +820,7 @@ class _Planner:
                     node_to_plain(entry.value), new_to_plain(new[entry.key]), ordered=False
                 )
             ):
-                raise merge_error(node, at, path)
+                raise merge_error(self._document, node, at, path)
         deleted = [index for index, entry in enumerate(node.entries) if entry.key not in new]
         existing = {entry.key for entry in node.entries}
         added = [(key, item) for key, item in value.entries if key not in existing]
@@ -1456,6 +1458,10 @@ class _Planner:
         return layout
 
     def _add(self, layout: FileLayout, edits: list[TextEdit]) -> None:
+        """Record ``edits`` of ``layout``'s file; an edit into a remote source is refused naming
+        the local include line (config-remote-schema 6.1, 6.2)."""
+        if layout.file.url is not None and edits:
+            raise remote_refusal(self._document, layout.file, self._path)
         key = layout.file.key
         if key in self._whole:
             _refuse(self._path, layout.file, "the file would be changed in two ways")
@@ -1465,8 +1471,11 @@ class _Planner:
         """Replace a text-include target's whole content; one file never gets two patches (13.6).
 
         A target included at several places may be given the same new content at each of them;
-        different contents, or a whole replacement besides edits, are refused.
+        different contents, or a whole replacement besides edits, are refused. A remote target is
+        refused naming the local include line (config-remote-schema 6.1, 6.2).
         """
+        if file.url is not None:
+            raise remote_refusal(self._document, file, path)
         key = file.key
         if key in self._whole and self._whole[key][1] == text:
             return
@@ -1540,13 +1549,13 @@ def _with_context(
 ) -> WriteRefusedError:
     return WriteRefusedError(
         error.problem,
-        file=error.file if error.file is not None else file.path,
+        file=error.file if error.file is not None else file.shown,
         path=error.path if error.path is not None else str(path),
     )
 
 
 def _refuse(path: ConfigPath, file: SourceFile, problem: str) -> NoReturn:
-    raise WriteRefusedError(problem, file=file.path, path=str(path))
+    raise WriteRefusedError(problem, file=file.shown, path=str(path))
 
 
 def _anchor_file(node: ConfigNode) -> SourceFile:
@@ -1603,7 +1612,7 @@ def _refuse_through_merge(document: ConfigDocument, path: ConfigPath) -> None:
         if isinstance(node, ConfigMapping):
             entry = node.get(path.segments[index])
             if entry is not None and entry.via_merge:
-                raise merge_error(node, ConfigPath(path.segments[:index]), path)
+                raise merge_error(document, node, ConfigPath(path.segments[:index]), path)
 
 
 def _as_written(

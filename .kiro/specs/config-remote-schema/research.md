@@ -160,6 +160,11 @@
   outermost local include directive leading to the source, preferring PATH's walk, and quotes its source text and
   line.
 - **Rationale**: it sees every edit exactly. Nothing is refused that would not have been written.
+- **Revised during task 3.3**: the guard sits at `_Planner._add` and `_replace_file`, not `_layout`.
+  `_merge_layered` takes the layout of every kept entry, including unchanged remote entries next to a changed
+  override, so a guard in `_layout` would refuse 6.3 cases. Every text edit passes `_add`, so coverage is the same.
+  The alias and merge-key guards also answer with `remote_refusal` when their token is written in remote content,
+  and every writer message names a source by `SourceFile.shown`.
 
 ### Decision 6: VALUE strings carry a mark decided once
 - **Context**: 8.1–8.6, 9.3, 9.5. Rendering, the plain tree and no-op detection must agree on what a VALUE string is.

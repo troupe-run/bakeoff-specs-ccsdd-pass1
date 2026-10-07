@@ -1,9 +1,10 @@
 """Sets on configurations with remote content (config-remote-schema).
 
-Task 2.4 pins the temporary refusal that keeps every write away from remote content until the
-remote write guard exists (task 3.3): ``set`` refuses (exit 3, no file changed) any configuration
-that has a remote source, and ``write_atomically`` never writes a remote source. Every CLI test
-runs the real console script against the local ``remote_server`` fixture.
+Remote content is read-only (task 3.3): a change written there is refused (exit 3, no file
+changed) naming the local include line, while local values, overridden remote values and new keys
+below a remote include are written in the local file. ``write_atomically`` never writes a remote
+source (an internal backstop). Every CLI test runs the real console script against the local
+``remote_server`` fixture.
 
 Traceability: every test names the requirement IDs it proves at the start of its docstring.
 """
@@ -18,42 +19,142 @@ from support import MakeTheatre
 from troupe.config.errors import ExitCode, WriteRefusedError
 from troupe.config.model import LineEnding, SourceFile
 from troupe.config.writeback.atomic import write_atomically
+from troupe.config.writeback.remote_guard import REMOTE_READ_ONLY
 
 CONFIG_NAMES = ["troupe.yml", "troupe.yaml"]
 
 
 @pytest.mark.parametrize("config_name", CONFIG_NAMES)
 @pytest.mark.parametrize(
-    ("path", "value"),
+    ("root", "path", "line"),
     [
-        pytest.param("local", "2", id="local-value"),
-        pytest.param("s.a", "9", id="remote-value"),
-        pytest.param("s.new", "1", id="new-key-below-remote"),
-        pytest.param("local", "1", id="no-op"),
+        pytest.param("local: 1\ns: {url}\n", "s.a", 2, id="scalar-form"),
+        pytest.param('local: 1\n\ns:\n  $ref: "{url}"\n  b: 2\n', "s.a", 4, id="ref-form-quoted"),
     ],
 )
-def test_set_refuses_every_configuration_with_a_remote_source(
+def test_set_refuses_a_change_of_remote_content(
     make_theatre: MakeTheatre,
     remote_server: RemoteServer,
     config_name: str,
+    root: str,
     path: str,
-    value: str,
+    line: int,
 ) -> None:
-    """Req 6.1, 10.1: until the remote write guard exists, a set on a configuration holding a
-    remote include exits 3 with nothing on stdout, stderr naming the root file, PATH and the URL,
-    and no user file changed."""
+    """Req 6.1: changing a value written in remote content exits 3 with nothing on stdout, stderr
+    naming the local file, PATH, the include string exactly as written and its line, and no user
+    file changed."""
     url = remote_server.route("/s.yml", "a: 1\n")
-    theatre = make_theatre(f"local: 1\ns: {url}\n", config_name=config_name)
+    text = root.format(url=url)
+    theatre = make_theatre(text, config_name=config_name)
     before = snapshot_tree(theatre)
+    written = text.splitlines()[line - 1].split(": ", 1)[1]
 
-    result = run_set(theatre, path, value)
+    result = run_set(theatre, path, "9")
 
     assert result.exit_code == ExitCode.WRITE_REFUSED, result.stderr
     assert result.stdout == b""
     assert result.stderr == (
-        f"{theatre / '.troupe' / config_name}: {path}: the configuration has a remote include "
-        f"({url}); set does not change configurations with remote includes yet\n"
+        f"{theatre / '.troupe' / config_name}: {path}: "
+        + REMOTE_READ_ONLY.format(string=written, line=line)
+        + "\n"
     )
+    assert url in result.stderr
+    assert snapshot_tree(theatre) == before
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+@pytest.mark.parametrize(
+    ("root", "path", "value", "expected"),
+    [
+        pytest.param("local: 1\ns: {url}\n", "local", "2", "local: 2\ns: {url}\n", id="local"),
+        pytest.param(
+            "local: 1\ns: {url}\n",
+            "s.new",
+            "1",
+            "local: 1\ns:\n  $ref: {url}\n  new: 1\n",
+            id="new-key-converts-to-mapping-form",
+        ),
+        pytest.param(
+            "s:\n  $ref: {url}\n  a: 5\n",
+            "s.a",
+            "6",
+            "s:\n  $ref: {url}\n  a: 6\n",
+            id="overridden-value",
+        ),
+    ],
+)
+def test_set_writes_local_changes_next_to_remote_content(
+    make_theatre: MakeTheatre,
+    remote_server: RemoteServer,
+    config_name: str,
+    root: str,
+    path: str,
+    value: str,
+    expected: str,
+) -> None:
+    """Req 6.3, 6.4: a local value, an overridden remote value and a new key below a scalar-form
+    remote include (converted to mapping form, the URL unchanged) are written in the local file."""
+    url = remote_server.route("/s.yml", "a: 1\n")
+    theatre = make_theatre(root.format(url=url), config_name=config_name)
+
+    result = run_set(theatre, path, value)
+
+    assert result.exit_code == ExitCode.OK, result.stderr
+    assert (theatre / ".troupe" / config_name).read_text() == expected.format(url=url)
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+@pytest.mark.parametrize(
+    ("remote", "path"),
+    [
+        pytest.param("base: &b\n  k: 1\nuse: *b\n", "team.use.k", id="alias"),
+        pytest.param(
+            "base: &b\n  k: 1\nm:\n  <<: *b\n  own: 2\n", "team.m.k", id="merge-key-value"
+        ),
+    ],
+)
+def test_set_refuses_aliases_and_merge_keys_in_remote_content(
+    make_theatre: MakeTheatre,
+    remote_server: RemoteServer,
+    config_name: str,
+    remote: str,
+    path: str,
+) -> None:
+    """Req 6.1: a set reached through an alias or a merge key written in remote content exits 3
+    naming the local include line (never suggesting --expand-alias), and changes no file."""
+    url = remote_server.route("/team.yml", remote)
+    theatre = make_theatre(f"local: 1\nteam: {url}\n", config_name=config_name)
+    before = snapshot_tree(theatre)
+
+    result = run_set(theatre, path, "9")
+
+    assert result.exit_code == ExitCode.WRITE_REFUSED, result.stderr
+    assert result.stdout == b""
+    assert result.stderr == (
+        f"{theatre / '.troupe' / config_name}: {path}: "
+        + REMOTE_READ_ONLY.format(string=url, line=2)
+        + "\n"
+    )
+    assert "--expand-alias" not in result.stderr
+    assert snapshot_tree(theatre) == before
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_set_not_found_below_remote_content_names_the_url(
+    make_theatre: MakeTheatre, remote_server: RemoteServer, config_name: str
+) -> None:
+    """Req 6.1, 10.1: a PATH that does not exist below remote content exits 5 naming the remote
+    source by its exact URL, and changes no file."""
+    url = remote_server.route("/team.yml", "x: 1\n")
+    theatre = make_theatre(f"team: {url}\n", config_name=config_name)
+    before = snapshot_tree(theatre)
+
+    result = run_set(theatre, "team.x.y", "9")
+
+    assert result.exit_code == ExitCode.PATH, result.stderr
+    assert result.stdout == b""
+    assert result.stderr.startswith(f"{url}: team.x.y: ")
+    assert "http:/1" not in result.stderr
     assert snapshot_tree(theatre) == before
 
 

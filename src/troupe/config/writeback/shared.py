@@ -88,9 +88,10 @@ from troupe.config.writeback.compare import (
 )
 from troupe.config.writeback.value import NewValue
 
-type WrittenLocation = tuple[Path, int, int]
-"""A written location: the real path of its file and the start and end of its span (the identity
-of a written collection or include string, whatever the place it is loaded at)."""
+type WrittenLocation = tuple[Path | str, int, int]
+"""A written location: the identity of its file (:attr:`~troupe.config.model.SourceFile.key`) and
+the start and end of its span (the identity of a written collection or include string, whatever
+the place it is loaded at)."""
 
 type _Slot = tuple[WrittenLocation, str | int]
 """An entry (key) of a written mapping or an item (index) of a written list."""
@@ -106,7 +107,7 @@ identity, :attr:`~troupe.config.model.SourceFile.key`)."""
 
 def written_location(origin: Origin) -> WrittenLocation:
     """The written location of a node, mapping or include string from its origin."""
-    return (origin.file.real_path, origin.span.start, origin.span.end)
+    return (origin.file.key, origin.span.start, origin.span.end)
 
 
 @dataclass(frozen=True)
@@ -164,8 +165,9 @@ class WrittenChanges:
     """Overrides of scalar-form include strings converted to mapping form."""
     texts: dict[Path | str, str] = field(default_factory=dict)
     """New contents of text-include target files, by source identity (``SourceFile.key``)."""
-    files: dict[_Location, Path] = field(default_factory=dict)
-    """Every changed location with the path of its file as opened (for messages)."""
+    files: dict[_Location, Path | str] = field(default_factory=dict)
+    """Every changed location with its file's display name (``SourceFile.shown``, for
+    messages)."""
     claimed: dict[_Slot, PlainValue] = field(default_factory=dict)
     """The value asked for each value slot the planner changes (:meth:`claim`)."""
     path: ConfigPath | None = None
@@ -181,7 +183,7 @@ class WrittenChanges:
             self.claimed[slot] = plain
             return True
         if not plain_equal(self.claimed[slot], plain, ordered=True):
-            self._conflict(holder.origin.file.path)
+            self._conflict(holder.origin.file.shown)
         return False
 
     def replace(self, holder: WrittenCollection, key: str | int, value: NewValue) -> None:
@@ -192,7 +194,7 @@ class WrittenChanges:
         if (where, key) in replaced and not plain_equal(
             replaced[(where, key)], plain, ordered=True
         ):
-            self._conflict(holder.origin.file.path)
+            self._conflict(holder.origin.file.shown)
         self.replaced[(where, key)] = plain
         anchored = _anchored_at(holder, key)
         if anchored is not None:
@@ -213,7 +215,7 @@ class WrittenChanges:
         for key, value in entries:
             plain = _mark(new_to_plain(value), holder.origin.file)
             if not _add_entry(added, key, plain):
-                self._conflict(holder.origin.file.path)
+                self._conflict(holder.origin.file.shown)
 
     def convert(self, include: IncludeRef, entries: Sequence[tuple[str, NewValue]]) -> None:
         """The scalar-form ``include`` is converted to mapping form with ``entries`` as
@@ -224,7 +226,7 @@ class WrittenChanges:
             if key in overrides:
                 agreed = _agreed(overrides[key], plain)
                 if agreed is None:
-                    self._conflict(include.directive.file.path)
+                    self._conflict(include.directive.file.shown)
                 plain = agreed
             overrides[key] = plain
 
@@ -233,16 +235,16 @@ class WrittenChanges:
         it at another place is refused, 11.5)."""
         previous = self.texts.get(target.key)
         if previous is not None and previous != content:
-            self._conflict(target.path)
+            self._conflict(target.shown)
         self.texts[target.key] = content
-        self.files[target.key] = target.path
+        self.files[target.key] = target.shown
 
     def _at(self, origin: Origin) -> WrittenLocation:
         where = written_location(origin)
-        self.files[where] = origin.file.path
+        self.files[where] = origin.file.shown
         return where
 
-    def _conflict(self, file: Path) -> NoReturn:
+    def _conflict(self, file: Path | str) -> NoReturn:
         raise WriteRefusedError(
             CONFLICT, file=file, path=None if self.path is None else str(self.path)
         )
@@ -470,7 +472,7 @@ class _Loading:
             except ConfigLoadError as error:
                 raise WriteRefusedError(
                     f"written value cannot be read back: {error}",
-                    file=including.path,
+                    file=including.shown,
                     path=str(self._path),
                 ) from error
             self._loaded[key] = _unwrapped(node_to_plain(node))

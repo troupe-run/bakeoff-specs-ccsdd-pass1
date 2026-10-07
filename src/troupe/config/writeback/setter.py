@@ -26,6 +26,11 @@ merged with the expansion texts and paired with the original files, so verificat
 the original document with the final texts, the history compares the original configuration with
 the result (no event for the expansion itself, 8.6, 10.4) and every changed file is written once
 (10.2, 10.3).
+
+Since config-remote-schema (step 7) remote content is read-only: the planner and the expander
+refuse every edit into a remote source (exit 3, naming the local include line, 6.1, 6.2) before
+anything is written, while overridden remote values and new keys below a remote include are
+written in the local file (6.3, 6.4).
 """
 
 from collections.abc import Sequence
@@ -61,13 +66,6 @@ EXPANSION_STUCK: Final = "alias '*{name}' is still an alias after its expansion"
 """The problem of an expansion round that leaves its alias place an alias (a backstop that stops
 the expansion loop)."""
 
-REMOTE_SETS_REFUSED: Final = (
-    "the configuration has a remote include ({url}); set does not change configurations with "
-    "remote includes yet"
-)
-"""The temporary refusal (exit 3) of every set on a configuration that has a remote source, so that
-no write can reach remote content before the remote write guard exists (config-remote-schema)."""
-
 
 @dataclass(frozen=True)
 class SetOutcome:
@@ -100,7 +98,6 @@ def set_value(
     :class:`ConfigLoadError` when the changes cannot be recorded (every written file restored).
     """
     document = theatre.document
-    _refuse_remote(document, path)
     request = resolve_target(document, path, value, in_include=in_include)
     # Before the no-op check, so a no-op through an alias is refused too (config-aliases 5.3).
     expanded, request, texts = _expanded(
@@ -128,18 +125,6 @@ def set_value(
             raise _naming_unrestored(error, unrestored) from error
         raise
     return SetOutcome(written=tuple(patch.file.path for patch in patches), changes=changes)
-
-
-def _refuse_remote(document: ConfigDocument, path: ConfigPath) -> None:
-    """Refuse (exit 3, before anything is planned) a set on a configuration with a remote source,
-    naming the root file, PATH and the first remote include's URL."""
-    for file in document.files:
-        if file.url is not None:
-            raise WriteRefusedError(
-                REMOTE_SETS_REFUSED.format(url=file.url),
-                file=document.root_file.path,
-                path=str(path),
-            )
 
 
 def _expanded(
@@ -186,7 +171,7 @@ def _expanded(
 def _alias_refusal(problem: str, alias: AliasRef, path: ConfigPath) -> WriteRefusedError:
     """The refusal (exit 3) of ``problem`` about ``alias``, naming its file and PATH."""
     return WriteRefusedError(
-        problem.format(name=alias.name), file=alias.token.file.path, path=str(path)
+        problem.format(name=alias.name), file=alias.token.file.shown, path=str(path)
     )
 
 

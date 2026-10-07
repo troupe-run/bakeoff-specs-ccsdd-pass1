@@ -55,6 +55,7 @@ from troupe.config.writeback.compare import (
     node_to_plain,
     plain_equal,
 )
+from troupe.config.writeback.remote_guard import remote_refusal
 from troupe.config.writeback.shared import WrittenLocation, written_location
 from troupe.config.writeback.target import ReplaceTarget, SetRequest
 
@@ -87,11 +88,16 @@ class AliasSite:
     """The path of the alias place (``<include root>.$ref`` for an alias as a ``$ref`` value)."""
 
 
-def alias_refusal(alias: AliasRef, path: ConfigPath) -> WriteRefusedError:
-    """The refusal (exit 3) of a set at ``path`` reached through ``alias`` (5.1, 5.2)."""
-    return WriteRefusedError(
-        ALIAS_REFUSAL.format(name=alias.name), file=alias.token.file.path, path=str(path)
-    )
+def alias_refusal(document: ConfigDocument, alias: AliasRef, path: ConfigPath) -> WriteRefusedError:
+    """The refusal (exit 3) of a set at ``path`` reached through ``alias`` (5.1, 5.2).
+
+    An alias written in remote content is refused as remote content is, naming the local include
+    line (config-remote-schema 6.1): expanding it would write the remote source.
+    """
+    file = alias.token.file
+    if file.url is not None:
+        return remote_refusal(document, file, path)
+    return WriteRefusedError(ALIAS_REFUSAL.format(name=alias.name), file=file.shown, path=str(path))
 
 
 def merge_problem(holder_path: ConfigPath) -> str:
@@ -101,12 +107,18 @@ def merge_problem(holder_path: ConfigPath) -> str:
 
 
 def merge_error(
-    holder: ConfigMapping, holder_path: ConfigPath, path: ConfigPath
+    document: ConfigDocument, holder: ConfigMapping, holder_path: ConfigPath, path: ConfigPath
 ) -> WriteRefusedError:
     """The refusal (exit 3) of a set at ``path`` reaching a value ``holder`` receives from its
-    merge key, naming the file of the ``<<`` key (9.2)."""
-    file = holder.origin.file.path if holder.merge is None else holder.merge.key_origin.file.path
-    return WriteRefusedError(merge_problem(holder_path), file=file, path=str(path))
+    merge key, naming the file of the ``<<`` key (9.2).
+
+    A merge key written in remote content is refused as remote content is, naming the local
+    include line (config-remote-schema 6.1).
+    """
+    file = holder.origin.file if holder.merge is None else holder.merge.key_origin.file
+    if file.url is not None:
+        return remote_refusal(document, file, path)
+    return WriteRefusedError(merge_problem(holder_path), file=file.shown, path=str(path))
 
 
 def alias_sites(
@@ -120,7 +132,7 @@ def alias_sites(
     reloads and asks again, so nested aliases are expanded outermost first (8.1, 8.2).
     """
     try:
-        _Guard(request.path, expand=expand).run(document, request)
+        _Guard(document, request.path, expand=expand).run(document, request)
     except _Found as found:
         return (found.site,)
     return ()
@@ -164,7 +176,8 @@ class _Guard:
     Where PATH ends (at its node or its deepest existing ancestor) every side counts.
     """
 
-    def __init__(self, path: ConfigPath, *, expand: bool) -> None:
+    def __init__(self, document: ConfigDocument, path: ConfigPath, *, expand: bool) -> None:
+        self._document = document
         self._path = path
         self._expand = expand
 
@@ -185,8 +198,8 @@ class _Guard:
         alias = site.place.alias
         if alias is None:  # pragma: no cover - a site is only made for an alias place
             raise ValueError("an alias site is an alias place")
-        if not self._expand:
-            raise alias_refusal(alias, self._path)
+        if not self._expand or alias.token.file.url is not None:
+            raise alias_refusal(self._document, alias, self._path)
         raise _Found(site)
 
     def _step(self, strands: list[_Strand], at: ConfigPath, key: str | int) -> list[_Strand]:
@@ -241,7 +254,7 @@ class _Guard:
             if entry is None:
                 return None
             if entry.via_merge:
-                raise merge_error(holder, at, self._path)
+                raise merge_error(self._document, holder, at, self._path)
             return _Strand(entry.value, holder, entry.key)
         index = int(key)
         if index >= len(holder.items):

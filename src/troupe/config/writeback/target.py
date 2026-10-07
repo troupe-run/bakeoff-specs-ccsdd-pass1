@@ -182,7 +182,7 @@ def resolve_target(
     if any(is_ref_key(segment) for segment in path.segments):
         raise WriteRefusedError(
             "`$ref` is reserved for includes; a set PATH cannot name it",
-            file=document.root_file.path,
+            file=document.root_file.shown,
             path=str(path),
         )
     walk = walk_path(document.root, path)
@@ -590,7 +590,7 @@ def _scalar_kind(walk: PathWalk) -> str:
 
 
 def _not_found(walk: PathWalk, problem: str) -> PathNotFoundError:
-    return PathNotFoundError(problem, file=walk.deepest.origin.file.path, path=str(walk.path))
+    return PathNotFoundError(problem, file=walk.deepest.origin.file.shown, path=str(walk.path))
 
 
 def _text_include_targets(node: ConfigNode, plain: PlainValue) -> dict[int, SourceFile]:

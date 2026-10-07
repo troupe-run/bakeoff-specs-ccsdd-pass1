@@ -121,7 +121,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - Done when planner and expander tests prove `key: !literal https://x`, `{a: !literal https://x}`, `- !literal file:x`, a string with a line break, replacing a plain and a block `!literal` scalar (with and without an anchor and an end-of-line comment), text-include content, and the copy of an anchored `!literal` scalar
   - _Requirements: 8.3, 8.4, 8.8, 10.2_
 
-- [ ] 3.3 Refuse every write into remote content, naming the local include line
+- [x] 3.3 Refuse every write into remote content, naming the local include line
   - The remote guard finds the outermost include directive written in a local file that leads to a remote source, preferring the one on PATH's walk. The refusal (exit 3) names that file, PATH, the directive's text exactly as written (quotes included) and its line.
   - The planner raises it whenever it would take the layout of a remote source or replace a remote file's whole text. The alias expander raises it for an alias in remote content. The include-root refusal names the include string.
   - The temporary refusals of task 2.4 are removed together with their pinned test, and `write_atomically` keeps refusing a remote source only as an internal backstop.
