@@ -63,6 +63,7 @@ rules). The write side carries most of the risk and rules, so it gets its own sp
 - [x] config-lineage -- (step 4) actor/via/at/reason/change on every history event; `TROUPE_ACTOR` (exit 2 when invalid) and login-name default; `set --reason`; one change id per command, reconcile or import; persisted, legacy stores readable. Dependencies: config-foundation, config-set-writeback, config-file-sync, config-get-show
 - [x] config-include-overrides -- (step 5) mapping-form includes with `$ref` and deep-merged overrides, new keys under includes written as overrides in the including file (scalar-form → mapping-form conversion), list exceptions, overridden vs non-overridden existing values, exit 4 for non-YAML overrides; CR-B: `set --in-include` keeps the step 1 rule for new keys. Dependencies: config-foundation, config-set-writeback, config-get-show
 - [x] config-aliases -- (step 6, tracker issue #2) load anchors/aliases with expanded reads everywhere; `set` at an anchor changes every alias; merge keys load; `set` reached through an alias → exit 3 mentioning `--expand-alias`; `set --expand-alias` replaces the alias with a commented block-style copy and sets the value in it; merge keys never written. Dependencies: config-foundation, config-set-writeback, config-get-show, config-include-overrides
+- [ ] config-remote-schema -- (step 7) `https://`/`http://` includes fetched at load (YAML by `.yml`/`.yaml` path, else text; failed fetch → 4), remote values read-only (exit 3 naming the include string as written; new keys → local overrides), `.troupe/troupe.schema.json` (2020-12): `format: uri` and `!literal` make strings literals, invalid configuration → 4, invalid `set` → 3, include-like VALUE written `!literal` unless `--include`. Dependencies: config-foundation, config-set-writeback, config-file-sync, config-get-show, config-include-overrides, config-aliases
 
 ## Product owner decisions (2026-10-01)
 Full records (decision, alternatives, why, revisit trigger, status) are in each spec's `research.md`.
@@ -258,3 +259,44 @@ anchor changes everyone. A write reached through an alias is refused with exit 3
 ### Direct Implementation Candidates
 - (none) -- tests that pin "anchors are refused" are updated inside config-aliases' tasks, in the same change as
   the behaviour (collaboration.md).
+
+## Step 7 — Remote includes and a schema (2026-10-07)
+
+### Overview
+Teams share one configuration across theatres by including it from an `https://` URL. troupe reads it but treats
+it as read-only. A `set` that would change a value from the URL is refused (exit 3), and stderr quotes the include
+string from the local file. A JSON Schema at `.troupe/troupe.schema.json` describes the configuration. It decides
+which URL-looking strings are values (`"format": "uri"`), and so do `!literal` tags. A configuration that does not
+validate gives exit 4, and a `set` that would make it invalid gives exit 3. An include-like VALUE is written tagged
+`!literal` unless `set --include` is given.
+
+### Approach Decision
+- **Chosen**: include recognition (`file:`, `https://`, `http://`) is decided in one place in the loader. While
+  walking, the loader asks a schema walker (`properties`/`items`/`additionalProperties` only) and the `!literal`
+  tag whether the string at the current path is a literal. Remote sources are fetched with stdlib `urllib`
+  (timeout, any failure → exit 4) and become in-memory `SourceFile`s with a URL identity. The loaded plain
+  configuration is validated with `jsonschema`'s Draft 2020-12 validator. The writer refuses to change any
+  physical place in a remote source, and names the local include directive. It validates the intended configuration
+  before writing, and renders include-like VALUE strings with `!literal` unless `--include` is given.
+- **Why**: the literal decision has to be made before anything is fetched, so it belongs to the walk that
+  recognises includes. Keeping remote sources as `SourceFile`s lets the step 5 layers, `--sources`, leaves,
+  reconcile and history work unchanged. Only the writer needs to know that a source is read-only. A real 2020-12
+  validator avoids a partial home-grown one that would accept invalid configurations.
+- **Rejected alternatives**: httpx/requests (a new dependency for one GET); a hand-written schema validator
+  (incomplete); caching remote content under `.troupe/` (a second source of truth that nobody asked for); deciding
+  literals after the tree is built (it would already have fetched).
+
+### Existing Spec Updates
+- [ ] config-foundation -- Requirement 4 gains remote includes (step-7 note). Requirement 3.7 and decision I:
+  `!literal` is loaded and other tags stay exit 4. Schema validation is a new exit-4 case. Dependencies:
+  config-remote-schema
+- [ ] config-set-writeback -- Decision D and 2.7–2.8: include-like VALUE strings are written `!literal` unless
+  `--include` is given. `set` accepts `--include`. A `set` that would make the configuration schema-invalid gives
+  exit 3. Dependencies: config-remote-schema
+- [ ] config-file-sync -- `watch` polls the schema file. URLs are not polled, but remote content is re-fetched on
+  each reload. Dependencies: config-remote-schema
+- [ ] config-get-show -- `--sources` labels a remote scalar with its URL. Dependencies: config-remote-schema
+
+### Direct Implementation Candidates
+- (none) -- tests that pin "explicit tags → exit 4" and decision D are updated inside config-remote-schema's
+  tasks, in the same change as the behaviour (collaboration.md).
