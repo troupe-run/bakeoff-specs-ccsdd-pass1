@@ -160,7 +160,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - _Boundary: test_set_remote_
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 10.1_
 
-- [ ] 4.3 (P) Validate schema checks of `set` end to end
+- [x] 4.3 (P) Validate schema checks of `set` end to end
   - A set that breaks the schema (type, required key, `additionalProperties: false`) exits 3, names the schema file, PATH and the failing key path, and changes no file and records no event. A valid set is written byte-exactly. A set in a theatre whose configuration is already invalid exits 4.
   - Done when these e2e tests pass in `tests/test_set_schema.py`
   - _Boundary: test_set_schema_
