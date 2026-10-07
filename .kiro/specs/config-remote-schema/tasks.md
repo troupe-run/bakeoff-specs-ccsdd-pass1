@@ -75,7 +75,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - Done when loader tests show `!literal` values for plain, quoted, block and empty scalars, an alias of a literal, spans without the tag, `get` printing no tag, and each refusal with its message
   - _Requirements: 4.1, 4.2, 4.3, 4.6_
 
-- [ ] 2.2 Read and enforce the schema when the configuration loads
+- [x] 2.2 Read and enforce the schema when the configuration loads
   - Loading reads the schema next to the root configuration file before building. Each include string's path is checked with the walker, so a `format: uri` string stays a string at any depth, also inside included files. After building, the expanded configuration is validated. The document carries the schema.
   - This task adds the literal and schema checks on top of the existing `file:` test; remote prefixes are recognised only from task 2.4. The included-content helper used by writers takes the path and the schema, and its caller in the shared-file rebuild passes them, so new content is decided like loaded content.
   - An invalid configuration, or a schema that cannot be used, is a load error (exit 4) naming the schema file. No history state is created, and the schema file is never written.

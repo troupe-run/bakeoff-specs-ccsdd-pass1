@@ -45,8 +45,9 @@ Off-PATH changes can only be replicas: every recorded location must be reached a
 is not is refused (exit 3) naming PATH and its file. A new YAML include from VALUE carries no
 content; where another place merges it with a mapping override, its target is loaded from the
 pre-write files (:func:`~troupe.config.loader.load_include`, relative to the file it is written
-in) and merged as ``deep_merge`` does (1.2, 1.7); a target that cannot be loaded is refused as
-the read-back would refuse it.
+in, at the path of the place that merges it and with the document's schema, so its literals are
+decided as the read-back decides them, config-remote-schema 4.4) and merged as ``deep_merge`` does
+(1.2, 1.7); a target that cannot be loaded is refused as the read-back would refuse it.
 
 Nothing here reads the patched texts: the intended configuration comes only from the pre-write
 document and the plan's edits, so the read-back still proves the written texts.
@@ -71,10 +72,11 @@ from troupe.config.model import (
     IncludeKind,
     IncludeRef,
     Origin,
+    SchemaSource,
     SourceFile,
 )
 from troupe.config.overrides import is_ref_key
-from troupe.config.paths import ConfigPath
+from troupe.config.paths import ROOT, ConfigPath
 from troupe.config.writeback.compare import (
     IncludeDirective,
     PlainMapping,
@@ -318,7 +320,8 @@ def with_other_places(
     root = document.root
     before = _root_content(rebuilt_plain(root, WrittenChanges()))
     texts = {file.real_path: file.text for file in document.files}
-    after = _root_content(rebuilt_plain(root, changes, _Loading(texts, path)))
+    loading = _Loading(texts, path, document.schema)
+    after = _root_content(rebuilt_plain(root, changes, loading))
     grafted = _graft(intended, before, after, path.segments)
     if not isinstance(grafted, dict):  # pragma: no cover - the root stays a mapping
         raise TypeError("the root must stay a mapping")
@@ -440,24 +443,28 @@ def _subtree_locations(node: ConfigNode, found: set[_Location]) -> None:
 
 
 class _Loading:
-    """Loads the content of new YAML includes from the pre-write files, once each."""
+    """Loads the content of new YAML includes from the pre-write files, once per file, include
+    string and place (the place's path decides the content's literals by ``schema``)."""
 
-    def __init__(self, texts: dict[Path, str], path: ConfigPath) -> None:
+    def __init__(
+        self, texts: dict[Path, str], path: ConfigPath, schema: SchemaSource | None = None
+    ) -> None:
         self._texts = texts
         self._path = path
-        self._loaded: dict[tuple[Path, str], PlainValue] = {}
+        self._schema = schema
+        self._loaded: dict[tuple[Path, str, ConfigPath], PlainValue] = {}
 
-    def content(self, include: _NewInclude) -> PlainValue:
-        """The content of ``include`` with its VALUE overrides merged; a load error is refused
-        naming PATH and the file holding the include (exit 3)."""
+    def content(self, include: _NewInclude, at: ConfigPath) -> PlainValue:
+        """The content of ``include``, merged at the place ``at``, with its VALUE overrides
+        merged; a load error is refused naming PATH and the file holding the include (exit 3)."""
         including = include.including
         if including is None:  # pragma: no cover - every new include is marked
             raise ValueError("a new include without its file")
         spec = include.text[len(INCLUDE_PREFIX) :]
-        key = (including.real_path, spec)
+        key = (including.real_path, spec, at)
         if key not in self._loaded:
             try:
-                node = load_include(including, spec, self._texts)
+                node = load_include(including, spec, self._texts, path=at, schema=self._schema)
             except ConfigLoadError as error:
                 raise WriteRefusedError(
                     f"written value cannot be read back: {error}",
@@ -467,13 +474,13 @@ class _Loading:
             self._loaded[key] = _unwrapped(node_to_plain(node))
         content = self._loaded[key]
         if include.overrides and isinstance(content, dict):
-            content = _merge(content, include.overrides, self.mergeable)
+            content = _merge(content, include.overrides, self.mergeable, at)
         return content
 
-    def mergeable(self, plain: PlainValue) -> PlainValue:
-        """``plain`` unwrapped to its content, a new YAML include loaded."""
+    def mergeable(self, plain: PlainValue, at: ConfigPath) -> PlainValue:
+        """``plain`` (the value at ``at``) unwrapped to its content, a new YAML include loaded."""
         if isinstance(plain, _NewInclude) and plain.content is None and _is_yaml(plain):
-            return self.content(plain)
+            return self.content(plain, at)
         return _unwrapped(plain)
 
 
@@ -492,9 +499,9 @@ def _may_be_mapping(plain: PlainValue) -> bool:
 def rebuilt_plain(
     node: ConfigNode, changes: WrittenChanges, loading: "_Loading | None" = None
 ) -> PlainValue:
-    """The plain tree of ``node`` recomputed from its written layers with ``changes`` applied at
-    their written locations; with no changes it equals ``node_to_plain(node)``."""
-    return _Rebuild(changes, loading).plain(node)
+    """The plain tree of ``node`` (the root) recomputed from its written layers with ``changes``
+    applied at their written locations; with no changes it equals ``node_to_plain(node)``."""
+    return _Rebuild(changes, loading).plain(node, ROOT)
 
 
 class _Rebuild:
@@ -503,11 +510,11 @@ class _Rebuild:
 
     def __init__(self, changes: WrittenChanges, loading: _Loading | None) -> None:
         self._changes = changes
-        self._mergeable: Callable[[PlainValue], PlainValue] = (
-            _unwrapped if loading is None else loading.mergeable
+        self._mergeable: Callable[[PlainValue, ConfigPath], PlainValue] = (
+            _unwrapped_at if loading is None else loading.mergeable
         )
 
-    def plain(self, node: ConfigNode) -> PlainValue:
+    def plain(self, node: ConfigNode, path: ConfigPath) -> PlainValue:
         """As ``node_to_plain``: the content, wrapped as a directive at an include root; an alias
         place of a replaced anchored node is the replacement (config-aliases 4.1, 4.5)."""
         alias = node.alias
@@ -515,14 +522,14 @@ class _Rebuild:
             anchored = written_location(alias.anchored.origin)
             if anchored in self._changes.anchored:
                 return self._changes.anchored[anchored]
-        content = self._content(node)
+        content = self._content(node, path)
         include = node.include
         if include is None:
             return content
-        overrides = self._overrides(include)
+        overrides = self._overrides(include, path)
         return IncludeDirective(include.string, content, include.kind, overrides)
 
-    def _content(self, node: ConfigNode) -> PlainValue:
+    def _content(self, node: ConfigNode, path: ConfigPath) -> PlainValue:
         if isinstance(node, ConfigScalar):
             for ref in _chain(node.include):
                 if ref.kind is IncludeKind.TEXT and ref.target.real_path in self._changes.texts:
@@ -533,36 +540,37 @@ class _Rebuild:
             if layers is not None:
                 # Merged again from both written sides, so each side's changes take effect
                 # with this place's own overrides keeping precedence (1.2, 1.3).
-                base = _unwrapped(self.plain(layers.base))
-                over = _unwrapped(self._content(layers.over))
+                base = _unwrapped(self.plain(layers.base, path))
+                over = _unwrapped(self._content(layers.over, path))
                 if not (isinstance(base, dict) and isinstance(over, dict)):
                     return base  # pragma: no cover - a merge always has two mappings
-                return _merge(base, over, self._mergeable)
+                return _merge(base, over, self._mergeable, path)
             if node.merge is not None:
                 # Merged again from the mapping as written, so a change at a merged anchored
                 # node (or in an inline source) takes effect here, below the own keys (2.1, 2.2).
-                content: PlainValue = _merge_key(self._entries(node.merge.written))
+                content: PlainValue = _merge_key(self._entries(node.merge.written, path))
             else:
-                content = self._entries(node)
+                content = self._entries(node, path)
         else:
-            content = self._items(node)
+            content = self._items(node, path)
         # An unmerged include root has no overrides as loaded; the changes may give its ``$ref``
         # mapping (or a converted include string) some, merged innermost include first.
         for ref in reversed(list(_chain(node.include))):
-            overrides = self._overrides(ref)
+            overrides = self._overrides(ref, path)
             if overrides and isinstance(content, dict):
-                content = _merge(content, overrides, self._mergeable)
+                content = _merge(content, overrides, self._mergeable, path)
         return content
 
-    def _overrides(self, include: IncludeRef) -> PlainMapping:
-        """The overrides of ``include`` after the changes: its ``$ref`` mapping's entries, or
-        those of a converted include string."""
+    def _overrides(self, include: IncludeRef, path: ConfigPath) -> PlainMapping:
+        """The overrides of ``include`` (at ``path``) after the changes: its ``$ref`` mapping's
+        entries, or those of a converted include string."""
         if include.form is not None:
-            return self._entries(include.form)
+            return self._entries(include.form, path)
         return dict(self._changes.converted.get(written_location(include.directive), {}))
 
-    def _entries(self, mapping: ConfigMapping) -> PlainMapping:
-        """The entries of the written ``mapping`` (``$ref`` left out) after the changes."""
+    def _entries(self, mapping: ConfigMapping, path: ConfigPath) -> PlainMapping:
+        """The entries of the written ``mapping`` (at ``path``; ``$ref`` left out) after the
+        changes."""
         where = written_location(mapping.origin)
         removed = self._changes.removed.get(where, set())
         result: PlainMapping = {}
@@ -571,14 +579,17 @@ class _Rebuild:
                 continue
             slot = (where, entry.key)
             replaced = self._changes.replaced
-            result[entry.key] = replaced[slot] if slot in replaced else self.plain(entry.value)
+            if slot in replaced:
+                result[entry.key] = replaced[slot]
+            else:
+                result[entry.key] = self.plain(entry.value, path.child(entry.key))
         for key, value in self._changes.added.get(where, []):
             if key is not None:
                 result[key] = value
         return result
 
-    def _items(self, sequence: ConfigSequence) -> list[PlainValue]:
-        """The items of the written ``sequence`` after the changes."""
+    def _items(self, sequence: ConfigSequence, path: ConfigPath) -> list[PlainValue]:
+        """The items of the written ``sequence`` (at ``path``) after the changes."""
         where = written_location(sequence.origin)
         removed = self._changes.removed.get(where, set())
         items: list[PlainValue] = []
@@ -587,7 +598,9 @@ class _Rebuild:
                 continue
             slot = (where, index)
             replaced = self._changes.replaced
-            items.append(replaced[slot] if slot in replaced else self.plain(item))
+            items.append(
+                replaced[slot] if slot in replaced else self.plain(item, path.child(index))
+            )
         items.extend(value for key, value in self._changes.added.get(where, []) if key is None)
         return items
 
@@ -628,17 +641,24 @@ def _unwrapped(plain: PlainValue) -> PlainValue:
     return plain
 
 
+def _unwrapped_at(plain: PlainValue, at: ConfigPath) -> PlainValue:
+    """:func:`_unwrapped`, as a ``mergeable`` that needs no place."""
+    return _unwrapped(plain)
+
+
 def _merge(
     base: PlainMapping,
     over: PlainMapping,
-    mergeable: Callable[[PlainValue], PlainValue] = _unwrapped,
+    mergeable: Callable[[PlainValue, ConfigPath], PlainValue],
+    path: ConfigPath,
 ) -> PlainMapping:
     """The deep merge of plain mappings (1.2, 1.3), as the loader's ``deep_merge``: ``base``'s
     keys in order, each overridden one replaced in place (two mappings merged recursively, keeping
     the included value's directive), then the keys only in ``over`` in their order.
 
     ``mergeable`` gives a value's mapping content (an include unwrapped; a new YAML include
-    loaded), asked only when both values may be mappings."""
+    loaded at the value's path below ``path``, the merged mapping's), asked only when both values
+    may be mappings."""
     result: PlainMapping = {}
     for key, value in base.items():
         if key not in over:
@@ -648,9 +668,10 @@ def _merge(
         if not (_may_be_mapping(value) and _may_be_mapping(overriding)):
             result[key] = overriding
             continue
-        included, overrides = mergeable(value), mergeable(overriding)
+        at = path.child(key)
+        included, overrides = mergeable(value, at), mergeable(overriding, at)
         if isinstance(included, dict) and isinstance(overrides, dict):
-            merged = _merge(included, overrides, mergeable)
+            merged = _merge(included, overrides, mergeable, at)
             if isinstance(value, IncludeDirective):
                 result[key] = dataclasses.replace(value, content=merged)
             else:

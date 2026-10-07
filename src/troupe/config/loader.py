@@ -51,11 +51,18 @@ in ``ConfigScalar.literal`` and, like an anchor, is not part of the node's own s
 x`` loads). ``!literal`` on a mapping, a list or a mapping key, ``!literal`` written before an
 anchor, and a ``$ref`` value tagged ``!literal`` are refused, as is every other tag.
 
-Includes (4.1-4.7): any string scalar value (any style, never a key, never ``!literal``) starting
-with :data:`INCLUDE_PREFIX` is replaced by its target, ``including_file.path.parent / spec``. A
-target whose name ends in one of :data:`YAML_INCLUDE_SUFFIXES` is loaded recursively and its root
-embedded as if written in place (an empty target is null); any other target is its exact decoded
-text as a string and is never parsed. A YAML target already on the include chain from the root is a
+The schema (config-remote-schema 4.4, 5.1-5.4, research.md Decision 2): ``troupe.schema.json``
+next to the root file is read before building (:mod:`troupe.config.schema`). A string whose own
+path (its path in the configuration, also inside included files and at alias places) the schema
+gives ``format: uri`` is a literal, decided before any read. After building, the expanded
+configuration is validated; a mismatch is a schema-violation load error naming the schema file.
+
+Includes (4.1-4.7): any string scalar value (any style, never a key, never ``!literal``, never a
+literal by the schema) starting with :data:`INCLUDE_PREFIX` is replaced by its target,
+``including_file.path.parent / spec``. A target whose name ends in one of
+:data:`YAML_INCLUDE_SUFFIXES` is loaded recursively and its root embedded as if written in place
+(an empty target is null); any other target is its exact decoded text as a string and is never
+parsed. A YAML target already on the include chain from the root is a
 cycle. Every produced node carries an :class:`IncludeRef`. Each file is read at most once; a file
 included several times (a diamond) is shared and listed once in ``ConfigDocument.files``.
 
@@ -108,12 +115,14 @@ from troupe.config.model import (
     MappingEntry,
     Origin,
     ScalarStyle,
+    SchemaSource,
     SourceFile,
     Span,
 )
 from troupe.config.overrides import deep_merge, is_ref_key, override_entries
 from troupe.config.paths import ROOT, ConfigPath
 from troupe.config.scalars import ScalarValue, resolve_plain_scalar
+from troupe.config.schema import read_schema, uri_format_at, validate
 
 _SCALAR_STYLES: Final[dict[str | None, ScalarStyle]] = {
     None: ScalarStyle.PLAIN,
@@ -151,7 +160,13 @@ def load_config(
 
     ``overrides`` maps a file's real path (``Path.resolve()``) to text that is used instead of the
     file's content on disk; an overridden file is never read from disk.
+
+    The schema next to ``config_file`` is read first (config-remote-schema 5.1, 5.3, 5.4): a string
+    whose path it gives ``format: uri`` is a literal (4.4), and the expanded configuration is
+    validated against it after building (5.1, 5.2); the document carries it. The schema file is
+    only ever read (5.6).
     """
+    schema = read_schema(config_file.parent)
     loader = _Loader({} if overrides is None else dict(overrides))
     root_file = loader.read_source(config_file)
     composed = _compose(root_file)
@@ -160,7 +175,7 @@ def load_config(
             entries=(), style=CollectionStyle.BLOCK, origin=Origin(root_file, Span(0, 0))
         )
     else:
-        builder = _Builder(root_file, loader, (root_file,), composed.aliases)
+        builder = _Builder(root_file, loader, (root_file,), composed.aliases, schema)
         node = builder.build(composed.root, ROOT)
         if not isinstance(node, ConfigMapping):
             kind = "a list" if isinstance(node, ConfigSequence) else "a scalar"
@@ -168,24 +183,36 @@ def load_config(
                 f"the top-level node is {kind}; expected a mapping", file=root_file.path
             )
         root = node
-    return ConfigDocument(root_file=root_file, root=root, files=tuple(loader.files))
+    if schema is not None:
+        validate(schema, root)
+    return ConfigDocument(root_file=root_file, root=root, files=tuple(loader.files), schema=schema)
 
 
-def load_include(including: SourceFile, spec: str, overrides: Mapping[Path, str]) -> ConfigNode:
-    """Load the include string ``file:<spec>`` as if written in ``including``, or raise
-    :class:`ConfigLoadError`.
+def load_include(
+    including: SourceFile,
+    spec: str,
+    overrides: Mapping[Path, str],
+    *,
+    path: ConfigPath = ROOT,
+    schema: SchemaSource | None = None,
+) -> ConfigNode:
+    """Load the include string ``file:<spec>`` as if written in ``including`` at ``path``, or
+    raise :class:`ConfigLoadError`.
 
     The target is resolved relative to ``including``'s directory and loaded with the same rules as
     in a document (nested includes, mapping forms, cycle detection along the chain starting at
-    ``including``); ``overrides`` gives files' texts by real path, as for :func:`load_config`. The
-    result is the include root node (its ``include`` set). Used by writers that need the content
-    of an include a set is about to write (config-include-overrides 11.2).
+    ``including``); ``overrides`` gives files' texts by real path, as for :func:`load_config`. Its
+    content is built at ``path`` with ``schema``, so its literals are decided as they are when the
+    configuration loads (config-remote-schema 4.4). The result is the include root node (its
+    ``include`` set). Used by writers that need the content of an include a set is about to write
+    (config-include-overrides 11.2).
     """
     loader = _Loader(dict(overrides))
     directive = ConfigScalar(
         value=INCLUDE_PREFIX + spec, style=ScalarStyle.PLAIN, origin=Origin(including, Span(0, 0))
     )
-    return _Builder(including, loader, (including,), {}).include(directive, spec, ROOT)
+    builder = _Builder(including, loader, (including,), {}, schema)
+    return builder.include(directive, spec, path)
 
 
 class _Loader:
@@ -304,11 +331,13 @@ class _Builder:
         loader: _Loader,
         chain: tuple[SourceFile, ...],
         aliases: Mapping[AliasSlot, AliasOccurrence],
+        schema: SchemaSource | None = None,
     ) -> None:
         self._source = source
         self._loader = loader
         self._chain = chain
         self._aliases = aliases
+        self._schema = schema
         self._tags_by_anchor: dict[int, _Tag] | None = None
         self._stack: list[int] = []
         self._anchored: dict[int, ConfigNode] = {}
@@ -360,11 +389,8 @@ class _Builder:
         literal = self._refuse_properties(node, path)
         if isinstance(node, ScalarNode):
             scalar = self._scalar(node, path, literal)
-            if (
-                scalar.literal is None
-                and isinstance(scalar.value, str)
-                and scalar.value.startswith(INCLUDE_PREFIX)
-            ):
+            if self._is_include(scalar, path):
+                assert isinstance(scalar.value, str)  # checked by ``_is_include``
                 return self.include(scalar, scalar.value[len(INCLUDE_PREFIX) :], path)
             return scalar
         if isinstance(node, SequenceNode):
@@ -381,6 +407,17 @@ class _Builder:
             return self._build_mapping(node, path)
         raise ConfigLoadError(  # pragma: no cover - the composer produces only these node kinds
             f"unsupported YAML node {type(node).__name__}", file=self._source.path, path=_text(path)
+        )
+
+    def _is_include(self, scalar: ConfigScalar, path: ConfigPath) -> bool:
+        """Whether the scalar value ``scalar`` at ``path`` is an include: an include string that
+        is neither tagged ``!literal`` (config-remote-schema 4.1) nor given ``format: uri`` by the
+        schema at its own path (4.4). The decision comes before any read (4.6)."""
+        return (
+            scalar.literal is None
+            and isinstance(scalar.value, str)
+            and scalar.value.startswith(INCLUDE_PREFIX)
+            and not uri_format_at(self._schema, path)
         )
 
     def _scalar(self, node: ScalarNode, path: ConfigPath, literal: Span | None) -> ConfigScalar:
@@ -593,7 +630,9 @@ class _Builder:
         composed = _compose(target)
         embedded: ConfigNode | None = None
         if composed.root is not None:
-            builder = _Builder(target, self._loader, (*self._chain, target), composed.aliases)
+            builder = _Builder(
+                target, self._loader, (*self._chain, target), composed.aliases, self._schema
+            )
             embedded = builder.build(composed.root, path)
         if form is not None and has_overrides:
             if not isinstance(embedded, ConfigMapping):
