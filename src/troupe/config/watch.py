@@ -7,7 +7,10 @@ The watcher observes the theatre by polling byte snapshots, without any file-wat
 - The **watch set** is the display path of every file the last successful load read (the root
   configuration file and every YAML or text include, scalar or mapping form, at any depth;
   config-include-overrides 3.5), plus both root candidates
-  ``<theatre>/.troupe/troupe.yml`` and ``troupe.yaml``, so an added or renamed root is seen (5.2).
+  ``<theatre>/.troupe/troupe.yml`` and ``troupe.yaml``, so an added or renamed root is seen (5.2),
+  plus the schema file ``<theatre>/.troupe/troupe.schema.json``, present or absent
+  (config-remote-schema 3.4). A remote source (one with a URL) is never in the watch set: no URL
+  is polled, and every reload fetches remote content again (config-remote-schema 3.4, 3.5).
   Files outside the watch set are never read (5.6).
 - A **snapshot** maps each watched path to its bytes, read by path so that a replace-by-rename is
   seen (5.2), or to ``None`` when the file is missing or unreadable. A touch leaves the bytes
@@ -35,7 +38,12 @@ import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
-from troupe.config.constants import CONFIG_DIR_NAME, CONFIG_FILE_NAMES, WATCH_POLL_SECONDS
+from troupe.config.constants import (
+    CONFIG_DIR_NAME,
+    CONFIG_FILE_NAMES,
+    SCHEMA_FILE_NAME,
+    WATCH_POLL_SECONDS,
+)
 from troupe.config.errors import TroupeError
 from troupe.config.model import ConfigDocument
 from troupe.config.theatre import open_theatre
@@ -64,7 +72,10 @@ class Watcher:
         self._root_candidates = frozenset(
             directory / CONFIG_DIR_NAME / name for name in CONFIG_FILE_NAMES
         )
-        self.watch_set: frozenset[Path] = self._root_candidates
+        self._always_watched = self._root_candidates | {
+            directory / CONFIG_DIR_NAME / SCHEMA_FILE_NAME
+        }
+        self.watch_set: frozenset[Path] = self._always_watched
         self.baseline: Snapshot = {}
         self.pending = False
         self.last_report: str | None = None
@@ -111,7 +122,8 @@ class Watcher:
             self.last_report = message
 
     def _watch_paths(self, document: ConfigDocument) -> frozenset[Path]:
-        return frozenset(source.path for source in document.files) | self._root_candidates
+        local = frozenset(source.path for source in document.files if source.url is None)
+        return local | self._always_watched
 
     def _sleep(self) -> None:
         deadline = time.monotonic() + self._poll_seconds
@@ -127,12 +139,17 @@ class Watcher:
 
 
 def _loaded_bytes(document: ConfigDocument) -> Snapshot:
-    """The bytes each loaded file held when the load read it.
+    """The bytes each loaded local file, and the schema file, held when the load read it.
 
     The loader decodes strictly as UTF-8 without newline translation and keeps a BOM, so encoding
-    the text gives back exactly the bytes read.
+    the text gives back exactly the bytes read. Remote sources have no bytes on disk to compare.
     """
-    return {source.path: source.text.encode("utf-8") for source in document.files}
+    loaded: Snapshot = {
+        source.path: source.text.encode("utf-8") for source in document.files if source.url is None
+    }
+    if document.schema is not None:
+        loaded[document.schema.path] = document.schema.text.encode("utf-8")
+    return loaded
 
 
 def _read_bytes(path: Path) -> bytes | None:

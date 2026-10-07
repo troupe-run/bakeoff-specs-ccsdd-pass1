@@ -104,7 +104,7 @@ def resolve_path(document: ConfigDocument, path: ConfigPath) -> ConfigNode:
         segment = path.segments[walk.consumed]
         raise PathNotFoundError(
             f"{_PROBLEMS[walk.stop]} (at segment {segment!r})",
-            file=walk.deepest.origin.file.path,
+            file=walk.deepest.origin.file.shown,
             path=str(path),
         )
     return walk.deepest

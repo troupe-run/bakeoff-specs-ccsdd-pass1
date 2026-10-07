@@ -98,7 +98,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - _Depends: 1.4_
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 2.1, 2.2, 2.3, 10.3_
 
-- [ ] 2.5 Show remote sources by URL and watch the schema file
+- [x] 2.5 Show remote sources by URL and watch the schema file
   - Path-not-found and wrong-kind errors name sources by display name. `--sources` labels a scalar from remote content with its URL.
   - The watch set holds the local files of the last load, both root candidates and the schema file path. Baselines hold the loaded bytes of local files and the schema. A URL is never polled, and each reload fetches again.
   - Done when tests prove the `--sources` label of a remote scalar, a watcher that reloads (and re-fetches) on a schema-file edit and never puts a URL in its watch set, and a watcher that reports a failing fetch and keeps running with nothing recorded

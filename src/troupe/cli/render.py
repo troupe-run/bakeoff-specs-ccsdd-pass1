@@ -5,7 +5,8 @@ per :func:`format_show_output`; ``history`` prints one JSON line per record per
 :func:`format_history_line`, the step-1 members followed by the record's lineage (config-lineage
 1.1, 1.2, 1.5, 1.7). Both return bytes so handlers can write them into the
 binary output buffer without newline translation (a CRLF in a text include is kept).
-:func:`source_label` names a loaded file relative to the theatre directory for ``--sources``.
+:func:`source_label` names a loaded file relative to the theatre directory for ``--sources``, and
+a remote source by its URL.
 """
 
 import json
@@ -82,9 +83,14 @@ def _json_safe(value: ScalarValue) -> ScalarValue:
 def source_label(file: SourceFile, theatre_dir: Path) -> str:
     """Return ``file``'s path relative to ``theatre_dir`` with ``/`` separators (5.4).
 
+    A remote source is labelled with its URL exactly as written (config-remote-schema 3.2); its
+    stand-in path is never made relative.
+
     Lexical, like error messages: ``abspath`` normalises ``.`` and ``..`` without resolving
     symbolic links, so the label shows the path the user wrote. A file outside the theatre
     directory gets leading ``..`` components (e.g. ``../shared/prompt.md``), and only there.
     """
+    if file.url is not None:
+        return file.url
     relative = os.path.relpath(os.path.abspath(file.path), os.path.abspath(theatre_dir))
     return Path(relative).as_posix()

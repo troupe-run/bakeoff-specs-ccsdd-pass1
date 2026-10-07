@@ -130,7 +130,7 @@ def get_value(theatre: Theatre, path: ConfigPath) -> ScalarValue:
         kind = "a mapping" if isinstance(node, ConfigMapping) else "a list"
         raise WrongNodeKindError(
             f"is {kind}, not a value; print it with `troupe config show {path}`",
-            file=node.origin.file.path,
+            file=node.origin.file.shown,
             path=str(path),
         )
     return node.value
