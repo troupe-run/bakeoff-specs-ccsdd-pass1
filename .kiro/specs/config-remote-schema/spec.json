@@ -1,13 +1,13 @@
 {
   "feature_name": "config-remote-schema",
   "created_at": "2026-10-07T09:01:04Z",
-  "updated_at": "2026-10-07T09:20:00Z",
+  "updated_at": "2026-10-07T09:25:00Z",
   "language": "en",
   "phase": "requirements-generated",
   "approvals": {
     "requirements": {
       "generated": true,
-      "approved": false
+      "approved": true
     },
     "design": {
       "generated": false,
