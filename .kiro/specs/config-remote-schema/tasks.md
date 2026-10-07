@@ -69,7 +69,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - _Requirements: 1.6, 2.1, 10.4_
 
 - [ ] 2. Core: literals, the schema and remote includes in the loader
-- [ ] 2.1 Load `!literal` scalars and narrow the explicit-tag refusal
+- [x] 2.1 Load `!literal` scalars and narrow the explicit-tag refusal
   - A scalar tagged exactly `!literal` loads as its text, in any style and without plain-scalar typing (empty is `""`). It records the tag's span, and its value span excludes the tag, as for anchors (`&a !literal x` loads). It is never an include. `!literal` on a mapping or a list, `!literal` written before an anchor, any other tag, and a `$ref` value tagged `!literal` stay load errors (exit 4) naming the file, the key path and the tag.
   - Existing tests change in this task: in `tests/test_loader.py` (`REFUSALS`, ~:455), `tests/test_loader_aliases.py` (`TAGGED_ANCHORS`, ~:316) and `tests/test_e2e_locate_load.py` (~:210), every other tag stays refused. Docstrings that say "every explicit tag" are narrowed, and `!literal` acceptance rows move to the new file.
   - Done when loader tests show `!literal` values for plain, quoted, block and empty scalars, an alias of a literal, spans without the tag, `get` printing no tag, and each refusal with its message

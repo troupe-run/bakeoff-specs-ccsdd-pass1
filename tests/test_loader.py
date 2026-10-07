@@ -439,7 +439,7 @@ def test_errors_in_override_text_name_the_file(make_theatre: MakeTheatre) -> Non
     assert info.value.path == "a"
 
 
-# --- refusals (3.2, 3.3, 3.4, 3.7, 3.9; product-owner decisions H and I) ---------------------
+# --- refusals (3.2, 3.3, 3.4, 3.7 as narrowed by config-remote-schema 4.2, 3.9; decisions H, I)
 
 REFUSALS: list[tuple[str, str | bytes, str | None, str]] = [
     ("non-utf8", b"a: caf\xe9\n", None, "UTF-8"),
@@ -464,6 +464,12 @@ REFUSALS: list[tuple[str, str | bytes, str | None, str]] = [
     ("tag-on-root", "!!map\na: 1\n", None, "explicit tag"),
     ("anchor-on-key", "a:\n  &k b: 1\n", "a.b", "anchor on a mapping key is not supported"),
     ("anchor-after-tag", "a: !!str &x 5\n", "a", "explicit tag"),
+    # config-remote-schema 4.2: only ``!literal`` on a scalar value, after any anchor, loads.
+    ("tag-literal-on-block-mapping", "a: !literal\n  b: 1\n", "a", "explicit tag '!literal'"),
+    ("tag-literal-on-flow-list", "a: !literal [1]\n", "a", "explicit tag '!literal'"),
+    ("tag-literal-on-key", "!literal a: 1\n", "a", "explicit tag '!literal'"),
+    ("tag-literal-before-anchor", "a: !literal &x 5\n", "a", "explicit tag '!literal'"),
+    ("tag-near-literal", "a: !literals 5\n", "a", "explicit tag '!literals'"),
     ("undefined-alias", "a: *x\n", None, "line 1"),
     ("complex-key-sequence", "? [a]\n: 1\n", None, "key"),
     ("complex-key-nested", "a:\n  ? {b: 1}\n  : 2\n", "a", "key"),

@@ -5,7 +5,7 @@ on any value node is accepted and recorded as ``Anchor(name, span of the propert
 node's own span is its value without the property (research.md, Decision 3): the first key for a
 block mapping, the first ``-`` for a block list, the next token for scalars and flow collections,
 and empty at the property's end for an empty null. An anchor on a mapping key and explicit tags
-stay refused.
+other than ``&name !literal`` on a scalar (config-remote-schema 4.1, 4.2) stay refused.
 
 Task 2.2: at each alias ``*name`` the anchored node is built again for the alias's path, an alias
 place (research.md, Decision 2). It and its descendants carry the anchored node's origins, and its
@@ -323,6 +323,9 @@ TAGGED_ANCHORS: list[tuple[str, str, str | None, str]] = [
     ("tag-on-anchored-mapping", "a: &x !!map\n  b: 1\n", "a", "'!!map'"),
     ("tag-on-anchored-list-item", "a:\n  - ! &x 5\n", "a.0", "'!'"),
     ("tag-on-anchored-root", "! &x\na: 1\n", None, "'!'"),
+    ("literal-tag-before-anchor", "a: !literal &x 5\n", "a", "'!literal'"),
+    ("literal-tag-on-anchored-mapping", "a: &x !literal\n  b: 1\n", "a", "'!literal'"),
+    ("literal-tag-on-anchored-list", "a: &x !literal [1]\n", "a", "'!literal'"),
 ]
 
 
@@ -335,7 +338,9 @@ def test_explicit_tag_next_to_an_anchor_is_still_refused(
     make_theatre: MakeTheatre, text: str, key_path: str | None, tag: str
 ) -> None:
     """Req 1.1: accepting anchors does not let explicit tags through, whichever property comes
-    first (config-foundation 3.7 stays in force)."""
+    first (config-foundation 3.7 stays in force). Only ``&x !literal`` on a scalar loads
+    (config-remote-schema 4.1, tested in test_loader_literals.py); ``!literal`` before the anchor
+    or on a collection is refused (config-remote-schema 4.2)."""
     config = _load(make_theatre, text)
 
     with pytest.raises(ConfigLoadError) as info:

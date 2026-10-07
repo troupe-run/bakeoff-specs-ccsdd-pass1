@@ -208,6 +208,8 @@ def test_duplicate_key_exits_4_naming_the_file_and_key_path(
 
 
 # ---- 3.7: explicit tags name the file and the key path ----
+# config-remote-schema 4.1 lets ``!literal`` on a scalar value load (tested in
+# test_loader_literals.py); every other tag, and ``!literal`` elsewhere, stays refused (4.2).
 
 
 @pytest.mark.parametrize("config_name", CONFIG_NAMES)
@@ -217,6 +219,9 @@ def test_duplicate_key_exits_4_naming_the_file_and_key_path(
         ("a: !!str 5\n", "a", "!!str"),
         ("agents:\n  lead: !custom x\n", "agents.lead", "!custom"),
         ("items:\n  - ok\n  - !!int 3\n", "items.1", "!!int"),
+        ("a: !literal\n  b: 1\n", "a", "!literal"),
+        ("a: !literal &x 5\n", "a", "!literal"),
+        ("agents:\n  lead: !literally x\n", "agents.lead", "!literally"),
     ],
 )
 def test_explicit_tag_exits_4_naming_the_file_and_key_path(

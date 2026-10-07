@@ -11,14 +11,14 @@ character indices into the composed text) and styles. Plain scalars are typed wi
 scalars are strings. Folded (``>``) values have the U+0007 fold markers that the round-trip
 composer inserts removed (3.8).
 
-Unsupported YAML is refused with :class:`ConfigLoadError` naming the file and, where known, the
-key path (product-owner decision I; decision H as narrowed by config-aliases 1.3, 1.4 and 2.3):
-non-UTF-8 bytes, syntax errors, several documents, duplicate keys, explicit tags, anchors on
-mapping keys, undefined aliases (a composer error), aliases used as keys or inside their own
-anchored node, merge keys whose value cannot be merged, includes as merge sources and merge keys
-among ``$ref`` overrides, non-scalar keys and a top-level node that is not a mapping. Anchors,
-aliases and merge keys themselves load (step 6). An empty or comment-only file is an empty block
-mapping at ``Span(0, 0)``.
+Unsupported YAML is refused with :class:`ConfigLoadError` naming the file and, where known, the key
+path (product-owner decision I; decision H as narrowed by config-aliases 1.3, 1.4 and 2.3):
+non-UTF-8 bytes, syntax errors, several documents, duplicate keys, explicit tags other than
+``!literal`` on a scalar value, anchors on mapping keys, undefined aliases (a composer error),
+aliases used as keys or inside their own anchored node, merge keys whose value cannot be merged,
+includes as merge sources and merge keys among ``$ref`` overrides, non-scalar keys and a top-level
+node that is not a mapping. Anchors, aliases and merge keys themselves load (step 6). An empty or
+comment-only file is an empty block mapping at ``Span(0, 0)``.
 
 Anchors (config-aliases 1.1, 1.5): an anchor ``&name`` on any value node is recorded as
 :class:`Anchor` (the name and the span of the property), and the node's own span is its value
@@ -44,12 +44,19 @@ mapping is the merged view of :func:`troupe.config.merge_keys.merge_mapping`, wi
 written kept in ``merge``. A merge key among the overrides of a mapping-form include is refused. A
 quoted ``<<`` key is an ordinary key.
 
-Includes (4.1-4.7): any string scalar value (any style, never a key) starting with
-:data:`INCLUDE_PREFIX` is replaced by its target, ``including_file.path.parent / spec``. A target
-whose name ends in one of :data:`YAML_INCLUDE_SUFFIXES` is loaded recursively and its root embedded
-as if written in place (an empty target is null); any other target is its exact decoded text as a
-string and is never parsed. A YAML target already on the include chain from the root is a cycle.
-Every produced node carries an :class:`IncludeRef`. Each file is read at most once; a file
+Literals (config-remote-schema 4.1-4.3, research.md choices 2 and 21): a scalar value tagged exactly
+:data:`LITERAL_TAG` loads as its text, in any style and without plain-scalar typing (an empty one is
+``""``; folded values lose their fold markers), and is never an include. The tag's span is recorded
+in ``ConfigScalar.literal`` and, like an anchor, is not part of the node's own span (``&a !literal
+x`` loads). ``!literal`` on a mapping, a list or a mapping key, ``!literal`` written before an
+anchor, and a ``$ref`` value tagged ``!literal`` are refused, as is every other tag.
+
+Includes (4.1-4.7): any string scalar value (any style, never a key, never ``!literal``) starting
+with :data:`INCLUDE_PREFIX` is replaced by its target, ``including_file.path.parent / spec``. A
+target whose name ends in one of :data:`YAML_INCLUDE_SUFFIXES` is loaded recursively and its root
+embedded as if written in place (an empty target is null); any other target is its exact decoded
+text as a string and is never parsed. A YAML target already on the include chain from the root is a
+cycle. Every produced node carries an :class:`IncludeRef`. Each file is read at most once; a file
 included several times (a diamond) is shared and listed once in ``ConfigDocument.files``.
 
 Mapping-form includes (config-include-overrides Requirement 1): a mapping with a key whose text is
@@ -68,6 +75,7 @@ Nothing is ever created, modified, renamed or deleted (3.6).
 
 import dataclasses
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
@@ -79,6 +87,7 @@ from troupe.config.compose import AliasOccurrence, AliasSlot, ComposedFile, comp
 from troupe.config.constants import (
     INCLUDE_PREFIX,
     INCLUDE_REF_KEY,
+    LITERAL_TAG,
     MERGE_KEY,
     YAML_INCLUDE_SUFFIXES,
 )
@@ -122,6 +131,16 @@ _MERGE_VALUE_NEEDED: Final = (
     f"merge key '{MERGE_KEY}' needs a mapping, an alias of a mapping or a list of those"
 )
 """Start of the refusal of a merge key whose value cannot be merged (config-aliases 2.3)."""
+
+
+@dataclass(frozen=True)
+class _Tag:
+    """An explicit tag written on a node: its text, where it is written (``None`` when only the
+    composer knows it) and whether it follows the node's anchor."""
+
+    text: str
+    span: Span | None
+    after_anchor: bool
 
 
 def load_config(
@@ -290,7 +309,7 @@ class _Builder:
         self._loader = loader
         self._chain = chain
         self._aliases = aliases
-        self._tags_by_anchor: dict[int, str] | None = None
+        self._tags_by_anchor: dict[int, _Tag] | None = None
         self._stack: list[int] = []
         self._anchored: dict[int, ConfigNode] = {}
 
@@ -338,10 +357,14 @@ class _Builder:
         return dataclasses.replace(built, alias=AliasRef(occurrence.name, token, anchored))
 
     def _build(self, node: Node, path: ConfigPath) -> ConfigNode:
-        self._refuse_properties(node, path)
+        literal = self._refuse_properties(node, path)
         if isinstance(node, ScalarNode):
-            scalar = self._scalar(node, path)
-            if isinstance(scalar.value, str) and scalar.value.startswith(INCLUDE_PREFIX):
+            scalar = self._scalar(node, path, literal)
+            if (
+                scalar.literal is None
+                and isinstance(scalar.value, str)
+                and scalar.value.startswith(INCLUDE_PREFIX)
+            ):
                 return self.include(scalar, scalar.value[len(INCLUDE_PREFIX) :], path)
             return scalar
         if isinstance(node, SequenceNode):
@@ -360,14 +383,16 @@ class _Builder:
             f"unsupported YAML node {type(node).__name__}", file=self._source.path, path=_text(path)
         )
 
-    def _scalar(self, node: ScalarNode, path: ConfigPath) -> ConfigScalar:
-        """Build a scalar as written, without include expansion."""
+    def _scalar(self, node: ScalarNode, path: ConfigPath, literal: Span | None) -> ConfigScalar:
+        """Build a scalar as written, without include expansion; ``literal`` is the span of its
+        ``!literal`` tag, if any (config-remote-schema 4.1)."""
         style = self._scalar_style(node, path)
         return ConfigScalar(
-            value=_scalar_value(node, style),
+            value=_scalar_value(node, style, literal=literal is not None),
             style=style,
-            origin=self._origin(node),
+            origin=self._origin(node, literal),
             anchor=self._anchor(node),
+            literal=literal,
         )
 
     def _build_mapping(self, node: MappingNode, path: ConfigPath) -> ConfigNode:
@@ -485,12 +510,20 @@ class _Builder:
     def _ref_value(
         self, slot: AliasSlot, node: Node, key_path: ConfigPath, path: ConfigPath
     ) -> ConfigScalar:
-        """Return the ``$ref`` value as written; it must be an include string (Req 2.2). An alias
-        of an include string is an alias place of that string (config-aliases 1.5)."""
+        """Return the ``$ref`` value as written; it must be an include string (Req 2.2), never a
+        ``!literal`` string (config-remote-schema 4.3). An alias of an include string is an alias
+        place of that string (config-aliases 1.5)."""
         occurrence = self._alias_in(slot, node, key_path)
-        self._refuse_properties(node, key_path)
+        literal = self._refuse_properties(node, key_path)
+        if literal is not None:
+            raise ConfigLoadError(
+                f"`{INCLUDE_REF_KEY}` must be an include string ({INCLUDE_PREFIX}...), "
+                f"not a '{LITERAL_TAG}' string",
+                file=self._source.path,
+                path=_text(path),
+            )
         if isinstance(node, ScalarNode):
-            scalar = self._scalar(node, key_path)
+            scalar = self._scalar(node, key_path, None)
             if isinstance(scalar.value, str) and scalar.value.startswith(INCLUDE_PREFIX):
                 if node.anchor is not None:
                     self._anchored.setdefault(id(node), scalar)
@@ -617,24 +650,53 @@ class _Builder:
             path=_text(key_path),
         )
 
-    def _refuse_properties(self, node: Node, path: ConfigPath, *, key: bool = False) -> None:
+    def _refuse_properties(self, node: Node, path: ConfigPath, *, key: bool = False) -> Span | None:
         """Refuse an explicit tag written on ``node`` itself (3.7), and an anchor on a mapping key
-        (config-aliases 1.4). Anchors on values are accepted (config-aliases 1.1)."""
+        (config-aliases 1.4). Anchors on values are accepted (config-aliases 1.1).
+
+        A tag exactly :data:`LITERAL_TAG` on a scalar value, written after the node's anchor if it
+        has one, is accepted and its span returned (config-remote-schema 4.1); written on a mapping
+        key, a mapping or a list, or before an anchor, it is refused naming the tag (4.2).
+        """
         tag = self._explicit_tag(node)
+        literal: Span | None = None
         if tag is not None:
-            raise ConfigLoadError(
-                f"explicit tag '{tag}' is not supported",
-                file=self._source.path,
-                path=_text(path),
-            )
+            literal = self._literal_tag(node, tag, path, key=key)
+            if literal is None:
+                raise ConfigLoadError(
+                    f"explicit tag '{tag.text}' is not supported",
+                    file=self._source.path,
+                    path=_text(path),
+                )
         if key and node.anchor is not None:
             raise ConfigLoadError(
                 "anchor on a mapping key is not supported",
                 file=self._source.path,
                 path=_text(path),
             )
+        return literal
 
-    def _explicit_tag(self, node: Node) -> str | None:
+    def _literal_tag(self, node: Node, tag: _Tag, path: ConfigPath, *, key: bool) -> Span | None:
+        """Return the span of ``tag`` when it is an accepted ``!literal`` property of ``node``,
+        ``None`` when it is another tag; refuse ``!literal`` where it cannot be written."""
+        if tag.text != LITERAL_TAG or tag.span is None:
+            return None
+        where: str | None = None
+        if key:
+            where = "is not supported on a mapping key"
+        elif isinstance(node, MappingNode):
+            where = "is supported only on scalars, not on a mapping"
+        elif isinstance(node, SequenceNode):
+            where = "is supported only on scalars, not on a list"
+        elif node.anchor is not None and not tag.after_anchor:
+            where = f"must follow the anchor (write '&{node.anchor} {LITERAL_TAG}')"
+        if where is not None:
+            raise ConfigLoadError(
+                f"explicit tag '{LITERAL_TAG}' {where}", file=self._source.path, path=_text(path)
+            )
+        return tag.span
+
+    def _explicit_tag(self, node: Node) -> _Tag | None:
         """Return the explicit tag written on ``node`` itself, or ``None`` when it has none."""
         if node.anchor is not None:
             # ruamel starts an anchored node at its anchor even when a tag comes first, and keeps
@@ -643,41 +705,45 @@ class _Builder:
             if tag is not None:
                 return tag
             if node.ctag.handle is not None:  # pragma: no cover - the token is found above
-                return str(node.tag)
+                return _Tag(str(node.tag), None, after_anchor=False)
             return None
         prefix = self._own_property_text(node)
         if prefix.startswith("!"):
-            return prefix.split()[0]
+            text = prefix.split()[0]
+            start = int(node.start_mark.index)
+            return _Tag(text, Span(start, start + len(text)), after_anchor=False)
         if node.ctag.handle is not None:
-            return str(node.tag)
+            return _Tag(str(node.tag), None, after_anchor=False)
         return None
 
-    def _tags_next_to_anchors(self) -> dict[int, str]:
+    def _tags_next_to_anchors(self) -> dict[int, _Tag]:
         """Map the start of each anchor token in this file to the tag written next to it.
 
         The file is scanned once, on the first anchored node; it composed, so it scans.
         """
         if self._tags_by_anchor is None:
-            tags: dict[int, str] = {}
+            tags: dict[int, _Tag] = {}
             tokens = list(YAML(typ="rt").scan(self._source.text))
             for before, token, after in zip(
                 [None, *tokens[:-1]], tokens, [*tokens[1:], None], strict=True
             ):
                 if not isinstance(token, AnchorToken):
                     continue
-                for neighbour in (before, after):
+                for neighbour, follows in ((before, False), (after, True)):
                     if isinstance(neighbour, TagToken):
                         start = int(neighbour.start_mark.index)
                         end = int(neighbour.end_mark.index)
-                        tags[int(token.start_mark.index)] = self._source.text[start:end]
+                        tags[int(token.start_mark.index)] = _Tag(
+                            self._source.text[start:end], Span(start, end), after_anchor=follows
+                        )
             self._tags_by_anchor = tags
         return self._tags_by_anchor
 
     def _anchor(self, node: Node) -> Anchor | None:
         """Return the anchor written on value ``node``, or ``None`` (config-aliases 1.1).
 
-        An anchored node starts at its ``&name`` property (tags, which ruamel would put first,
-        are refused before this).
+        An anchored node starts at its ``&name`` property (a tag written first is refused before
+        this; ``!literal`` may only follow the anchor).
         """
         if node.anchor is None:
             return None
@@ -716,25 +782,30 @@ class _Builder:
             )
         return style
 
-    def _origin(self, node: Node) -> Origin:
-        """Return where ``node`` is written; an anchored node's span excludes its property
-        (config-aliases research.md, Decision 3)."""
+    def _origin(self, node: Node, literal: Span | None = None) -> Origin:
+        """Return where ``node`` is written; the span excludes its properties, an anchor
+        (config-aliases research.md, Decision 3) and a ``!literal`` tag (``literal``, which always
+        follows the anchor), and is empty at the last property's end for an empty scalar."""
         start = int(node.start_mark.index)
         end = int(node.end_mark.index)
         anchor = self._anchor(node)
-        if anchor is None:
+        if literal is not None:
+            after = literal.end
+        elif anchor is not None:
+            after = anchor.span.end
+        else:
             return Origin(self._source, Span(start, end))
-        after = anchor.span.end
         if isinstance(node, ScalarNode) and end <= after:
             # An empty null: nothing is written after the property.
             return Origin(self._source, Span(after, after))
         return Origin(self._source, Span(_next_token(self._source.text, after, end), end))
 
 
-def _scalar_value(node: ScalarNode, style: ScalarStyle) -> ScalarValue:
-    """Type a scalar: plain by the core schema, others as strings; folded without markers."""
+def _scalar_value(node: ScalarNode, style: ScalarStyle, *, literal: bool = False) -> ScalarValue:
+    """Type a scalar: plain by the core schema unless ``literal`` (a ``!literal`` scalar is its
+    text), others as strings; folded without markers."""
     text = str(node.value)
-    if style is ScalarStyle.PLAIN:
+    if style is ScalarStyle.PLAIN and not literal:
         return resolve_plain_scalar(text)
     if style is ScalarStyle.FOLDED:
         return text.replace(_FOLD_MARKER, "")
