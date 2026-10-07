@@ -5,14 +5,11 @@ Traceability: every test names the requirement IDs it proves at the start of its
 
 import json
 import os
-import threading
-from collections.abc import Iterator
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import ClassVar
 
 import pytest
 
+from remote_support import RemoteServer
 from support import MakeTheatre
 from troupe.config.constants import SCHEMA_DIALECT, SCHEMA_FILE_NAME
 from troupe.config.errors import ConfigLoadError, ExitCode, SchemaViolationError
@@ -313,38 +310,6 @@ def test_validate_uses_2020_12_semantics(make_theatre: MakeTheatre) -> None:
     assert caught.value.key_path == "pair.0"
 
 
-class _CountingHandler(BaseHTTPRequestHandler):
-    requests: ClassVar[list[str]] = []
-
-    def do_GET(self) -> None:
-        type(self).requests.append(self.path)
-        body = b'{"type": "integer"}'
-        self.send_response(200)
-        self.send_header("Content-Type", "application/schema+json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format: str, *args: object) -> None:
-        pass
-
-
-@pytest.fixture
-def schema_server() -> Iterator[tuple[str, list[str]]]:
-    """A real local HTTP server that would serve a schema, recording every request."""
-    requests: list[str] = []
-    handler = type("Handler", (_CountingHandler,), {"requests": requests})
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}", requests
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
-
-
 @pytest.mark.parametrize(
     ("contents", "ref"),
     [
@@ -371,11 +336,10 @@ def test_validate_refuses_an_unresolvable_ref_naming_the_schema_file(
 
 
 def test_validate_never_retrieves_a_remote_ref(
-    make_theatre: MakeTheatre, schema_server: tuple[str, list[str]]
+    make_theatre: MakeTheatre, remote_server: RemoteServer
 ) -> None:
     """Req 5.3: a remote ``$ref`` is never fetched; it is an unresolvable ``$ref``."""
-    base, requests = schema_server
-    url = f"{base}/defs.json"
+    url = remote_server.route("/defs.json", b'{"type": "integer"}')
     schema = _schema({"properties": {"a": {"$ref": url}}})
 
     with pytest.raises(ConfigLoadError) as caught:
@@ -383,7 +347,7 @@ def test_validate_never_retrieves_a_remote_ref(
 
     assert caught.value.file == schema.path
     assert url in caught.value.problem
-    assert requests == []
+    assert remote_server.requests == []
 
 
 def test_validate_does_not_meet_an_unused_unresolvable_ref(make_theatre: MakeTheatre) -> None:

@@ -60,7 +60,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - Done when unit tests prove each read refusal, the walker over the three keywords and its stops (`true`, `$ref`, `allOf`, `patternProperties`), the failing key path and message, `format` not asserted, and the unresolvable `$ref` cases
   - _Requirements: 4.4, 4.5, 5.1, 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 1.4 (P) Fetch remote sources, with a real local HTTP server for tests
+- [x] 1.4 (P) Fetch remote sources, with a real local HTTP server for tests
   - The fetcher does one GET with the timeout from 1.1, follows redirects, and returns the body bytes. Any failure (connection, timeout, a final status outside 2xx) is a fetch error with a short reason. It sends no credentials and writes nothing to disk.
   - The test fixture runs a threaded HTTP server on 127.0.0.1 with a mutable route table (status, body, headers), redirects, a delayed route and a request log. It sets `NO_PROXY` for the CLI subprocess and stops the server afterwards. It is registered in `tests/conftest.py`.
   - Done when tests against the fixture prove a 200 body, 404 and 500 reasons, a followed 301, a refused connection, a timeout with a short timeout, and exactly one request per call

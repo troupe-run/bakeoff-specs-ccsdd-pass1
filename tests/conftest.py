@@ -4,10 +4,12 @@
 here are importable from test subdirectories such as ``tests/writeback/``.
 """
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+from remote_support import NO_PROXY_HOSTS, RemoteServer
 from support import CliResult, MakeTheatre, RunCli, TheatreFiles, invoke_troupe, write_theatre
 
 
@@ -45,3 +47,16 @@ def run_cli(tmp_path: Path) -> RunCli:
         return invoke_troupe(*args, cwd=tmp_path if cwd is None else cwd)
 
     return _run
+
+
+@pytest.fixture
+def remote_server(monkeypatch: pytest.MonkeyPatch) -> Iterator[RemoteServer]:
+    """Fixture: a real HTTP server on 127.0.0.1 (see ``RemoteServer``), stopped afterwards.
+
+    ``NO_PROXY``/``no_proxy`` are set so that neither in-process fetches nor the CLI subprocess
+    (which inherits the environment) go through a proxy from the developer's shell.
+    """
+    monkeypatch.setenv("NO_PROXY", NO_PROXY_HOSTS)
+    monkeypatch.setenv("no_proxy", NO_PROXY_HOSTS)
+    with RemoteServer() as server:
+        yield server
