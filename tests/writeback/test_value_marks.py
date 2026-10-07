@@ -275,18 +275,16 @@ def test_plain_tree_of_nested_marked_value(make_theatre: MakeTheatre) -> None:
     assert new_to_plain(marked) == {"a": "https://x", "b": ["file:y.yml"], "c": ["file:z.yml"]}
 
 
-def test_unmarked_values_keep_the_file_prefix_rule() -> None:
-    """Req 10.2: until ``set`` marks VALUE (task 3.5), an unmarked scalar keeps today's rule: a
-    ``file:`` string is a directive (also as a ``$ref``) and a URL is a plain string."""
+def test_parsed_values_are_marked_none_and_stay_plain_until_marked() -> None:
+    """Req 8.1, 10.2: ``parse_value`` marks every scalar ``NONE`` (the design default; the
+    temporary unmarked state is gone), so an include string is a plain value in the plain tree
+    until ``mark_include_strings`` marks it ``INCLUDE``; there is no ``file:`` prefix fallback."""
     path = ConfigPath.parse("p")
-    assert parse_value("file:inc.yaml", path) == NewScalar("file:inc.yaml", None)
-    assert _scalar(parse_value("file:inc.yaml", path)).mark is None
-    assert new_to_plain(parse_value("file:inc.yaml", path)) == IncludeDirective(
-        "file:inc.yaml", None
-    )
+    assert parse_value("file:inc.yaml", path) == NewScalar("file:inc.yaml", None, ScalarMark.NONE)
+    assert new_to_plain(parse_value("file:inc.yaml", path)) == "file:inc.yaml"
     assert new_to_plain(parse_value("https://x", path)) == "https://x"
     ref = new_to_plain(parse_value("{$ref: file:inc.yaml, a: 1}", path))
-    assert ref == IncludeDirective("file:inc.yaml", None)
+    assert ref == {"$ref": "file:inc.yaml", "a": 1}
 
 
 # --- no-op comparisons -----------------------------------------------------------------------
@@ -389,7 +387,7 @@ def test_render_scalar_tags_a_literal_string_only() -> None:
     assert single == "!literal 'https://x'"
     broken = NewScalar("file:a\nb", None, ScalarMark.LITERAL)
     assert render_scalar(broken, Context.BLOCK_VALUE, None, path) == '!literal "file:a\\nb"'
-    for mark in (None, ScalarMark.NONE, ScalarMark.INCLUDE):
+    for mark in (ScalarMark.NONE, ScalarMark.INCLUDE):
         plain = NewScalar("https://x", None, mark)
         assert render_scalar(plain, Context.BLOCK_VALUE, None, path) == "https://x"
 

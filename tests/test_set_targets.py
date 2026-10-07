@@ -202,14 +202,15 @@ def test_new_keys_are_added_in_the_file_holding_the_mapping(
 def test_new_include_is_written_as_a_string_and_target_is_unchanged(
     make_theatre: MakeTheatre, value: str, target: str, content: str, show_path: str, shown: bytes
 ) -> None:
-    """Req 2.7: a `file:` VALUE is written as a plain string; the include target is untouched.
+    """Req 2.7 (config-remote-schema 9.3): with ``--include`` a `file:` VALUE is written as a
+    plain string; the include target is untouched.
 
     `troupe config show` afterwards reads the include's content at `b` (2.7 read-back).
     """
     theatre = make_theatre("a: 1\n", files={target: content})
     before = snapshot_tree(theatre)
 
-    result = run_set(theatre, "b", value)
+    result = run_set(theatre, "b", value, "--include")
 
     _assert_success(result)
     _assert_only_changed(theatre, before, ROOT, f"a: 1\nb: {value}\n")
@@ -218,22 +219,51 @@ def test_new_include_is_written_as_a_string_and_target_is_unchanged(
     assert (shown_result.exit_code, shown_result.stdout, shown_result.stderr) == (0, shown, "")
 
 
+@pytest.mark.parametrize(
+    ("value", "target", "content"),
+    [
+        pytest.param("file:inc.yaml", ".troupe/inc.yaml", "k: 1\n", id="yaml-include"),
+        pytest.param("file:notes.txt", ".troupe/notes.txt", "hi\n", id="text-include"),
+        pytest.param("file:missing.yaml", None, None, id="missing-target"),
+    ],
+)
+def test_file_value_without_include_is_written_tagged_literal(
+    make_theatre: MakeTheatre, value: str, target: str | None, content: str | None
+) -> None:
+    """Req 2.7 (config-remote-schema 8.1): without ``--include`` a `file:` VALUE is written
+    ``!literal`` and reads back as the string itself; the target (even a missing one) is not
+    read and stays untouched."""
+    files = {target: content} if target is not None and content is not None else {}
+    theatre = make_theatre("a: 1\n", files=files)
+    before = snapshot_tree(theatre)
+
+    result = run_set(theatre, "b", value)
+
+    _assert_success(result)
+    _assert_only_changed(theatre, before, ROOT, f"a: 1\nb: !literal {value}\n")
+    shown_result = run_config("show", "b", "--theatre", str(theatre), cwd=theatre)
+    assert (shown_result.exit_code, shown_result.stderr) == (0, ""), shown_result.stderr
+    assert shown_result.stdout == f"{value}\n".encode()
+
+
 def test_new_include_with_missing_target_is_refused(make_theatre: MakeTheatre) -> None:
-    """Req 14.8, 16.3: `b, 'file:missing.yaml'` exits 3 naming PATH `b` and missing.yaml."""
+    """Req 14.8, 16.3: `--include b 'file:missing.yaml'` exits 3 naming PATH `b` and
+    missing.yaml."""
     theatre = make_theatre("a: 1\n")
     before = snapshot_tree(theatre)
 
-    result = run_set(theatre, "b", "file:missing.yaml")
+    result = run_set(theatre, "b", "file:missing.yaml", "--include")
 
     _assert_refused(theatre, before, result, 3, file=ROOT, path="b", names=("missing.yaml",))
 
 
 def test_new_include_leading_into_a_cycle_is_refused(make_theatre: MakeTheatre) -> None:
-    """Req 14.8, 16.3: an include back to troupe.yml exits 3 naming `b` and the cycle files."""
+    """Req 14.8, 16.3: an include (``--include``) back to troupe.yml exits 3 naming `b` and the
+    cycle files."""
     theatre = make_theatre("a: 1\n", files={".troupe/loop.yaml": "back: file:troupe.yml\n"})
     before = snapshot_tree(theatre)
 
-    result = run_set(theatre, "b", "file:loop.yaml")
+    result = run_set(theatre, "b", "file:loop.yaml", "--include")
 
     _assert_refused(
         theatre, before, result, 3, file=ROOT, path="b", names=("loop.yaml", "troupe.yml")

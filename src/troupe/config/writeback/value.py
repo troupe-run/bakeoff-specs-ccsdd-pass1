@@ -44,9 +44,9 @@ class NewScalar:
     value: ScalarValue
     spelling: str | None
     """Source text for ``int``/``float``/``bool``/``None`` (e.g. ``0x1F``); ``None`` for strings."""
-    mark: ScalarMark | None = None
-    """The scalar's mark; ``None`` means "not marked yet" (``parse_value`` output that ``set`` has
-    not marked), which keeps the ``file:`` prefix rule in the plain tree."""
+    mark: ScalarMark = ScalarMark.NONE
+    """The scalar's mark: ``NONE`` as parsed; ``set`` marks every VALUE with
+    :func:`mark_include_strings` before target resolution."""
 
 
 @dataclass(frozen=True)

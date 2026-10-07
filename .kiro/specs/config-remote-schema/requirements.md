@@ -237,7 +237,7 @@ Terms used below:
 **Objective:** As a developer, I want a URL I set to stay a value unless I ask for an include, so that a `set` never makes troupe fetch something by accident.
 
 #### Acceptance Criteria
-1. When `--include` is not given and VALUE is an include-like string, or a flow mapping or list VALUE holds include-like strings (as values, not keys), the troupe CLI shall write each of them tagged: `!literal`, one space, then the string as config-set-writeback writes it. For example `set hook https://x` writes `hook: !literal https://x`, and `set a '{b: https://x}'` writes `a: {b: !literal https://x}`.
+1. When `--include` is not given and VALUE is an include-like string, or a flow mapping or list VALUE holds include-like strings (as values, not keys), the troupe CLI shall write each of them tagged: `!literal`, one space, then the string as config-set-writeback writes it. For example `set hook https://x` writes `hook: !literal https://x`, and `set a '{b: https://x}'` writes `b: !literal https://x` under `a` (in block or flow style by config-set-writeback's rules, e.g. `m: {b: !literal https://x}` when an existing flow mapping `m` is replaced).
 2. When the schema gives a VALUE string's own path `format: uri`, the troupe CLI shall write that string without a tag.
 3. The troupe CLI shall write a tagged string on its line in plain, single-quoted or double-quoted style under config-set-writeback's style rules, double-quoted when it holds a line break, and never as a literal or folded block scalar.
 4. When VALUE replaces an existing `!literal` string, the troupe CLI shall replace the whole scalar, tag included, and tag the new string only under 8.1. An anchor written before the tag stays.

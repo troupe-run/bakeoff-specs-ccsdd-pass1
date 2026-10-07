@@ -1,7 +1,8 @@
-"""CLI ``troupe config set PATH VALUE [--reason TEXT] [--in-include] [--expand-alias]``.
+"""CLI ``troupe config set PATH VALUE [--reason TEXT] [--in-include] [--expand-alias] [--include]``.
 
 Registration and handler. Requirements: config-set-writeback 1.1, 1.5, 1.6, 16.1, 16.2, 16.4;
-config-lineage 6.1-6.5; config-include-overrides 10.1-10.7; config-aliases 6.1-6.4.
+config-lineage 6.1-6.5; config-include-overrides 10.1-10.7; config-aliases 6.1-6.4;
+config-remote-schema 9.1, 9.2.
 
 Imports only :mod:`troupe.cli.shell` from the CLI package (never ``troupe.cli.main``, which imports
 this module), so the import chain is ``troupe.cli.shell <- set_command <- troupe.cli.main``.
@@ -38,6 +39,13 @@ parsing, so no file is read or changed and no history state is created or change
 of its anchored node (marked ``# expanded from *name by troupe``) and VALUE is set in the copy;
 without an alias on PATH the set runs exactly as without it (6.3). ``--expand-alias=TEXT`` is
 argparse's usage error, exit 2, before any file or history state is touched (6.2).
+
+``--include`` (config-remote-schema Requirement 9) is a ``store_true`` flag under the same rules:
+no value, anywhere among PATH and VALUE, combinable with ``--reason``, ``--in-include`` and
+``--expand-alias``. Without it every include string of VALUE (``file:``, ``https://``,
+``http://``) is written tagged ``!literal`` unless the schema gives its path ``format: uri``; with
+it the include strings are written plain, so they load as includes (9.3). ``--include=TEXT`` is
+argparse's usage error, exit 2, before any file or history state is touched (9.2).
 """
 
 import argparse
@@ -78,8 +86,10 @@ def handle_set(args: argparse.Namespace, out: io.BytesIO) -> None:
     The set's own batch is recorded with ``cli_context(args.actor, args.reason)``: the command's
     actor and its ``--reason`` TEXT (``None`` without the option, config-lineage 6.1, 6.2).
     ``args.in_include`` (``--in-include``) is passed to :func:`set_value` as the placement choice
-    for new keys (config-include-overrides 10.1-10.5), and ``args.expand_alias``
-    (``--expand-alias``) as the request to expand the aliases on PATH (config-aliases 6.1-6.4).
+    for new keys (config-include-overrides 10.1-10.5), ``args.expand_alias``
+    (``--expand-alias``) as the request to expand the aliases on PATH (config-aliases 6.1-6.4),
+    and ``args.include`` (``--include``) as the choice to write VALUE's include strings as includes
+    (config-remote-schema 9.1, 9.3).
 
     PATH and VALUE are parsed before the theatre is opened, so their usage errors (exit 2) create
     no history state; the theatre is opened (and imported, 1.6) in a ``with`` block so the history
@@ -95,12 +105,13 @@ def handle_set(args: argparse.Namespace, out: io.BytesIO) -> None:
             cli_context(args.actor, args.reason),
             in_include=args.in_include,
             expand_alias=args.expand_alias,
+            include=args.include,
         )
 
 
 def add_set_subparser(subparsers: "argparse._SubParsersAction[TroupeArgumentParser]") -> None:
-    """Register ``set PATH VALUE`` with ``--theatre``, ``--reason TEXT``, ``--in-include`` and
-    ``--expand-alias``."""
+    """Register ``set PATH VALUE`` with ``--theatre``, ``--reason TEXT``, ``--in-include``,
+    ``--expand-alias`` and ``--include``."""
     parser = subparsers.add_parser(
         "set",
         parents=[theatre_option_parent()],
@@ -138,6 +149,11 @@ def add_set_subparser(subparsers: "argparse._SubParsersAction[TroupeArgumentPars
             "when PATH is reached through an alias, replace each such alias by its own copy of "
             "the anchored value (marked '# expanded from *NAME by troupe') and set VALUE there"
         ),
+    )
+    parser.add_argument(
+        "--include",
+        action="store_true",
+        help="write include strings in VALUE as includes instead of tagging them !literal",
     )
     parser.set_defaults(handler=handle_set)
 

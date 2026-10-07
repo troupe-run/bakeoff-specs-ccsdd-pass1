@@ -192,12 +192,12 @@ def test_no_op_and_refused_sets_record_nothing(make_theatre: MakeTheatre) -> Non
 def test_new_yaml_include_records_each_included_leaf_then_removes_the_old_one(
     make_theatre: MakeTheatre,
 ) -> None:
-    """Req 15.7, 15.1, 15.2, 15.5: a new YAML include is recorded from the configuration as read
-    back: `set b.k` and `set b.l.0` (old null), then `remove b` (old "x")."""
+    """Req 15.7, 15.1, 15.2, 15.5: a new YAML include (``--include``) is recorded from the
+    configuration as read back: `set b.k` and `set b.l.0` (old null), then `remove b` (old "x")."""
     theatre = make_theatre("b: x\n", files={".troupe/inc.yaml": "k: 1\nl: [p]\n"})
     assert len(_events(theatre)) == 1
 
-    _assert_set_ok(run_set(theatre, "b", "file:inc.yaml"))
+    _assert_set_ok(run_set(theatre, "b", "file:inc.yaml", "--include"))
 
     assert_file_bytes(theatre / ROOT, "b: file:inc.yaml\n")
     _assert_events(
@@ -212,17 +212,32 @@ def test_new_yaml_include_records_each_included_leaf_then_removes_the_old_one(
 
 
 def test_new_text_include_records_one_string_leaf(make_theatre: MakeTheatre) -> None:
-    """Req 15.7, 15.1: a new text include is recorded as one string leaf: one `set c` whose `new`
-    is the file's text."""
+    """Req 15.7, 15.1: a new text include (``--include``) is recorded as one string leaf: one
+    `set c` whose `new` is the file's text."""
     theatre = make_theatre("c: x\n", files={".troupe/notes.txt": "hi\n"})
     assert len(_events(theatre)) == 1
 
-    _assert_set_ok(run_set(theatre, "c", "file:notes.txt"))
+    _assert_set_ok(run_set(theatre, "c", "file:notes.txt", "--include"))
 
     assert_file_bytes(theatre / ROOT, "c: file:notes.txt\n")
     _assert_events(
         _events(theatre),
         [(1, "import", "c", None, "x"), (2, "set", "c", "x", "hi\n")],
+    )
+
+
+def test_literal_include_string_records_one_string_leaf(make_theatre: MakeTheatre) -> None:
+    """Req 15.1 (config-remote-schema 8.1): without ``--include`` a `file:` VALUE is written
+    ``!literal`` and recorded as one `set` of the string itself; its target is not read."""
+    theatre = make_theatre("c: x\n", files={".troupe/notes.txt": "hi\n"})
+    assert len(_events(theatre)) == 1
+
+    _assert_set_ok(run_set(theatre, "c", "file:notes.txt"))
+
+    assert_file_bytes(theatre / ROOT, "c: !literal file:notes.txt\n")
+    _assert_events(
+        _events(theatre),
+        [(1, "import", "c", None, "x"), (2, "set", "c", "x", "file:notes.txt")],
     )
 
 

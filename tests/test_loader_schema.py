@@ -440,9 +440,10 @@ def _value(mapping: ConfigMapping, key: str) -> object:
 def test_a_new_include_merged_at_another_place_is_decided_by_the_schema(
     make_theatre: MakeTheatre, run_cli: RunCli
 ) -> None:
-    """Req 4.4, 4.6: `set x.p file:t.yaml` writes the new include in the shared s.yaml; at `y`,
-    which overrides `p`, t.yaml's content is loaded for the merge at `y.p`, where the schema gives
-    `v` the ``uri`` format, so ``file:z.md`` (which does not exist) stays a string there too."""
+    """Req 4.4, 4.6: `set --include x.p file:t.yaml` writes the new include in the shared
+    s.yaml; at `y`, which overrides `p`, t.yaml's content is loaded for the merge at `y.p`, where
+    the schema gives `v` the ``uri`` format, so ``file:z.md`` (which does not exist) stays a
+    string there too."""
     schema = {
         "additionalProperties": {
             "properties": {"p": {"properties": {"v": URI}}},
@@ -455,7 +456,7 @@ def test_a_new_include_merged_at_another_place_is_decided_by_the_schema(
         {".troupe/s.yaml": "p: 1\nq: 1\n", ".troupe/t.yaml": "v: file:z.md\n"},
     )
 
-    result = run_cli("config", "set", "x.p", "file:t.yaml", "--theatre", str(theatre))
+    result = run_cli("config", "set", "--include", "x.p", "file:t.yaml", "--theatre", str(theatre))
 
     assert result.exit_code == 0, result.stderr
     assert (theatre / ".troupe" / "s.yaml").read_text() == "p: file:t.yaml\nq: 1\n"

@@ -52,7 +52,7 @@ from troupe.config.writeback.compare import plain_equal
 from troupe.config.writeback.leaf_diff import diff_leaves
 from troupe.config.writeback.planner import FilePatch, plan_set
 from troupe.config.writeback.target import SetRequest, resolve_target
-from troupe.config.writeback.value import NewValue
+from troupe.config.writeback.value import NewValue, mark_include_strings
 from troupe.config.writeback.verify import verify_patch
 
 EXPANSION_CHANGES_VALUES: Final = (
@@ -83,6 +83,7 @@ def set_value(
     *,
     in_include: bool = False,
     expand_alias: bool = False,
+    include: bool = False,
 ) -> SetOutcome:
     """Set the value at ``path`` to ``value`` in the files of ``theatre`` and record the history.
 
@@ -90,14 +91,20 @@ def set_value(
     the command's actor; config-lineage 3.3). ``in_include`` (``set --in-include``) writes new
     keys by the step 1 placement (config-include-overrides Requirement 10). ``expand_alias``
     (``set --expand-alias``) expands every alias the set reaches instead of refusing it, and
-    writes the expansions with the set (config-aliases 7.7, 8.1, 8.2, 8.6).
+    writes the expansions with the set (config-aliases 7.7, 8.1, 8.2, 8.6). ``value`` is marked
+    first with the document's schema and ``include`` (``set --include``), so the marks reach target
+    resolution, the alias guard, the no-op check and planning: without ``include`` its include
+    strings are written ``!literal``, with it they are written as includes, and a string whose own
+    path the schema gives ``format: uri`` is a plain value (config-remote-schema 8.1, 8.2, 9.3).
 
-    Raises the refusal of any pure step (exit 3 or 5) before any file is written (an expansion's
+    Raises the refusal of any pure step (exit 3 or 5) before any file is written (a ``$ref``
+    mapping in ``value`` without ``include`` is refused naming PATH, 8.6; an expansion's
     refusal names PATH); a :class:`WriteRefusedError` naming the failed file and PATH when a file
     cannot be written (the already-written files restored, nothing recorded); the store's
     :class:`ConfigLoadError` when the changes cannot be recorded (every written file restored).
     """
     document = theatre.document
+    value = mark_include_strings(value, path, document.schema, include=include)
     request = resolve_target(document, path, value, in_include=in_include)
     # Before the no-op check, so a no-op through an alias is refused too (config-aliases 5.3).
     expanded, request, texts = _expanded(

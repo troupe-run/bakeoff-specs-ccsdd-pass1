@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from set_support import snapshot_tree
+from set_support import marked_value, snapshot_tree
 from troupe.config.errors import ExitCode, WriteRefusedError
 from troupe.config.loader import load_config
 from troupe.config.model import ConfigDocument
@@ -41,18 +41,29 @@ def _write(tmp_path: Path, files: Mapping[str, str | bytes]) -> None:
 
 
 def _setup(
-    tmp_path: Path, files: Mapping[str, str | bytes], path: str, value: str
+    tmp_path: Path,
+    files: Mapping[str, str | bytes],
+    path: str,
+    value: str,
+    *,
+    include: bool = False,
 ) -> tuple[ConfigDocument, SetRequest]:
     _write(tmp_path, files)
     document = load_config(tmp_path / ROOT)
     config_path = ConfigPath.parse(path)
-    return document, resolve_target(document, config_path, parse_value(value, config_path))
+    marked = marked_value(document, value, config_path, include=include)
+    return document, resolve_target(document, config_path, marked)
 
 
 def _verify(
-    tmp_path: Path, files: Mapping[str, str | bytes], path: str, value: str
+    tmp_path: Path,
+    files: Mapping[str, str | bytes],
+    path: str,
+    value: str,
+    *,
+    include: bool = False,
 ) -> tuple[ConfigDocument, SetRequest, tuple[FilePatch, ...], ConfigDocument]:
-    document, request = _setup(tmp_path, files, path, value)
+    document, request = _setup(tmp_path, files, path, value, include=include)
     patches = plan_patch(document, request)
     before = snapshot_tree(tmp_path)
     after = verify_patch(tmp_path / ROOT, document, patches, request)
@@ -105,10 +116,11 @@ def test_two_patches_of_the_two_file_plan_verify_together(tmp_path: Path) -> Non
 
 
 def test_new_include_with_an_existing_target_verifies(tmp_path: Path) -> None:
-    """Req 14.1, 2.7: a newly written `file:` string reads back as an include of exactly that
-    string; its target is read from disk and embedded in the returned document."""
+    """Req 14.1, 2.7 (config-remote-schema 9.3): a `file:` string newly written with
+    ``--include`` reads back as an include of exactly that string; its target is read from disk
+    and embedded in the returned document."""
     _document, _request, _patches, after = _verify(
-        tmp_path, {ROOT: "a: 1\n", "x.yaml": "k: v\n"}, "b", "file:x.yaml"
+        tmp_path, {ROOT: "a: 1\n", "x.yaml": "k: v\n"}, "b", "file:x.yaml", include=True
     )
     plain = node_to_plain(after.root)
     assert isinstance(plain, dict)
@@ -200,7 +212,7 @@ def test_typed_duplicate_key_written_beside_an_existing_one_is_refused(tmp_path:
 def test_missing_new_include_target_is_refused_naming_path_and_target(tmp_path: Path) -> None:
     """Req 14.8: a newly written include whose target is missing → exit 3; the message names PATH
     and the include target."""
-    document, request = _setup(tmp_path, {ROOT: "a: 1\n"}, "b", "file:missing.yaml")
+    document, request = _setup(tmp_path, {ROOT: "a: 1\n"}, "b", "file:missing.yaml", include=True)
     patches = plan_patch(document, request)
     error = _refused(tmp_path, document, patches, request)
     assert error.path == "b"
@@ -214,7 +226,11 @@ def test_include_cycle_of_a_new_include_is_refused_naming_path_and_target(tmp_pa
     """Req 14.8: a newly written include that leads back into its own include chain → exit 3;
     the message names PATH, the cycle and the include target."""
     document, request = _setup(
-        tmp_path, {ROOT: "a: file:x.yaml\n", "x.yaml": "k: 1\n"}, "a.k", "file:troupe.yml"
+        tmp_path,
+        {ROOT: "a: file:x.yaml\n", "x.yaml": "k: 1\n"},
+        "a.k",
+        "file:troupe.yml",
+        include=True,
     )
     patches = plan_patch(document, request)
     assert [patch.file.real_path.name for patch in patches] == ["x.yaml"]
@@ -229,7 +245,7 @@ def test_unloadable_new_include_target_is_refused(tmp_path: Path) -> None:
     """Req 14.8: a newly written YAML include whose target fails to load → exit 3 naming PATH and
     the target."""
     document, request = _setup(
-        tmp_path, {ROOT: "a: 1\n", "bad.yaml": "k: [1\n"}, "b", "file:bad.yaml"
+        tmp_path, {ROOT: "a: 1\n", "bad.yaml": "k: [1\n"}, "b", "file:bad.yaml", include=True
     )
     patches = plan_patch(document, request)
     error = _refused(tmp_path, document, patches, request)
@@ -289,10 +305,12 @@ def test_patched_root_ref_file_differing_from_intended_is_refused(
 
 
 def test_value_ref_mapping_verifies_against_the_include_it_describes(tmp_path: Path) -> None:
-    """Req 8.2: a VALUE `{$ref: file:..., k: v}` written as given verifies when the read-back is
-    the include with the override merged; a differing override is refused (exit 3)."""
+    """Req 8.2 (config-remote-schema 9.3): a VALUE `{$ref: file:..., k: v}` written as given with
+    ``--include`` verifies when the read-back is the include with the override merged; a
+    differing override is refused (exit 3)."""
     files = {ROOT: "a: 1\n", "x.yaml": "k: 1\nj: 2\n"}
-    document, request, patches, after = _verify(tmp_path, files, "b", "{$ref: file:x.yaml, k: 5}")
+    value = "{$ref: file:x.yaml, k: 5}"
+    document, request, patches, after = _verify(tmp_path, files, "b", value, include=True)
     assert [patch.new_text for patch in patches] == ["a: 1\nb:\n  $ref: file:x.yaml\n  k: 5\n"]
     plain = root_plain(after)
     assert plain["b"] == IncludeDirective("file:x.yaml", {"k": 5, "j": 2})
@@ -312,7 +330,7 @@ def test_value_ref_with_an_include_override_merged_into_a_mapping_verifies(
     tmp_path: Path, value: str, expected: PlainMapping
 ) -> None:
     """Req 8.2, 1.7: an include override at a key where the included file holds a mapping is merged
-    into it on read-back; the write verifies (scalar-form and `$ref` override)."""
+    into it on read-back; the write (``--include``) verifies (scalar-form and `$ref` override)."""
     files = {ROOT: "a: 1\n", "a.yaml": "m: {p: 1}\n", "m.yaml": "q: 2\n"}
-    _document, _request, _patches, after = _verify(tmp_path, files, "x", value)
+    _document, _request, _patches, after = _verify(tmp_path, files, "x", value, include=True)
     assert root_plain(after)["x"] == IncludeDirective("file:a.yaml", expected)

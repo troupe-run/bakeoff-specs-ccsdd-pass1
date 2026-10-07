@@ -811,12 +811,13 @@ def test_own_include_string_over_an_include_with_overrides_is_refused(
     """Req 7.5, 8.2, 9.1: over `agents.coder`, a mapping-form include with overrides, the include's
     own string, `{$ref: <same>}`, or a `$ref` VALUE with fewer, more or other overrides than are
     written exits 3 with empty stdout and a stderr line naming PATH and the included file; no
-    file changes and nothing is recorded (choice 16)."""
+    file changes and nothing is recorded (choice 16). The VALUE is set with ``--include``
+    (config-remote-schema 9.3), so its include strings are includes."""
     theatre = make_theatre(PARAMS_ROOT, files={CODER_FILE: PARAMS_CODER})
     start = _imported(theatre)
     before = snapshot_tree(theatre)
 
-    result = run_set(theatre, "agents.coder", value)
+    result = run_set(theatre, "agents.coder", value, "--include")
 
     problem = _assert_refused(theatre, result, theatre / CODER_FILE, "agents.coder", start)
     assert "file:agents/coder.yaml" in problem
@@ -835,13 +836,13 @@ def test_ref_value_with_exactly_the_written_overrides_is_a_no_op(
     make_theatre: MakeTheatre, value: str
 ) -> None:
     """Req 7.5, 8.2, 9.1: a `$ref` VALUE naming the same include with exactly the written overrides
-    (in any key order) equals `agents.coder`: exit 0, empty output, no file changes and nothing
-    is recorded."""
+    (in any key order), set with ``--include``, equals `agents.coder`: exit 0, empty output, no
+    file changes and nothing is recorded."""
     theatre = make_theatre(PARAMS_ROOT, files={CODER_FILE: PARAMS_CODER})
     start = _imported(theatre)
     before = snapshot_tree(theatre)
 
-    _assert_success(run_set(theatre, "agents.coder", value))
+    _assert_success(run_set(theatre, "agents.coder", value, "--include"))
 
     assert snapshot_tree(theatre) == before
     assert len(_history(theatre)) == start
@@ -861,13 +862,13 @@ def test_own_include_string_over_an_include_without_overrides_is_a_no_op(
     make_theatre: MakeTheatre, root: str, value: str
 ) -> None:
     """Req 7.5, 8.2 (config-set-writeback 2.8): over a scalar-form or bare mapping-form include,
-    the include's own string (or `{$ref: <same>}`) is a no-op: exit 0, empty output, no file
-    changes and nothing is recorded."""
+    the include's own string (or `{$ref: <same>}`) set with ``--include`` is a no-op: exit 0,
+    empty output, no file changes and nothing is recorded."""
     theatre = make_theatre(root, files={CODER_FILE: CODER})
     start = _imported(theatre)
     before = snapshot_tree(theatre)
 
-    _assert_success(run_set(theatre, "agents.coder", value))
+    _assert_success(run_set(theatre, "agents.coder", value, "--include"))
 
     assert snapshot_tree(theatre) == before
     assert len(_history(theatre)) == start
@@ -915,7 +916,7 @@ def test_ref_segment_in_path_is_refused(make_theatre: MakeTheatre, path: str) ->
     start = _imported(theatre)
     before = snapshot_tree(theatre)
 
-    result = run_set(theatre, path, "file:agents/coder.yaml")
+    result = run_set(theatre, path, "file:agents/coder.yaml", "--include")
 
     problem = _assert_refused(theatre, result, theatre / ROOT, path, start)
     assert "`$ref` is reserved for includes" in problem
@@ -928,16 +929,16 @@ PLAIN_ROOT = "name: demo\nagents:\n  lead: x\n"
 
 
 def test_ref_value_round_trips_as_an_include(make_theatre: MakeTheatre) -> None:
-    """Req 8.2, 9.1, 9.2, 9.3: `set agents.coder {$ref: file:agents/coder.yaml, temperature: 0.3}`
-    writes the mapping as written; it reads back as the include with its override (`show`
-    gives the merged content), records one `set` per merged leaf, and a second identical set is
-    a no-op."""
+    """Req 8.2, 9.1, 9.2, 9.3: `set --include agents.coder {$ref: file:agents/coder.yaml,
+    temperature: 0.3}` writes the mapping as written; it reads back as the include with its
+    override (`show` gives the merged content), records one `set` per merged leaf, and a second
+    identical set is a no-op."""
     theatre = make_theatre(PLAIN_ROOT, files={CODER_FILE: CODER})
     start = _imported(theatre)
     before = snapshot_tree(theatre)
     value = "{$ref: file:agents/coder.yaml, temperature: 0.3}"
 
-    _assert_success(run_set(theatre, "agents.coder", value))
+    _assert_success(run_set(theatre, "agents.coder", value, "--include"))
 
     _assert_only_changed(
         theatre,
@@ -960,7 +961,7 @@ def test_ref_value_round_trips_as_an_include(make_theatre: MakeTheatre) -> None:
 
     again = snapshot_tree(theatre)
     count = len(_history(theatre))
-    _assert_success(run_set(theatre, "agents.coder", value))
+    _assert_success(run_set(theatre, "agents.coder", value, "--include"))
     assert snapshot_tree(theatre) == again
     assert len(_history(theatre)) == count
 
@@ -978,16 +979,16 @@ def test_ref_value_that_does_not_read_back_as_an_include_is_refused(
     make_theatre: MakeTheatre, value: str, named: str
 ) -> None:
     """Req 8.2, 9.2, 9.3: a `$ref` VALUE that does not load as the include it describes (missing
-    target, overrides on a text target, a `$ref` that is not an include string) exits 3 with
-    empty stdout, a stderr line naming PATH and the include target or file; no file changes, no
-    file is left behind and nothing is recorded."""
+    target, overrides on a text target, a `$ref` that is not an include string), set with
+    ``--include``, exits 3 with empty stdout, a stderr line naming PATH and the include target or
+    file; no file changes, no file is left behind and nothing is recorded."""
     theatre = make_theatre(
         PLAIN_ROOT, files={CODER_FILE: CODER, ".troupe/prompt.md": "You write code.\n"}
     )
     start = _imported(theatre)
     before = snapshot_tree(theatre)
 
-    result = run_set(theatre, "agents.coder", value)
+    result = run_set(theatre, "agents.coder", value, "--include")
 
     problem = _assert_refused(theatre, result, theatre / ROOT, "agents.coder", start)
     assert str(theatre / named) in problem
@@ -1385,9 +1386,10 @@ def test_text_include_shared_by_two_places_is_replaced_once(make_theatre: MakeTh
 def test_new_include_in_a_shared_file_merges_with_another_places_override(
     make_theatre: MakeTheatre,
 ) -> None:
-    """Req 11.1, 11.2, 11.3, 1.2, 1.7: `set x.p file:t.yaml` writes the new include once in the
-    shared s.yaml; at `y`, which overrides `p` with `{w: 9}`, t.yaml's content is deep-merged
-    with that override; the events are the new leaves at both places and the removed `x.p`."""
+    """Req 11.1, 11.2, 11.3, 1.2, 1.7: `set --include x.p file:t.yaml` writes the new include
+    once in the shared s.yaml; at `y`, which overrides `p` with `{w: 9}`, t.yaml's content is
+    deep-merged with that override; the events are the new leaves at both places and the removed
+    `x.p`."""
     root = "x: file:s.yaml\ny:\n  $ref: file:s.yaml\n  p:\n    w: 9\n"
     theatre = make_theatre(
         root, files={".troupe/s.yaml": "p: 1\nq: 1\n", ".troupe/t.yaml": "v: 1\n"}
@@ -1395,7 +1397,7 @@ def test_new_include_in_a_shared_file_merges_with_another_places_override(
     start = _imported(theatre)
     before = snapshot_tree(theatre)
 
-    _assert_success(run_set(theatre, "x.p", "file:t.yaml"))
+    _assert_success(run_set(theatre, "x.p", "file:t.yaml", "--include"))
 
     _assert_only_changed(theatre, before, ".troupe/s.yaml", "p: file:t.yaml\nq: 1\n")
     _assert_set_events(

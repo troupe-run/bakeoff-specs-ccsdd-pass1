@@ -11,7 +11,7 @@ decisions, verification and the leaf diff:
 * :func:`new_to_plain` turns a parsed VALUE into a plain tree in which every string marked
   ``INCLUDE`` is a directive without content and every mapping whose ``$ref`` is such a string is
   a directive without content carrying its overrides; ``LITERAL`` and ``NONE`` strings are plain
-  values (an unmarked string keeps the ``file:`` prefix rule until ``set`` marks every VALUE);
+  values;
 * :func:`plain_equal` compares by type and value (floats by ``repr``), using
   :func:`~troupe.config.scalars.scalar_equal` (re-exported here) for scalars, and a VALUE
   directive by its text and overrides against an include's written overrides;
@@ -22,7 +22,7 @@ decisions, verification and the leaf diff:
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from troupe.config.constants import INCLUDE_PREFIX, INCLUDE_REF_KEY
+from troupe.config.constants import INCLUDE_REF_KEY
 from troupe.config.model import (
     ConfigDocument,
     ConfigMapping,
@@ -118,8 +118,7 @@ def new_to_plain(value: NewValue) -> PlainValue:
     """Return the plain tree of a parsed VALUE; include strings become contentless directives.
 
     An include string is a scalar marked ``INCLUDE``; a ``LITERAL`` or ``NONE`` string is a plain
-    value (8.5, 9.3). An unmarked scalar (``mark is None``, not yet marked by ``set``) keeps the
-    rule from before step 7: a ``file:`` string is an include string. A mapping with a ``$ref``
+    value (8.5, 9.3). A mapping with a ``$ref``
     entry whose value is an include string becomes a contentless directive of that string whose
     ``overrides`` are the plain trees of the other entries, in VALUE order. A ``$ref`` with any
     other value stays an ordinary mapping entry.
@@ -140,14 +139,9 @@ def new_to_plain(value: NewValue) -> PlainValue:
 
 
 def _include_text(value: NewValue) -> str | None:
-    """Return ``value``'s string when it is an include string scalar, else ``None``.
-
-    A marked scalar is one when marked ``INCLUDE``; an unmarked one when it starts with ``file:``.
-    """
+    """Return ``value``'s string when it is a string scalar marked ``INCLUDE``, else ``None``."""
     if not isinstance(value, NewScalar) or not isinstance(value.value, str):
         return None
-    if value.mark is None:
-        return value.value if value.value.startswith(INCLUDE_PREFIX) else None
     return value.value if value.mark is ScalarMark.INCLUDE else None
 
 

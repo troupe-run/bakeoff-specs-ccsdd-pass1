@@ -23,7 +23,14 @@ from troupe.config.writeback.compare import (
     scalar_equal,
     splice,
 )
-from troupe.config.writeback.value import NewMapping, NewScalar, NewSequence, parse_value
+from troupe.config.writeback.value import (
+    NewMapping,
+    NewScalar,
+    NewSequence,
+    ScalarMark,
+    mark_include_strings,
+    parse_value,
+)
 
 
 def _load(tmp_path: Path, config: str, files: dict[str, str] | None = None) -> ConfigDocument:
@@ -40,6 +47,11 @@ def _root(tmp_path: Path, config: str, files: dict[str, str] | None = None) -> P
     plain = node_to_plain(_load(tmp_path, config, files).root)
     assert isinstance(plain, dict)
     return plain
+
+
+def _include(text: str) -> NewScalar:
+    """A VALUE string marked ``INCLUDE``, as ``set --include`` marks an include string."""
+    return NewScalar(text, None, ScalarMark.INCLUDE)
 
 
 def _no_text_content(text: str, directive: IncludeDirective) -> PlainValue:
@@ -153,11 +165,12 @@ def test_yaml_include_of_a_text_include_keeps_only_the_outer_directive(tmp_path:
 
 
 def test_parsed_values_become_plain_trees_with_contentless_directives() -> None:
-    """Req 2.7, 2.8: ``file:`` strings of VALUE become directives without content."""
+    """Req 2.7, 2.8 (config-remote-schema 9.3, 8.5): include strings of VALUE marked ``INCLUDE``
+    become directives without content; ``LITERAL`` and ``NONE`` strings stay plain values."""
     value = NewMapping(
         (
             ("b", NewScalar(1, "1")),
-            ("a", NewSequence((NewScalar("file:x.yml", None), NewScalar("x", None)))),
+            ("a", NewSequence((_include("file:x.yml"), NewScalar("x", None)))),
             ("c", NewScalar(None, "")),
         )
     )
@@ -167,8 +180,10 @@ def test_parsed_values_become_plain_trees_with_contentless_directives() -> None:
     assert plain == {"b": 1, "a": [IncludeDirective("file:x.yml", None), "x"], "c": None}
     assert isinstance(plain, dict)
     assert list(plain) == ["b", "a", "c"]
-    assert new_to_plain(NewScalar("file:", None)) == IncludeDirective("file:", None)
+    assert new_to_plain(_include("file:")) == IncludeDirective("file:", None)
     assert new_to_plain(NewScalar(" file:x", None)) == " file:x"
+    assert new_to_plain(NewScalar("file:x", None, ScalarMark.LITERAL)) == "file:x"
+    assert new_to_plain(NewScalar("file:x", None)) == "file:x"
 
 
 # --- plain_equal --------------------------------------------------------------------------------
@@ -186,8 +201,8 @@ def test_contentless_directive_equals_a_loaded_include_with_the_same_text(
     )
     team, prompt = root["team"], root["prompt"]
 
-    assert plain_equal(team, new_to_plain(NewScalar("file:agents.yml", None)), ordered=ordered)
-    assert plain_equal(new_to_plain(NewScalar("file:agents.yml", None)), team, ordered=ordered)
+    assert plain_equal(team, new_to_plain(_include("file:agents.yml")), ordered=ordered)
+    assert plain_equal(new_to_plain(_include("file:agents.yml")), team, ordered=ordered)
     assert plain_equal(prompt, IncludeDirective("file:p.txt", None), ordered=ordered)
     assert not plain_equal(team, IncludeDirective("file:other.yml", None), ordered=ordered)
     assert not plain_equal(team, IncludeDirective("file:./agents.yml", None), ordered=ordered)
@@ -451,7 +466,9 @@ def test_a_string_over_a_yaml_include_with_string_content_replaces_it(tmp_path: 
 
 
 def _ref(text: str, *entries: tuple[str, NewMapping | NewScalar | NewSequence]) -> NewMapping:
-    return NewMapping(((REF, NewScalar(text, None)), *entries))
+    """A `$ref` mapping VALUE with ``text`` marked as ``set --include`` marks it."""
+    marked = _include(text) if text.startswith("file:") else NewScalar(text, None)
+    return NewMapping(((REF, marked), *entries))
 
 
 REF = "$ref"
@@ -464,7 +481,7 @@ def test_value_ref_mapping_becomes_a_directive_with_overrides() -> None:
     value = _ref(
         "file:x.yaml",
         ("m", NewMapping((("y", NewScalar(2, "2")), ("x", NewScalar(1, "1"))))),
-        ("a", NewScalar("file:a.txt", None)),
+        ("a", _include("file:a.txt")),
     )
     plain = new_to_plain(value)
     assert isinstance(plain, IncludeDirective)
@@ -489,7 +506,7 @@ def test_value_ref_that_is_not_an_include_string_stays_a_plain_mapping() -> None
     assert new_to_plain(_ref("x.yaml", ("k", NewScalar(1, "1")))) == {"$ref": "x.yaml", "k": 1}
     number = NewMapping(((REF, NewScalar(5, "5")),))
     assert new_to_plain(number) == {"$ref": 5}
-    nested = NewMapping(((REF, NewMapping((("k", NewScalar("file:x", None)),))),))
+    nested = NewMapping(((REF, NewMapping((("k", _include("file:x")),))),))
     assert new_to_plain(nested) == {"$ref": {"k": IncludeDirective("file:x", None)}}
 
 
@@ -498,8 +515,9 @@ def _with_overrides(overrides: PlainMapping, text: str = "file:x.yaml") -> Inclu
 
 
 def _value(text: str) -> PlainValue:
-    """The plain tree of VALUE ``text`` as `set` parses it."""
-    return new_to_plain(parse_value(text, ConfigPath.parse("x")))
+    """The plain tree of VALUE ``text`` as `set --include` parses and marks it."""
+    path = ConfigPath.parse("x")
+    return new_to_plain(mark_include_strings(parse_value(text, path), path, None, include=True))
 
 
 OVERRIDES_FILES = {"x.yaml": "a: 1\nm: {x: 1, y: 2}\nk: 1\n", "m.yaml": "q: 2\n"}

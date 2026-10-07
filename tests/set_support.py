@@ -16,6 +16,9 @@ from pathlib import Path
 from support import CliResult, invoke_troupe
 from troupe.cli import main as cli_main
 from troupe.config.constants import CONFIG_DIR_NAME, HISTORY_STORE_NAME
+from troupe.config.model import ConfigDocument
+from troupe.config.paths import ConfigPath
+from troupe.config.writeback.value import NewValue, mark_include_strings, parse_value
 
 HISTORY_STATE_PREFIX = f"{CONFIG_DIR_NAME}/{HISTORY_STORE_NAME}"
 """Relative paths starting with this (the store and its SQLite side files) are not snapshotted."""
@@ -42,17 +45,27 @@ def run_config_in_process(*args: str, cwd: Path | None = None) -> CliResult:
     return CliResult(exit_code=code, stdout=stdout.getvalue(), stderr=stderr.getvalue())
 
 
-def set_args(theatre: Path, path: str, value: str) -> tuple[str, ...]:
-    """Return the ``troupe config`` arguments of ``set PATH VALUE --theatre DIR``.
+def set_args(theatre: Path, path: str, value: str, *options: str) -> tuple[str, ...]:
+    """Return the ``troupe config`` arguments of ``set PATH VALUE [OPTIONS...] --theatre DIR``.
 
     VALUE is one argument whatever it contains (spaces, quotes, line breaks, a leading ``-``).
     """
-    return ("set", path, value, "--theatre", str(theatre))
+    return ("set", path, value, *options, "--theatre", str(theatre))
 
 
-def run_set(theatre: Path, path: str, value: str) -> CliResult:
-    """Run ``troupe config set PATH VALUE --theatre DIR`` through the real console script."""
-    return run_config(*set_args(theatre, path, value), cwd=theatre)
+def run_set(theatre: Path, path: str, value: str, *options: str) -> CliResult:
+    """Run ``troupe config set PATH VALUE [OPTIONS...] --theatre DIR`` through the real console
+    script (e.g. ``run_set(theatre, "b", "file:inc.yaml", "--include")``)."""
+    return run_config(*set_args(theatre, path, value, *options), cwd=theatre)
+
+
+def marked_value(
+    document: ConfigDocument, text: str, path: ConfigPath, *, include: bool = False
+) -> NewValue:
+    """Parse VALUE ``text`` and mark its include strings as ``set`` does before target
+    resolution: with ``document``'s schema, and as includes only with ``include``
+    (``set --include``; without it they are ``!literal`` strings)."""
+    return mark_include_strings(parse_value(text, path), path, document.schema, include=include)
 
 
 def assert_file_bytes(path: Path, expected: str | bytes) -> None:

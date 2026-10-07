@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from set_support import marked_value
 from troupe.config.errors import ExitCode, WriteRefusedError
 from troupe.config.loader import load_config
 from troupe.config.model import ConfigDocument, ConfigMapping
@@ -52,7 +53,13 @@ LEAF = "sub:\n  m: 1\n"
 
 
 def _set(
-    tmp_path: Path, files: Mapping[str, str], path: str, value: str, *, in_include: bool = False
+    tmp_path: Path,
+    files: Mapping[str, str],
+    path: str,
+    value: str,
+    *,
+    in_include: bool = False,
+    include: bool = False,
 ) -> tuple[dict[str, str], PlainMapping]:
     """Plan and verify a set; return each patched file's name and new text, and the read-back
     plain root (which equals the planned intended configuration, in order)."""
@@ -60,9 +67,8 @@ def _set(
         (tmp_path / name).write_bytes(text.encode("utf-8"))
     document = load_config(tmp_path / ROOT)
     config_path = ConfigPath.parse(path)
-    request = resolve_target(
-        document, config_path, parse_value(value, config_path), in_include=in_include
-    )
+    marked = marked_value(document, value, config_path, include=include)
+    request = resolve_target(document, config_path, marked, in_include=in_include)
     plan = plan_set(document, request)
     after = verify_patch(
         tmp_path / ROOT,
@@ -365,11 +371,12 @@ NEW_INCLUDE_ROOT = "x: file:s.yaml\ny:\n  $ref: file:s.yaml\n  p:\n    w: 9\n"
 def test_new_include_in_a_shared_file_is_merged_with_another_places_override(
     tmp_path: Path,
 ) -> None:
-    """Req 11.1, 11.2, 1.2, 1.7: `x.p` set to `file:t.yaml` is written in the shared s.yaml; at
-    `y` the outer override `p: {w: 9}` is deep-merged with t.yaml's content (loaded from the
-    pre-write files), so the intended configuration matches the read-back `{v: 1, w: 9}`."""
+    """Req 11.1, 11.2, 1.2, 1.7: `x.p` set to `file:t.yaml` (``--include``) is written in the
+    shared s.yaml; at `y` the outer override `p: {w: 9}` is deep-merged with t.yaml's content
+    (loaded from the pre-write files), so the intended configuration matches the read-back
+    `{v: 1, w: 9}`."""
     files = {ROOT: NEW_INCLUDE_ROOT, "s.yaml": "p: 1\nq: 1\n", "t.yaml": "v: 1\n"}
-    patched, after = _set(tmp_path, files, "x.p", "file:t.yaml")
+    patched, after = _set(tmp_path, files, "x.p", "file:t.yaml", include=True)
     assert patched == {"s.yaml": "p: file:t.yaml\nq: 1\n"}
     assert _at(after, "x.p") == {"v": 1}
     assert _at(after, "y.p") == {"v": 1, "w": 9}
@@ -384,7 +391,7 @@ def test_new_include_with_a_missing_target_merged_at_another_place_is_refused(
     read-back would refuse it; nothing is planned from the read-back."""
     files = {ROOT: NEW_INCLUDE_ROOT, "s.yaml": "p: 1\nq: 1\n"}
     with pytest.raises(WriteRefusedError) as raised:
-        _set(tmp_path, files, "x.p", "file:t.yaml")
+        _set(tmp_path, files, "x.p", "file:t.yaml", include=True)
     error = raised.value
     assert error.exit_code is ExitCode.WRITE_REFUSED
     assert error.path == "x.p"

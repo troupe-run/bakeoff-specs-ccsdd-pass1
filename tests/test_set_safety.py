@@ -144,34 +144,51 @@ def _fail_inserts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    ("root", "files", "path", "value"),
+    ("root", "files", "path", "value", "options"),
     [
-        pytest.param("a: 1.0\n", {}, "a", "1.00", id="equal-float-other-spelling"),
+        pytest.param("a: 1.0\n", {}, "a", "1.00", (), id="equal-float-other-spelling"),
         pytest.param(
             "agents:\n  coder: file:agents/coder.yaml\n",
             {".troupe/agents/coder.yaml": "model: small\n"},
             "agents.coder",
             "file:agents/coder.yaml",
+            ("--include",),
             id="same-yaml-include-directive",
+        ),
+        pytest.param(
+            "a: !literal file:agents/coder.yaml\n",
+            {".troupe/agents/coder.yaml": "model: small\n"},
+            "a",
+            "file:agents/coder.yaml",
+            (),
+            id="same-literal-string",
         ),
         pytest.param(
             "p:\n  t: file:t.txt\n",
             {TEXT: "old\n"},
             "p",
             '{t: "old\\n"}',
+            (),
             id="equal-text-include-content",
         ),
     ],
 )
 def test_no_op_changes_no_file_and_records_nothing(
-    make_theatre: MakeTheatre, root: str, files: dict[str, str], path: str, value: str
+    make_theatre: MakeTheatre,
+    root: str,
+    files: dict[str, str],
+    path: str,
+    value: str,
+    options: tuple[str, ...],
 ) -> None:
-    """Req 14.6, 2.8: VALUE equal to the current value exits 0 with empty output; every file
-    keeps its bytes and its inode (not even rewritten); listing and history are unchanged."""
+    """Req 14.6, 2.8 (config-remote-schema 8.5, 9.3): VALUE equal to the current value (the same
+    include string with ``--include``, the same ``!literal`` string without it) exits 0 with empty
+    output; every file keeps its bytes and its inode (not even rewritten); listing and history
+    are unchanged."""
     theatre = make_theatre(root, files=files)
     before = _prepared(theatre)
 
-    result = run_set(theatre, path, value)
+    result = run_set(theatre, path, value, *options)
 
     assert (result.exit_code, result.stdout, result.stderr) == (0, b"", ""), result.stderr
     _assert_unchanged(theatre, before)
@@ -187,7 +204,7 @@ def test_no_op_goes_before_a_check_that_would_refuse(make_theatre: MakeTheatre) 
     )
     before = _prepared(theatre)
 
-    refused = run_set(theatre, "agents.coder", "file:agents/other.yaml")
+    refused = run_set(theatre, "agents.coder", "file:agents/other.yaml", "--include")
 
     _assert_refused(
         refused,
@@ -226,12 +243,13 @@ def test_file_included_twice_is_written_once_and_changes_both_places(
 
 
 def test_new_include_with_missing_target_is_refused(make_theatre: MakeTheatre) -> None:
-    """Req 14.8, 14.2, 14.7, 16.2: a new include whose target is missing cannot be read back;
-    exit 3 names the root file, PATH and the include target; nothing changes or is recorded."""
+    """Req 14.8, 14.2, 14.7, 16.2: a new include (``--include``) whose target is missing cannot
+    be read back; exit 3 names the root file, PATH and the include target; nothing changes or
+    is recorded."""
     theatre = make_theatre("a: 1\nb: x\n")
     before = _prepared(theatre)
 
-    result = run_set(theatre, "b", "file:missing.yaml")
+    result = run_set(theatre, "b", "file:missing.yaml", "--include")
 
     _assert_refused(
         result, theatre, ROOT, "b", f"include target {theatre / '.troupe/missing.yaml'} does not"

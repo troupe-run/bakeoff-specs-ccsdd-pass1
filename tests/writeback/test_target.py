@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from set_support import marked_value
 from troupe.config.errors import ExitCode, PathNotFoundError
 from troupe.config.loader import load_config
 from troupe.config.model import (
@@ -44,9 +45,12 @@ def _load(
     return load_config(root)
 
 
-def _resolve(document: ConfigDocument, path: str, value: str) -> SetRequest:
+def _resolve(
+    document: ConfigDocument, path: str, value: str, *, include: bool = False
+) -> SetRequest:
     config_path = ConfigPath.parse(path)
-    return resolve_target(document, config_path, parse_value(value, config_path))
+    marked = marked_value(document, value, config_path, include=include)
+    return resolve_target(document, config_path, marked)
 
 
 def _not_found(document: ConfigDocument, path: str, value: str) -> PathNotFoundError:
@@ -304,16 +308,21 @@ def test_current_is_the_plain_tree_of_the_loaded_root(tmp_path: Path) -> None:
 
 
 def test_include_root_set_to_its_own_file_string_is_unchanged(tmp_path: Path) -> None:
-    """Req 2.8: setting an include root to its own ``file:`` string keeps the configuration."""
+    """Req 2.8 (config-remote-schema 9.3): setting an include root to its own ``file:`` string
+    with ``--include`` keeps the configuration; without it the string is a ``!literal`` value,
+    which differs (8.1)."""
     document = _load(tmp_path, ROOT_WITH_INCLUDES, INCLUDES)
-    request = _resolve(document, "agents.coder", "file:agents/coder.yaml")
+    request = _resolve(document, "agents.coder", "file:agents/coder.yaml", include=True)
     assert plain_equal(request.intended, request.current, ordered=True)
+    literal = _resolve(document, "agents.coder", "file:agents/coder.yaml")
+    assert not plain_equal(literal.intended, literal.current, ordered=False)
 
 
 def test_text_include_set_to_its_own_file_string_is_unchanged(tmp_path: Path) -> None:
-    """Req 2.8: a text include set to its own ``file:`` string keeps the configuration."""
+    """Req 2.8 (config-remote-schema 9.3): a text include set to its own ``file:`` string with
+    ``--include`` keeps the configuration."""
     document = _load(tmp_path, "prompt: file:prompt.txt\n", {"prompt.txt": "old\n"})
-    request = _resolve(document, "prompt", "file:prompt.txt")
+    request = _resolve(document, "prompt", "file:prompt.txt", include=True)
     assert plain_equal(request.intended, request.current, ordered=True)
 
 
@@ -327,7 +336,7 @@ def test_text_include_set_to_its_current_text_is_unchanged(tmp_path: Path) -> No
 def test_include_root_set_to_another_file_string_differs(tmp_path: Path) -> None:
     """Req 2.5: another ``file:`` string at an include root is a different configuration."""
     document = _load(tmp_path, ROOT_WITH_INCLUDES, INCLUDES)
-    request = _resolve(document, "agents.coder", "file:agents/other.yaml")
+    request = _resolve(document, "agents.coder", "file:agents/other.yaml", include=True)
     assert not plain_equal(request.intended, request.current, ordered=False)
 
 

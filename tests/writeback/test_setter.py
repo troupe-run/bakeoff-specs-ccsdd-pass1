@@ -39,9 +39,10 @@ def _opened(directory: Path) -> Iterator[Theatre]:
         yield theatre
 
 
-def _set(theatre: Theatre, path: str, value: str) -> SetOutcome:
+def _set(theatre: Theatre, path: str, value: str, *, include: bool = False) -> SetOutcome:
     config_path = ConfigPath.parse(path)
-    return set_value(theatre, config_path, parse_value(value, config_path), CLI_CONTEXT)
+    parsed = parse_value(value, config_path)
+    return set_value(theatre, config_path, parsed, CLI_CONTEXT, include=include)
 
 
 def _listing(directory: Path) -> list[str]:
@@ -173,14 +174,16 @@ def test_set_after_hand_edit_follows_the_reconcile_and_takes_old_values_from_the
 
 
 @pytest.mark.parametrize(
-    ("config", "files", "path", "value"),
+    ("config", "files", "path", "value", "include"),
     [
-        ("a: 1\n", {}, "a", "1"),
-        ("a: {x: 1, y: 2}\n", {}, "a", "{y: 2, x: 1}"),
-        # An include directive set to its own `file:` string (2.8).
-        ("c: file:c.yaml\n", {".troupe/c.yaml": "k: 1\n"}, "c", "file:c.yaml"),
+        ("a: 1\n", {}, "a", "1", False),
+        ("a: {x: 1, y: 2}\n", {}, "a", "{y: 2, x: 1}", False),
+        # An include directive set to its own `file:` string with --include (2.8).
+        ("c: file:c.yaml\n", {".troupe/c.yaml": "k: 1\n"}, "c", "file:c.yaml", True),
+        # A `!literal` string set to the same string (config-remote-schema 8.5).
+        ("c: !literal file:c.yaml\n", {}, "c", "file:c.yaml", False),
         # A no-op that a change would refuse (a folded value with a more-indented line, 10.7).
-        ("a: >\n  x\n    y\n", {}, "a", '"x\\n  y\\n"'),
+        ("a: >\n  x\n    y\n", {}, "a", '"x\\n  y\\n"', False),
     ],
 )
 def test_no_op_writes_nothing_and_records_nothing(
@@ -190,6 +193,7 @@ def test_no_op_writes_nothing_and_records_nothing(
     files: dict[str, str],
     path: str,
     value: str,
+    include: bool,
 ) -> None:
     """Req 14.6, 15.4: VALUE equal to the current value writes no file (no rename at all), records
     nothing and returns an empty outcome, before any check that would refuse the set."""
@@ -198,7 +202,7 @@ def test_no_op_writes_nothing_and_records_nothing(
     with _opened(directory) as theatre:
         before = step1(theatre.history.records())
         renames = _fail_replace(monkeypatch, {})
-        outcome = _set(theatre, path, value)
+        outcome = _set(theatre, path, value, include=include)
         monkeypatch.undo()
         records = step1(theatre.history.records())
 
@@ -209,16 +213,23 @@ def test_no_op_writes_nothing_and_records_nothing(
 
 
 @pytest.mark.parametrize(
-    ("config", "files", "path", "value"),
+    ("config", "files", "path", "value", "include"),
     [
         # 2.5: a YAML include root that would change (refused while planning).
-        ("c: file:c.yaml\n", {".troupe/c.yaml": "k: 1\n"}, "c", "{k: 2}"),
-        # 14.8: a new include whose target is missing (refused while verifying).
-        ("a: 1\n", {}, "b", "file:missing.yaml"),
+        ("c: file:c.yaml\n", {".troupe/c.yaml": "k: 1\n"}, "c", "{k: 2}", False),
+        # 14.8: a new include (--include) whose target is missing (refused while verifying).
+        ("a: 1\n", {}, "b", "file:missing.yaml", True),
+        # config-remote-schema 8.6: a `$ref` mapping without --include (refused while marking).
+        ("a: 1\n", {}, "b", "{$ref: file:missing.yaml}", False),
     ],
 )
 def test_refusal_leaves_files_and_history_untouched(
-    make_theatre: MakeTheatre, config: str, files: dict[str, str], path: str, value: str
+    make_theatre: MakeTheatre,
+    config: str,
+    files: dict[str, str],
+    path: str,
+    value: str,
+    include: bool,
 ) -> None:
     """Req 14.7, 13.4: a refused set (exit 3) raises before any write, changes no file and records
     no event."""
@@ -228,7 +239,7 @@ def test_refusal_leaves_files_and_history_untouched(
     with _opened(directory) as theatre:
         before = step1(theatre.history.records())
         with pytest.raises(WriteRefusedError) as caught:
-            _set(theatre, path, value)
+            _set(theatre, path, value, include=include)
         records = step1(theatre.history.records())
 
     assert caught.value.exit_code is ExitCode.WRITE_REFUSED

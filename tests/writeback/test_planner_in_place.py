@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from set_support import marked_value
 from troupe.config.errors import ExitCode, WriteRefusedError
 from troupe.config.loader import load_config
 from troupe.config.model import ConfigDocument
@@ -20,7 +21,6 @@ from troupe.config.paths import ConfigPath
 from troupe.config.writeback.compare import node_to_plain, plain_equal
 from troupe.config.writeback.planner import FilePatch, plan_patch
 from troupe.config.writeback.target import SetRequest, resolve_target
-from troupe.config.writeback.value import parse_value
 
 ROOT = "troupe.yml"
 
@@ -35,9 +35,12 @@ def _load(
     return load_config(tmp_path / ROOT)
 
 
-def _request(document: ConfigDocument, path: str, value: str) -> SetRequest:
+def _request(
+    document: ConfigDocument, path: str, value: str, *, include: bool = False
+) -> SetRequest:
     config_path = ConfigPath.parse(path)
-    return resolve_target(document, config_path, parse_value(value, config_path))
+    marked = marked_value(document, value, config_path, include=include)
+    return resolve_target(document, config_path, marked)
 
 
 def _plan(
@@ -46,6 +49,8 @@ def _plan(
     path: str,
     value: str,
     files: Mapping[str, str | bytes] | None = None,
+    *,
+    include: bool = False,
 ) -> dict[str, bytes]:
     """Plan the set; return each patched file's name (relative to tmp_path) and new bytes.
 
@@ -53,7 +58,7 @@ def _plan(
     that no patch leaves its file unchanged.
     """
     document = _load(tmp_path, config, files)
-    request = _request(document, path, value)
+    request = _request(document, path, value, include=include)
     patches = plan_patch(document, request)
     assert patches, "a plan for a changing set is never empty"
     assert all(isinstance(patch, FilePatch) for patch in patches)
@@ -83,9 +88,11 @@ def _refused(
     path: str,
     value: str,
     files: Mapping[str, str | bytes] | None = None,
+    *,
+    include: bool = False,
 ) -> WriteRefusedError:
     document = _load(tmp_path, config, files)
-    request = _request(document, path, value)
+    request = _request(document, path, value, include=include)
     with pytest.raises(WriteRefusedError) as caught:
         plan_patch(document, request)
     assert caught.value.exit_code is ExitCode.WRITE_REFUSED
@@ -138,9 +145,18 @@ def test_empty_value_with_comment_keeps_the_comment_column(tmp_path: Path) -> No
 
 
 def test_file_string_is_written_plain_and_reads_back_as_include(tmp_path: Path) -> None:
-    """Req 2.7: `file:inc.yaml` is written as a plain string; it reads back as the include."""
-    patched = _plan(tmp_path, "a: x\n", "a", "file:inc.yaml", {"inc.yaml": "k: 1\n"})
+    """Req 2.7 (config-remote-schema 9.3): with ``--include`` `file:inc.yaml` is written as a
+    plain string; it reads back as the include."""
+    files = {"inc.yaml": "k: 1\n"}
+    patched = _plan(tmp_path, "a: x\n", "a", "file:inc.yaml", files, include=True)
     assert patched == {ROOT: b"a: file:inc.yaml\n"}
+
+
+def test_file_string_without_include_is_written_tagged_literal(tmp_path: Path) -> None:
+    """Req 2.7 (config-remote-schema 8.1): without ``--include`` `file:inc.yaml` is written
+    ``!literal`` and reads back as the string."""
+    patched = _plan(tmp_path, "a: x\n", "a", "file:inc.yaml", {"inc.yaml": "k: 1\n"})
+    assert patched == {ROOT: b"a: !literal file:inc.yaml\n"}
 
 
 def test_scalar_inside_included_file_changes_only_that_file(tmp_path: Path) -> None:
@@ -307,9 +323,12 @@ def test_non_string_over_text_include_is_refused(tmp_path: Path) -> None:
 
 
 def test_other_include_string_over_text_include_is_refused(tmp_path: Path) -> None:
-    """Req 2.4, 14.9: replacing a text include by a different `file:` string exits 3."""
+    """Req 2.4, 14.9: replacing a text include by a different `file:` include (``--include``)
+    exits 3."""
     files = {"prompt.txt": "old\n", "other.txt": "x\n"}
-    error = _refused(tmp_path, "prompt: file:prompt.txt\n", "prompt", "file:other.txt", files)
+    error = _refused(
+        tmp_path, "prompt: file:prompt.txt\n", "prompt", "file:other.txt", files, include=True
+    )
     assert error.path == "prompt"
     assert error.file == tmp_path / "prompt.txt"
 

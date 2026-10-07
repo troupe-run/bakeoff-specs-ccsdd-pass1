@@ -137,7 +137,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - _Depends: 3.3_
   - _Requirements: 7.1, 7.2, 9.4, 10.3_
 
-- [ ] 3.5 Mark VALUE in `set`, add `--include`, and update the decision D tests
+- [x] 3.5 Mark VALUE in `set`, add `--include`, and update the decision D tests
   - `set` marks VALUE before target resolution, with the schema of the loaded document and the include choice, so marks reach the alias guard, the no-op check and planning. The temporary unmarked state of task 3.1 and the `file:` prefix fallback in the plain tree are removed: every scalar reaching compare or the planner is marked, and the default mark is `NONE`, as in the design. `--include` is a flag that takes no value, may stand anywhere among PATH and VALUE, and combines with `--reason`, `--in-include` and `--expand-alias`. `--include=TEXT` is a usage error (exit 2).
   - Decision D changes in this task. The tests that pin "a `file:` VALUE is written plain" pass `--include` (or `include=True`), and new rows pin the tagged form: `tests/test_set_targets.py` (~:202–231), `tests/test_set_history.py` (~:200, 220), `tests/test_set_overrides.py` (~:918, 1398, and every other include-like VALUE, including `$ref` VALUEs), `tests/test_e2e_reconcile.py` (~:160), and the other set tests a search for include-like VALUEs finds (for example `test_set_in_include.py`, `test_set_safety.py`, `test_e2e_aliases.py` and `writeback/test_setter.py`).
   - Done when CLI tests show the flag's positions and combinations, the exit-2 case, `set b file:inc.yaml` writing `b: !literal file:inc.yaml` and `set --include b file:inc.yaml` writing the include, and the full suite passing with the updated tests

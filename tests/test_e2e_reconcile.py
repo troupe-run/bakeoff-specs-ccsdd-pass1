@@ -146,8 +146,9 @@ def test_reconcile_events_are_kept_when_show_exits_5(
 def test_reconcile_events_are_kept_when_set_exits_3(
     make_theatre: MakeTheatre, config_name: str
 ) -> None:
-    """Req 1.1, 1.2: a `set` refused with exit 3 (replacing a value that wholly comes from an
-    include) after a hand edit changes no file, and the reconcile `set` stays in the history."""
+    """Req 1.1, 1.2: a `set --include` refused with exit 3 (replacing a value that wholly comes
+    from an include by another include) after a hand edit changes no file, and the reconcile
+    `set` stays in the history."""
     root = "a: 1\nagents:\n  coder: file:agents/coder.yaml\n"
     theatre = make_theatre(
         root, config_name=config_name, files={".troupe/agents/coder.yaml": "model: small\n"}
@@ -157,7 +158,7 @@ def test_reconcile_events_are_kept_when_set_exits_3(
     _root(theatre, config_name).write_text(edited)
     files = snapshot_tree(theatre)
 
-    result = run_set(theatre, "agents.coder", "file:agents/other.yaml")
+    result = run_set(theatre, "agents.coder", "file:agents/other.yaml", "--include")
 
     assert (result.exit_code, result.stdout) == (3, b""), result.stderr
     assert "the whole value comes from the include file:agents/coder.yaml" in result.stderr

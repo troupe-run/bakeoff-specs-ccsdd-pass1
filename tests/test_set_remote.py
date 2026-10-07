@@ -23,7 +23,7 @@ from troupe.config.theatre import open_theatre
 from troupe.config.writeback.atomic import write_atomically
 from troupe.config.writeback.remote_guard import REMOTE_READ_ONLY
 from troupe.config.writeback.setter import set_value
-from troupe.config.writeback.value import mark_include_strings, parse_value
+from troupe.config.writeback.value import parse_value
 
 CONFIG_NAMES = ["troupe.yml", "troupe.yaml"]
 
@@ -235,12 +235,8 @@ def test_set_of_an_unfetchable_new_remote_include_is_refused_naming_the_url(
     before = snapshot_tree(theatre)
     path = ConfigPath.parse("team")
 
-    with open_theatre(theatre) as opened:
-        value = mark_include_strings(
-            parse_value(missing, path), path, opened.document.schema, include=True
-        )
-        with pytest.raises(WriteRefusedError) as caught:
-            set_value(opened, path, value, CLI_CONTEXT)
+    with open_theatre(theatre) as opened, pytest.raises(WriteRefusedError) as caught:
+        set_value(opened, path, parse_value(missing, path), CLI_CONTEXT, include=True)
 
     error = caught.value
     assert error.exit_code is ExitCode.WRITE_REFUSED

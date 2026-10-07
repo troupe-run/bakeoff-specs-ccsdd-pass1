@@ -15,13 +15,13 @@ from pathlib import Path
 
 import pytest
 
+from set_support import marked_value
 from troupe.config.errors import ExitCode, WriteRefusedError
 from troupe.config.loader import load_config
 from troupe.config.paths import ConfigPath
 from troupe.config.writeback.compare import node_to_plain, plain_equal
 from troupe.config.writeback.planner import plan_patch
 from troupe.config.writeback.target import ReplaceTarget, resolve_target
-from troupe.config.writeback.value import parse_value
 
 ROOT = "troupe.yml"
 
@@ -33,7 +33,12 @@ def _write(tmp_path: Path, files: Mapping[str, str | bytes]) -> None:
 
 
 def _patches(
-    tmp_path: Path, files: Mapping[str, str | bytes], path: str, value: str
+    tmp_path: Path,
+    files: Mapping[str, str | bytes],
+    path: str,
+    value: str,
+    *,
+    include: bool = False,
 ) -> list[tuple[str, str]]:
     """Plan the set; return ``(file name, new text)`` per patch, in the planner's order.
 
@@ -44,7 +49,8 @@ def _patches(
     _write(tmp_path, files)
     document = load_config(tmp_path / ROOT)
     config_path = ConfigPath.parse(path)
-    request = resolve_target(document, config_path, parse_value(value, config_path))
+    marked = marked_value(document, value, config_path, include=include)
+    request = resolve_target(document, config_path, marked)
     assert isinstance(request.target, ReplaceTarget)
     patches = plan_patch(document, request)
     real_paths = [patch.file.real_path for patch in patches]
@@ -66,7 +72,7 @@ def _refused(
     _write(tmp_path, files)
     document = load_config(tmp_path / ROOT)
     config_path = ConfigPath.parse(path)
-    request = resolve_target(document, config_path, parse_value(value, config_path))
+    request = resolve_target(document, config_path, marked_value(document, value, config_path))
     with pytest.raises(WriteRefusedError) as caught:
         plan_patch(document, request)
     assert caught.value.exit_code is ExitCode.WRITE_REFUSED
@@ -136,13 +142,15 @@ def test_nested_text_include_with_a_non_string_names_path_and_target(tmp_path: P
 
 
 def test_unchanged_yaml_include_inside_a_merge_is_untouched(tmp_path: Path) -> None:
-    """Req 5.8, 2.8, 13.4: an include root set to its own `file:` string is unchanged, so it is not
-    refused and coder.yaml gets no patch; only `lead` changes in the root file."""
+    """Req 5.8, 2.8, 13.4: an include root set to its own `file:` string (``--include``) is
+    unchanged, so it is not refused and coder.yaml gets no patch; only `lead` changes in the root
+    file."""
     patches = _patches(
         tmp_path,
         {ROOT: AGENTS, "coder.yaml": "model: y\n"},
         "agents",
         "{coder: file:coder.yaml, lead: z}",
+        include=True,
     )
     assert patches == [(ROOT, "agents:\n  coder: file:coder.yaml\n  lead: z\n")]
 
