@@ -23,7 +23,8 @@ config-lineage, config-include-overrides and config-aliases are complete. Task 1
 **Safety window.** From task 2.4 the loader reads remote sources, but the writer refuses writes into them only from
 task 3.3. In between, `set` refuses (exit 3, no file changed) every configuration that holds a remote include, and
 `write_atomically` refuses any remote source. Task 2.4 adds the temporary refusal, pinned by a test in
-`tests/test_set_remote.py`, and task 3.3 removes both together. Between tasks 3.1 and 3.5,
+`tests/test_set_remote.py`, and task 3.3 removes the `set` refusal; the `write_atomically` refusal stays as the
+backstop the design keeps (pinned by `test_write_atomically_never_writes_a_remote_source`). Between tasks 3.1 and 3.5,
 VALUE strings that were never marked keep today's `file:` rule, so decision D holds until 3.5 changes it together with
 its tests. Between tasks 2.1 and 3.2, replacing a `!literal`
 scalar can keep its tag. The read-back still refuses any result that differs from VALUE, so no wrong value can be
