@@ -319,6 +319,10 @@ config-foundation's `research.md`; G (malformed PATH → exit 2) is inherited fr
 - **Why**: Exit 3 means "write refused, nothing changed"; the user is never left with a configuration that
   cannot load (which would make every later command exit 4).
 - **Revisit when**: the product owner wants `set` to create include targets.
+- **Revisited (step 7)**: superseded by the step 7 contract (spec config-remote-schema, requirements 8 and 9). An
+  include-like VALUE string is written tagged `!literal` unless `set --include` is given or the schema gives its
+  path `format: uri`. With `--include` this decision still holds (missing, cyclic or unloadable target, including a
+  remote one that cannot be fetched → exit 3, no file changed).
 - **Spec impact**: 2.7, 2.8, 14.8, 15.7 (unchanged).
 
 ### E. Temporary file then rename; nothing left behind

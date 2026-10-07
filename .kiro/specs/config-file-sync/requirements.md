@@ -166,6 +166,7 @@ Terms used below:
 
 #### Acceptance Criteria
 1. While `watch` runs, when the config file or any included file (at any depth, YAML or text) is changed after the `watching` line appeared, the troupe CLI shall reconcile within 2 seconds of the change.
+   *Note (step 7): remote includes (`https://`/`http://`) are never polled; their content is fetched again whenever the configuration is reloaded, and a failed fetch is a load failure under 5.3. The schema file `.troupe/troupe.schema.json` is watched like the config file, whether or not it exists (spec config-remote-schema, requirements 3.4 and 3.5).*
 2. While `watch` runs, the troupe CLI shall observe a change whether the file is rewritten in place or replaced (for example saved by writing a new file and renaming it over the old one), and when the root configuration file is renamed between `troupe.yml` and `troupe.yaml`.
 3. If the files cannot be loaded at a moment when `watch` would reconcile (for example invalid YAML in a half-saved file, a missing include target, an include cycle, or a missing or duplicated root configuration file), then the troupe CLI shall record no event, write to stderr a message naming the file under the step 1 load-error rules, keep running, and reconcile within 2 seconds once the files load again.
 4. If the history store cannot be read or written while `watch` runs, then the troupe CLI shall write to stderr a message naming the history store location, keep running, and record the outstanding differences at a later reconcile, so that no hand edit is lost.

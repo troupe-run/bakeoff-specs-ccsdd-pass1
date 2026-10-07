@@ -151,7 +151,8 @@ and is owned by config-get-show.)*
     anchors, aliases and merge keys; the load refusals that remain are listed in the step 6 note on 3.9, and
     writes are governed by config-aliases.)*
   - I, PO delegated (safest assumption kept): duplicate keys, explicit tags and files that are not valid UTF-8 are
-    load failures, exit 4 naming the file and the key path where known (3.2, 3.3, 3.7).
+    load failures, exit 4 naming the file and the key path where known (3.2, 3.3, 3.7). *(Narrowed by step 7:
+    `!literal` on a scalar value loads, see spec config-remote-schema requirement 4; every other tag stays exit 4.)*
 
 ## Requirements
 
@@ -186,6 +187,7 @@ and is owned by config-get-show.)*
 5. When the root configuration file is empty or contains only comments, the troupe CLI shall treat the configuration as an empty mapping with no values.
 6. The troupe CLI shall read the configuration without creating, modifying, renaming or deleting the configuration file or any included file.
 7. If a configuration file gives a value an explicit tag (for example `!!str 5` or `!custom x`), then the troupe CLI shall exit with code 4 and write a stderr message that names the file and the key path of the tagged value.
+   *Note (step 7): a scalar value tagged exactly `!literal` loads as a string and is never an include; `!literal` on a mapping, a list, a key, before an anchor or on a `$ref` value, and every other tag, stay exit 4 (spec config-remote-schema, requirement 4.1–4.3).*
 8. When a configuration value is written as a folded block scalar (`>`, with any chomping or indentation indicator), the troupe CLI shall use the value defined by YAML 1.2 line folding (for example `>\n  a\n  b\n` is `a b` followed by a newline) everywhere the value appears, including `show` output, history events and leaves, and shall not add any character that does not belong to the folded value.
 9. If a configuration file uses an anchor (`&name`), an alias (`*name`) or a merge key (`<<`), then the troupe CLI shall exit with code 4 and write a stderr message that names the file and, where it is known, the key path at which the anchor, alias or merge key appears.
    *Note (step 6): anchors and aliases now load, and so do merge keys (spec config-aliases, requirements 1 and 2). Exit 4 under config-aliases remains for an anchor on a mapping key, an alias used as a mapping key, an alias inside its own anchored node, an alias with no anchor of that name before it in the same file (1.3, 1.4), a merge key whose value is not a mapping, an alias of a mapping or a list of those, a merge key among the overrides of a mapping-form include, and an include as a merge source (2.3).*
@@ -194,6 +196,8 @@ and is owned by config-get-show.)*
 **Objective:** As a developer, I want to split my configuration across files with `file:` includes, so that large or shared settings can live in their own files.
 
 *Note (step 5): includes also have a mapping form, `{$ref: "file:...", <overrides>}`, specified by spec config-include-overrides (requirements 1 and 2). The criteria below stand as worded for the include string, whether written as a scalar or as the value of `$ref`.*
+
+*Note (step 7): a string starting `https://` or `http://` is also an include (a remote include). It is fetched when the configuration loads, read as YAML when the URL path ends `.yml`/`.yaml` and as text otherwise, and a failed fetch exits 4 (spec config-remote-schema, requirements 1 and 2). A string tagged `!literal`, or whose schema in `.troupe/troupe.schema.json` has `"format": "uri"`, is a literal and never an include (requirement 4). When the schema file is present, a configuration that does not validate against it exits 4 (requirement 5).*
 
 #### Acceptance Criteria
 1. When a string value starts with `file:`, the troupe CLI shall treat the rest of the string as the path of an include target, relative to the directory of the file that contains the string.

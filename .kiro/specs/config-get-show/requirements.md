@@ -186,6 +186,7 @@ Terms used below:
 2. Where `--sources` is given, the troupe CLI shall add no comment to a line that holds no scalar (a `key:` line introducing a nested mapping or list, a line holding `{}` or `[]`) or to the content lines of a literal block.
 3. Where `--sources` is given, the troupe CLI shall name as `<file>` the root configuration file for a scalar written there, the included YAML file for a scalar written in that file, and the included text file for a text include.
    *Note (step 5): for a scalar that is an overridden value of a mapping-form include, `<file>` is the including file in which the override is written; a scalar that is not overridden still names the included file (spec config-include-overrides, requirement 3.2).*
+   *Note (step 7): for a scalar written in remote content, `<file>` is the URL of the remote include holding it, exactly as written (spec config-remote-schema, requirement 3.2).*
 4. Where `--sources` is given, the troupe CLI shall write `<file>` relative to the theatre directory, with `/` separators, with no `.` segments and with `..` segments only at its start, taken from the paths as reached through the theatre directory and the include strings, without resolving symbolic links (for example `.troupe/troupe.yml`, `.troupe/agents/lead.yml`, `../shared/prompt.md`).
 5. Where `--sources` is given and PATH resolves to a mapping or a list, or PATH is omitted, the troupe CLI shall print output that equals the output without `--sources` once the ` # from <file>` suffixes are removed.
 

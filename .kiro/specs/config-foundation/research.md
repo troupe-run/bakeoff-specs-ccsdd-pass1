@@ -276,6 +276,9 @@ make us revisit it, and its status.
   byte-surgical writer cannot preserve; non-UTF-8 bytes cannot be patched safely. Refusing to load cannot corrupt
   data.
 - **Revisit when**: a contract step adds tags or non-UTF-8 encodings.
+- **Revisited (step 7)**: the contract adds the `!literal` tag. A scalar value tagged exactly `!literal` loads as a
+  string and is never an include (spec config-remote-schema, requirement 4); every other tag, and `!literal` where
+  no string value can be meant, stays exit 4.
 - **Spec impact**: 3.2 (UTF-8 made explicit), 3.3, 3.7; tasks 3.2, 6.1.
 
 Decisions B, C and D concern `set` only and are recorded in config-set-writeback's `research.md`.

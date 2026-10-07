@@ -85,6 +85,13 @@ intended one. If it does not, the write is refused (exit 3) rather than risk cor
 > the configuration files (spec config-aliases). A value defined at an anchor is changed at the anchor; a value
 > reached through an alias or a merge key is refused with exit 3 unless the alias is expanded with
 > `--expand-alias` (config-aliases requirements 4–9). Anchors and aliases in VALUE stay refused (1.3).
+>
+> **Note (step 7):** decision D and 2.7–2.8 are superseded by spec config-remote-schema (requirements 8 and 9): an
+> include-like VALUE string (`file:`, `https://`, `http://`) is written tagged `!literal` unless `set --include` is
+> given or the schema in `.troupe/troupe.schema.json` gives its path `"format": "uri"`; with `--include`, 2.7–2.8
+> hold as worded. A value that comes from a remote include is never changed (exit 3 quoting the local include
+> string, requirement 6), and a set that would make the configuration invalid against the schema exits 3
+> (requirement 7).
 
 ## Introduction
 This specification covers the write side of the troupe configuration subsystem (contract step 1, section
@@ -123,7 +130,9 @@ shared error conventions are provided by config-foundation and are used unchange
   - Setting a mapping over a mapping, or a list over a list, changes only the entries that differ (5.1–5.3).
   - D, PO delegated (safest assumption kept): a VALUE string that starts with `file:` is written as a plain
     string and therefore becomes an include when the configuration is read; if its target is missing, forms a
-    cycle or cannot be loaded, the set exits 3 and no file changes (2.7, 2.8, 14.8, 15.7).
+    cycle or cannot be loaded, the set exits 3 and no file changes (2.7, 2.8, 14.8, 15.7). *(Superseded by step 7:
+    such a string is written tagged `!literal` unless `set --include` is given; see spec config-remote-schema
+    requirements 8 and 9.)*
   - B, PO delegated (changed): a set that must change more than one file is carried out, not refused. All file
     contents are built and verified in memory before any file is written; if a write fails, the files already
     written are restored and the set exits 3 (13.6, 14.5, 14.10).
@@ -152,6 +161,7 @@ shared error conventions are provided by config-foundation and are used unchange
    *Note (step 4): `set` also accepts `--reason TEXT` (or `--reason=TEXT`, before, between or after the positional arguments); TEXT is recorded exactly as the `reason` of the set's own events, and `--reason` without TEXT is a usage error (exit 2) under 1.5 (spec config-lineage, requirement 6).*
    *Note (step 5): `set` also accepts `--in-include` (no value; before, between or after the positional arguments, together with `--reason`), which writes a new key below an include by 3.1–3.2 instead of as an override; `--in-include=TEXT` is a usage error (exit 2) under 1.5 (spec config-include-overrides, requirement 10, CR-B).*
    *Note (step 6): `set` also accepts `--expand-alias` (no value; before, between or after the positional arguments, together with `--reason` and `--in-include`), which expands the aliases on PATH into copies before setting VALUE; `--expand-alias=TEXT` is a usage error (exit 2) under 1.5 (spec config-aliases, requirements 6–8).*
+   *Note (step 7): `set` also accepts `--include` (no value; anywhere among the arguments, together with the other options), which writes include-like VALUE strings as includes instead of tagged `!literal`; `--include=TEXT` is a usage error (exit 2) under 1.5 (spec config-remote-schema, requirement 9).*
 2. The troupe CLI shall interpret VALUE as a single YAML 1.2 core-schema flow node, so that `0.2` is a float, `true` a boolean, `null` null, `abc` and `"0.2"` strings, `{a: 1}` a mapping, `[a, b]` a list and `"line one\nline two\n"` the two-line string `line one⏎line two⏎`.
 3. If VALUE is not valid YAML, is empty or contains only whitespace or comments, contains more than one document, contains a block-style node (block mapping, block list, literal or folded scalar), or uses a tag, an anchor or an alias, then the troupe CLI shall exit with code 2 and write a stderr message that names PATH and states that VALUE is not a single flow node.
 4. If a mapping inside VALUE has two equal keys, an empty key or a key that is not a scalar, then the troupe CLI shall exit with code 2 and write a stderr message that names PATH and the offending key.
@@ -173,6 +183,7 @@ shared error conventions are provided by config-foundation and are used unchange
 6. When PATH resolves to a value inside a YAML-included file that is not itself the include's whole value, the troupe CLI shall change it inside the included file under the same rules as any other existing value.
    *Note (step 5): when such a value is overridden by a mapping-form include, the override in the including file is changed instead and the included file is left unchanged (spec config-include-overrides, requirements 7.1 and 7.2).*
 7. When VALUE is, or contains, a string starting with `file:` that is written into a YAML file, the troupe CLI shall write it as a string scalar under the same rules as any other string, so that the configuration read back contains the include's content at that place.
+   *Note (step 7): this holds only with `set --include`, and for `https://`/`http://` strings too; without it an include-like string is written tagged `!literal` and read back as that string (spec config-remote-schema, requirements 8.1 and 9.3).*
 8. When a string starting with `file:` is set at a place that already holds an include written with exactly that string, the troupe CLI shall treat that place as unchanged.
 
 ### Requirement 3: Adding new keys
