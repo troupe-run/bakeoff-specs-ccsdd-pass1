@@ -145,7 +145,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - _Requirements: 8.1, 8.7, 9.1, 9.2, 9.3, 9.5, 9.6, 10.2_
 
 - [ ] 4. Validation: end-to-end through the CLI and a local server
-- [ ] 4.1 (P) Validate reading remote content, literals and the schema end to end
+- [x] 4.1 (P) Validate reading remote content, literals and the schema end to end
   - `get`, `show` and `show --sources` over remote YAML and text includes, both forms, remote in remote, for `troupe.yml` and `troupe.yaml`. `!literal` and `format: uri` strings print as strings, and the server log shows no request for them.
   - Fetch failures (404, refused connection, bad UTF-8, bad YAML, `file:` in remote content, a cycle) and schema failures exit 4, name the file, key path and URL or the schema file, and create no history state.
   - `history` imports and records remote leaves. A remote change is reconciled by the next command, and `history` fails on an unreachable URL. `watch` re-fetches on a local edit and survives a failing fetch.
