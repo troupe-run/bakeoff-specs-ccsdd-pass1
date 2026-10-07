@@ -8,9 +8,10 @@ decisions, verification and the leaf diff:
   written overrides;
 * :func:`root_plain` is the plain root mapping of a document, unwrapping a mapping-form root
   include;
-* :func:`new_to_plain` turns a parsed VALUE into a plain tree in which every string starting with
-  :data:`~troupe.config.constants.INCLUDE_PREFIX` is a directive without content and every mapping
-  whose ``$ref`` is such a string is a directive without content carrying its overrides;
+* :func:`new_to_plain` turns a parsed VALUE into a plain tree in which every string marked
+  ``INCLUDE`` is a directive without content and every mapping whose ``$ref`` is such a string is
+  a directive without content carrying its overrides; ``LITERAL`` and ``NONE`` strings are plain
+  values (an unmarked string keeps the ``file:`` prefix rule until ``set`` marks every VALUE);
 * :func:`plain_equal` compares by type and value (floats by ``repr``), using
   :func:`~troupe.config.scalars.scalar_equal` (re-exported here) for scalars, and a VALUE
   directive by its text and overrides against an include's written overrides;
@@ -33,7 +34,7 @@ from troupe.config.overrides import override_entries
 from troupe.config.paths import ConfigPath, is_index_segment
 from troupe.config.scalars import ScalarValue
 from troupe.config.scalars import scalar_equal as scalar_equal  # re-exported for existing imports
-from troupe.config.writeback.value import NewMapping, NewScalar, NewValue
+from troupe.config.writeback.value import NewMapping, NewScalar, NewValue, ScalarMark
 
 
 @dataclass(frozen=True)
@@ -114,11 +115,14 @@ def _node_value(node: ConfigNode) -> PlainValue:
 
 
 def new_to_plain(value: NewValue) -> PlainValue:
-    """Return the plain tree of a parsed VALUE; ``file:`` strings become contentless directives.
+    """Return the plain tree of a parsed VALUE; include strings become contentless directives.
 
-    A mapping with a ``$ref`` entry whose value is a ``file:`` string becomes a contentless
-    directive of that string whose ``overrides`` are the plain trees of the other entries, in
-    VALUE order. A ``$ref`` with any other value stays an ordinary mapping entry.
+    An include string is a scalar marked ``INCLUDE``; a ``LITERAL`` or ``NONE`` string is a plain
+    value (8.5, 9.3). An unmarked scalar (``mark is None``, not yet marked by ``set``) keeps the
+    rule from before step 7: a ``file:`` string is an include string. A mapping with a ``$ref``
+    entry whose value is an include string becomes a contentless directive of that string whose
+    ``overrides`` are the plain trees of the other entries, in VALUE order. A ``$ref`` with any
+    other value stays an ordinary mapping entry.
     """
     if isinstance(value, NewScalar):
         text = _include_text(value)
@@ -136,14 +140,15 @@ def new_to_plain(value: NewValue) -> PlainValue:
 
 
 def _include_text(value: NewValue) -> str | None:
-    """Return ``value``'s string when it is a ``file:`` string scalar, else ``None``."""
-    if (
-        isinstance(value, NewScalar)
-        and isinstance(value.value, str)
-        and value.value.startswith(INCLUDE_PREFIX)
-    ):
-        return value.value
-    return None
+    """Return ``value``'s string when it is an include string scalar, else ``None``.
+
+    A marked scalar is one when marked ``INCLUDE``; an unmarked one when it starts with ``file:``.
+    """
+    if not isinstance(value, NewScalar) or not isinstance(value.value, str):
+        return None
+    if value.mark is None:
+        return value.value if value.value.startswith(INCLUDE_PREFIX) else None
+    return value.value if value.mark is ScalarMark.INCLUDE else None
 
 
 def plain_equal(a: PlainValue, b: PlainValue, *, ordered: bool) -> bool:

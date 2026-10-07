@@ -10,15 +10,31 @@ configuration agree.
 """
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Final, TypeAlias
 
 from ruamel.yaml import YAML
 from ruamel.yaml.error import MarkedYAMLError, YAMLError
 from ruamel.yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
-from troupe.config.errors import UsageError
+from troupe.config.constants import INCLUDE_REF_KEY
+from troupe.config.errors import UsageError, WriteRefusedError
+from troupe.config.includes import is_include_string
+from troupe.config.model import SchemaSource
 from troupe.config.paths import ConfigPath
 from troupe.config.scalars import ScalarValue, resolve_plain_scalar
+from troupe.config.schema import uri_format_at
+
+
+class ScalarMark(Enum):
+    """How a VALUE scalar is written and compared, decided once by :func:`mark_include_strings`."""
+
+    NONE = "none"
+    """An ordinary value (also an include string the schema makes a literal)."""
+    INCLUDE = "include"
+    """An include string written plain to be an include (``--include``)."""
+    LITERAL = "literal"
+    """An include-like string written tagged ``!literal``."""
 
 
 @dataclass(frozen=True)
@@ -28,6 +44,9 @@ class NewScalar:
     value: ScalarValue
     spelling: str | None
     """Source text for ``int``/``float``/``bool``/``None`` (e.g. ``0x1F``); ``None`` for strings."""
+    mark: ScalarMark | None = None
+    """The scalar's mark; ``None`` means "not marked yet" (``parse_value`` output that ``set`` has
+    not marked), which keeps the ``file:`` prefix rule in the plain tree."""
 
 
 @dataclass(frozen=True)
@@ -50,6 +69,42 @@ NewValue: TypeAlias = NewScalar | NewMapping | NewSequence  # noqa: UP040
 
 
 _NOT_A_FLOW_NODE: Final = "VALUE is not a single flow node"
+
+REF_MAPPING_NEEDS_INCLUDE: Final = "a `$ref` mapping is an include; give --include to write it"
+"""Problem of a VALUE holding a ``$ref`` mapping without ``--include`` (8.6)."""
+
+
+def mark_include_strings(
+    value: NewValue, path: ConfigPath, schema: SchemaSource | None, *, include: bool
+) -> NewValue:
+    """Return ``value`` with every scalar marked by its own path (8.1, 8.2, 9.3, 9.5).
+
+    ``path`` is PATH; a nested scalar's own path appends the mapping keys and list indices that
+    lead to it. An include string is ``NONE`` when ``schema`` gives its own path ``format: uri``,
+    else ``INCLUDE`` with ``include`` and ``LITERAL`` without. Every other scalar is ``NONE``, and
+    keys are never marked. Raises :class:`WriteRefusedError` naming ``path`` when a mapping in
+    ``value`` has a ``$ref`` key and ``include`` is false (8.6).
+    """
+
+    def mark(node: NewValue, own: ConfigPath) -> NewValue:
+        if isinstance(node, NewScalar):
+            return NewScalar(node.value, node.spelling, scalar_mark(node.value, own))
+        if isinstance(node, NewMapping):
+            if not include and any(key == INCLUDE_REF_KEY for key, _ in node.entries):
+                raise WriteRefusedError(REF_MAPPING_NEEDS_INCLUDE, path=str(path))
+            return NewMapping(
+                tuple((key, mark(item, own.child(key))) for key, item in node.entries)
+            )
+        return NewSequence(
+            tuple(mark(item, own.child(index)) for index, item in enumerate(node.items))
+        )
+
+    def scalar_mark(scalar: ScalarValue, own: ConfigPath) -> ScalarMark:
+        if not is_include_string(scalar) or uri_format_at(schema, own):
+            return ScalarMark.NONE
+        return ScalarMark.INCLUDE if include else ScalarMark.LITERAL
+
+    return mark(value, path)
 
 
 def parse_value(text: str, path: ConfigPath) -> NewValue:

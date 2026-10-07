@@ -105,7 +105,7 @@ together with the design decisions it depends on (research.md Decisions 1–7, c
   - _Requirements: 2.2, 3.1, 3.2, 3.4, 3.5_
 
 - [ ] 3. File layer: marks, rendering, the remote guard and the read-back
-- [ ] 3.1 Mark include strings in VALUE
+- [x] 3.1 Mark include strings in VALUE
   - Each string in VALUE (scalar, or nested in flow mappings and lists, never keys) that is an include string is marked by its own path: no mark when the schema gives that path `format: uri`, otherwise an include with `--include` and a literal without.
   - A mapping with a `$ref` key without `--include` is refused (exit 3) naming PATH and mentioning `--include`.
   - The plain tree of VALUE makes include directives from include marks only, so a literal or schema-literal string is a plain value, and a literal equal to a loaded `!literal` string is a no-op. Until task 3.5 makes `set` mark every VALUE, a scalar may also be unmarked (a temporary state, e.g. `mark: ScalarMark | None = None`, where `None` means "not marked yet") and an unmarked string keeps today's `file:` prefix rule, so the existing suite stays green. `NONE` keeps its design meaning (a plain value, also a schema literal).
