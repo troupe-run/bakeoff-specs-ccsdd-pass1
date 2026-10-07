@@ -30,6 +30,26 @@ YAML_INCLUDE_SUFFIXES: Final = (".yml", ".yaml")
 Any other target is embedded as its exact text.
 """
 
+REMOTE_INCLUDE_PREFIXES: Final = ("https://", "http://")
+"""Prefixes (case-sensitive) of a string value that includes remote content.
+
+The whole string is the URL. A remote target is embedded as parsed YAML when its URL path, without
+query and fragment, ends in one of :data:`YAML_INCLUDE_SUFFIXES`, and as its exact text otherwise.
+"""
+
+LITERAL_TAG: Final = "!literal"
+"""The one explicit YAML tag the loader accepts: a scalar so tagged is a plain string, never an
+include."""
+
+SCHEMA_FILE_NAME: Final = "troupe.schema.json"
+"""File name of the theatre's optional JSON Schema, next to the root configuration file."""
+
+SCHEMA_DIALECT: Final = "https://json-schema.org/draft/2020-12/schema"
+"""The only JSON Schema dialect accepted as the schema's ``$schema``."""
+
+REMOTE_FETCH_TIMEOUT_SECONDS: Final = 10
+"""Longest wait in seconds for a server answering a remote include fetch."""
+
 HISTORY_STORE_NAME: Final = "history.sqlite"
 """File name of the history store under the theatre's configuration directory."""
 

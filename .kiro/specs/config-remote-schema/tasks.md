@@ -39,7 +39,7 @@ fix has not been re-reviewed.
 together with the design decisions it depends on (research.md Decisions 1–7, choices 1–22).
 
 - [ ] 1. Foundation: dependencies, recognition, model, fetcher and schema
-- [ ] 1.1 Add the dependencies, the step 7 constants and the include recognition module
+- [x] 1.1 Add the dependencies, the step 7 constants and the include recognition module
   - Add `jsonschema` (runtime, `>=4.23,<5`) and `types-jsonschema` (dev) with uv, so the lock file changes and `mypy --strict` sees typed jsonschema.
   - One home for the step 7 names: the remote include prefixes, the `!literal` tag, the schema file name, the 2020-12 dialect URI and the 10-second fetch timeout.
   - The recognition module answers three questions: is a value an include string (`file:`, `https://`, `http://`, case-sensitive, strings only), is it remote, and is its target YAML (for `file:`, the name's suffix as today; for a URL, the suffix of its path, ignoring the query and fragment).
